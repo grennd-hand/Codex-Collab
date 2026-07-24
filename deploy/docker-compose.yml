@@ -1,0 +1,51 @@
+services:
+  relay:
+    build:
+      context: ..
+      dockerfile: apps/relay/Dockerfile
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: 4177
+      NODE_ENV: production
+      CODEX_COLLAB_DATA_DIR: /data
+      CODEX_COLLAB_PUBLIC_URL: https://${CODEX_COLLAB_DOMAIN}
+      CODEX_COLLAB_TRUST_PROXY: "1"
+    volumes:
+      - relay-data:/data
+    expose:
+      - "4177"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4177/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - collab
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      relay:
+        condition: service_healthy
+    environment:
+      CODEX_COLLAB_DOMAIN: ${CODEX_COLLAB_DOMAIN}
+    ports:
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - collab
+
+networks:
+  collab:
+
+volumes:
+  relay-data:
+  caddy-data:
+  caddy-config:

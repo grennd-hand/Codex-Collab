@@ -89,3 +89,19 @@ Put it behind an HTTPS reverse proxy before using it across the public internet.
 `CODEX_COLLAB_RELAY_URL` in the plugin to the resulting HTTPS origin. Set
 `CODEX_COLLAB_PUBLIC_URL` to that same origin so invites created through MCP contain a usable web
 link. If the reverse proxy supplies `X-Forwarded-Proto`, set `CODEX_COLLAB_TRUST_PROXY=1`.
+
+### VPS deployment
+
+The `deploy` directory provides an isolated Docker Compose stack with a persistent Relay volume and
+Caddy-managed HTTPS/WebSocket proxy. It only publishes port 443, so it can coexist with another
+service already using port 80.
+
+```bash
+cd deploy
+cp .env.example .env
+# Set CODEX_COLLAB_DOMAIN to a hostname that resolves to the VPS.
+docker compose up -d --build
+```
+
+The Relay is reachable only through Caddy. SQLite data, Caddy certificates, and Caddy configuration
+are stored in named Docker volumes and survive container replacement.

@@ -3,13 +3,16 @@ WORKDIR /app
 
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY packages/protocol/package.json packages/protocol/package.json
+COPY apps/dashboard/package.json apps/dashboard/package.json
 COPY apps/relay/package.json apps/relay/package.json
 COPY plugins/codex-collab/package.json plugins/codex-collab/package.json
 RUN npm ci
 
 COPY packages/protocol packages/protocol
+COPY apps/dashboard apps/dashboard
 COPY apps/relay apps/relay
 RUN npm run build --workspace @codex-collab/protocol \
+    && npm run build --workspace @codex-collab/dashboard \
     && npm run build --workspace @codex-collab/relay
 
 FROM node:24-alpine
