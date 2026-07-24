@@ -1,4 +1,4 @@
-FROM node:24-alpine AS build
+FROM node:24-bookworm-slim AS build
 WORKDIR /app
 
 COPY package.json package-lock.json tsconfig.base.json ./
@@ -15,7 +15,7 @@ RUN npm run build --workspace @codex-collab/protocol \
     && npm run build --workspace @codex-collab/dashboard \
     && npm run build --workspace @codex-collab/relay
 
-FROM node:24-alpine
+FROM node:24-bookworm-slim
 WORKDIR /app
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
