@@ -14,9 +14,10 @@ invited device ──HTTPS/WebSocket── relay ──HTTPS/WebSocket── own
 ```
 
 The public relay authenticates members and distributes messages. It never receives SSH access,
-Codex account credentials, the owner's `.codex` directory, reasoning traces or command output.
-After explicit owner selection, it stores a bounded read-only snapshot of visible Codex messages
-and filtered safe-text project files so approved members can view them.
+Codex account credentials, raw hidden reasoning, private keys or authentication files. After
+explicit owner selection, it stores a bounded read-only snapshot of visible Codex messages,
+app-server reasoning summaries, command output and filtered text files so approved members can
+view them.
 
 The owner host is the only component allowed to touch local files or submit a turn to Codex. It
 accepts only messages whose identity and approval state were verified by the relay.
@@ -43,7 +44,9 @@ The plugin uses the local Codex `app-server` JSONL protocol:
 1. `initialize`
 2. `initialized`
 3. `thread/list` to publish tasks matching the explicit root
-4. `thread/read` to import only visible user and assistant messages
+4. the selected task's app-server-provided rollout path to import visible messages, reasoning
+   summaries and command output; `thread/turns/list` is the bounded fallback when no rollout is
+   available
 5. `thread/resume` to rejoin the task
 6. `turn/start` with identity metadata
 
@@ -57,10 +60,11 @@ and symlink escape. Writes are atomic and require the caller's expected SHA-256;
 produces a conflict instead of overwriting someone else's newer work.
 
 The web file browser is deliberately narrower than the MCP file sandbox. It receives a bounded,
-read-only snapshot of allow-listed text formats and excludes `.env`, `.codex`, credential filenames,
-private-key material, high-confidence embedded tokens, symlinks, dependency folders and build
-output. Switching the selected Codex task clears the previous history and file snapshot before the
-new import.
+read-only snapshot of allow-listed project text formats. An optional `codexConfigRoot` is resolved
+as a second explicit sandbox and contributes `.codex/`-prefixed non-credential configuration files.
+Both roots exclude environment files, credential filenames, authentication/session databases,
+private-key material, high-confidence embedded tokens and symlinks. Switching the selected Codex
+task clears the previous history and file snapshot before the new import.
 
 For two active Codex writers, each writer gets a separate Git worktree. The relay coordinates
 messages and intent; Git remains the merge and audit mechanism.

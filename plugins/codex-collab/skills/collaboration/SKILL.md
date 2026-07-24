@@ -14,11 +14,14 @@ Use the `collab_*` MCP tools for shared sessions. Keep the owner as the security
    dashboard's short-lived pairing code and one explicit absolute project root.
 3. If there is no web room, call `collab_create_session` with one explicit absolute project root.
 4. After web pairing, tell the owner to select a task in **Codex 与文件**. Keep the MCP host running
-   while the selected visible history and safe read-only file snapshot are imported.
-5. Use `collab_refresh_workspace` when the owner asks to refresh the task catalog or snapshot.
-6. Use `collab_create_invite` to create a short-lived, low-use invite.
-7. For an invited device, call `collab_join_session`.
-8. Never call `collab_approve_member` until the owner explicitly accepts the displayed member.
+   while visible messages, reasoning summaries, command output and the read-only file snapshot are
+   imported.
+5. Share `.codex` configuration only when the owner separately supplies its absolute path as
+   `codexConfigRoot`; project-root permission never implies `.codex` permission.
+6. Use `collab_refresh_workspace` when the owner asks to refresh the task catalog or snapshot.
+7. Use `collab_create_invite` to create a short-lived, low-use invite.
+8. For an invited device, call `collab_join_session`.
+9. Never call `collab_approve_member` until the owner explicitly accepts the displayed member.
 
 ## Bind Codex
 

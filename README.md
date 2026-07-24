@@ -37,6 +37,7 @@ docs/                       Architecture and security notes
 - [Deployment and operations](docs/DEPLOYMENT.md)
 - [Testing guide](docs/TESTING.md)
 - [Task plan and roadmap](docs/TASK_PLAN.md)
+- [Full v1 implementation plan](docs/V1_IMPLEMENTATION_PLAN.md)
 
 ## Local development
 
@@ -66,13 +67,15 @@ Open `http://127.0.0.1:4177`.
 3. In the owner's local Codex, ask it to run `collab_pair_host` with that code, the public Relay
    URL, and the explicitly approved absolute project root.
 4. Return to **Codex 与文件** and select one of the Codex tasks discovered under that root.
-5. Keep the local Codex host running briefly. It imports visible user/assistant messages and a
-   view-only safe-text file snapshot.
+5. Keep the local Codex host running briefly. It imports visible user/assistant messages,
+   app-server reasoning summaries, command output and a view-only text snapshot.
 6. Approved members can inspect the selected task record and shared files; pending members cannot.
 
-The import excludes reasoning, command output, `.env`, `.codex`, private-key files, likely embedded
-credentials, binary files, dependency folders, build output and symlinks. Use
-`collab_refresh_workspace` to refresh the task catalog and re-import the selected snapshot.
+To share non-credential Codex configuration, pass `codexConfigRoot` as a second explicit absolute
+root when calling `collab_pair_host` or `collab_refresh_workspace`. It includes text configuration,
+rules and documentation under `.codex/`, while excluding `auth.json`, session/history databases,
+environment files, private keys and likely embedded credentials. Project permission never implies
+`.codex` permission. Use `collab_refresh_workspace` to refresh the task catalog and snapshot.
 
 If the browser blocks automatic clipboard access, the dashboard falls back to synchronous copy.
 When both browser copy mechanisms are unavailable, it selects the complete link and prompts the

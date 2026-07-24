@@ -10,6 +10,7 @@ export interface LocalProfile {
   role: "owner" | "editor";
   memberToken: string;
   projectRoot: string;
+  codexConfigRoot?: string;
   threadId?: string;
   lastMessageAt?: string;
   forwardedMessageIds?: string[];

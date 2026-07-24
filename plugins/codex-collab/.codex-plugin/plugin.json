@@ -9,7 +9,7 @@
   "interface": {
     "displayName": "Codex Collab",
     "shortDescription": "A shared control room for one Codex task.",
-    "longDescription": "Pair a web room to the owner's local Codex, import selected visible task records and safe read-only files, forward approved prompts, and edit explicitly shared files with conflict protection.",
+    "longDescription": "Pair a web room to the owner's local Codex, import visible task records, reasoning summaries, command output, project text and separately authorized non-credential .codex configuration, then forward approved prompts and protect edits with hashes.",
     "developerName": "Codex Collab",
     "category": "Productivity",
     "capabilities": [

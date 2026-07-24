@@ -735,6 +735,14 @@ textarea {
   border-left-color: var(--colorBrandStroke1);
 }
 
+.record-entry.reasoning {
+  border-left-color: var(--colorPalettePurpleBorderActive);
+}
+
+.record-entry.command {
+  border-left-color: var(--colorPaletteMarigoldBorderActive);
+}
+
 .record-entry > div {
   display: flex;
   justify-content: space-between;
@@ -756,6 +764,11 @@ textarea {
   white-space: pre-wrap;
   font-size: 12px;
   line-height: 1.5;
+}
+
+.record-entry.command p {
+  font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
 }
 
 .file-browser {

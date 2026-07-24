@@ -141,6 +141,18 @@ try {
           text: "The loop passed.",
           createdAt: "2026-07-25T00:00:01.000Z",
         },
+        {
+          id: "visible-reasoning-summary",
+          role: "reasoning",
+          text: "Checked the workspace contract.",
+          createdAt: "2026-07-25T00:00:01.500Z",
+        },
+        {
+          id: "visible-command-output",
+          role: "command",
+          text: "$ npm test\n21 tests passed\nexit code: 0",
+          createdAt: "2026-07-25T00:00:02.000Z",
+        },
       ],
       files: [
         {
@@ -149,6 +161,13 @@ try {
           size: 17,
           modifiedAt: "2026-07-25T00:00:00.000Z",
           sha256: "b".repeat(64),
+        },
+        {
+          path: ".codex/config.toml",
+          content: "model = \"gpt-5\"\n",
+          size: 16,
+          modifiedAt: "2026-07-25T00:00:00.000Z",
+          sha256: "c".repeat(64),
         },
       ],
     }),
@@ -164,8 +183,8 @@ try {
   );
   if (
     workspace.workspace.selectedThreadId !== "thread-code-flow" ||
-    workspace.workspace.history.length !== 2 ||
-    workspace.workspace.files.length !== 1 ||
+    workspace.workspace.history.length !== 4 ||
+    workspace.workspace.files.length !== 2 ||
     workspace.workspace.threads.length !== 0 ||
     file.file.content !== "# Code-only loop\n"
   ) {

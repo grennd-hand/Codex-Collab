@@ -77,7 +77,7 @@ export interface CodexThreadCatalogEntry {
 
 export interface CodexRecordEntry {
   id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "reasoning" | "command";
   text: string;
   createdAt: string | null;
 }

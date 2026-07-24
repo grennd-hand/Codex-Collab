@@ -8,9 +8,12 @@ const PUBLISHABLE_EXTENSIONS = new Set([
   ".cpp",
   ".cs",
   ".css",
+  ".cfg",
+  ".conf",
   ".go",
   ".h",
   ".html",
+  ".ini",
   ".java",
   ".js",
   ".json",
@@ -22,6 +25,7 @@ const PUBLISHABLE_EXTENSIONS = new Set([
   ".ps1",
   ".py",
   ".rs",
+  ".rules",
   ".scss",
   ".sh",
   ".sql",
@@ -39,9 +43,30 @@ const SENSITIVE_NAMES = new Set([
   ".npmrc",
   ".pypirc",
   "auth.json",
+  "auth.toml",
+  "cookies.json",
   "credentials.json",
   "id_ed25519",
   "id_rsa",
+  "history.jsonl",
+  "secrets.json",
+  "state.json",
+  "tokens.json",
+]);
+
+const CODEX_NON_CONFIG_DIRECTORIES = new Set([
+  "archived_sessions",
+  "attachments",
+  "cache",
+  "history",
+  "logs",
+  "memories",
+  "projects",
+  "rollouts",
+  "sessions",
+  "shell_snapshots",
+  "threads",
+  "tmp",
 ]);
 
 export function isPublishableWorkspacePath(path: string): boolean {
@@ -57,6 +82,22 @@ export function isPublishableWorkspacePath(path: string): boolean {
   return PUBLISHABLE_EXTENSIONS.has(extname(name));
 }
 
+export function isPublishableCodexConfigPath(path: string): boolean {
+  const normalized = path.replaceAll("\\", "/").toLowerCase();
+  const segments = normalized.split("/");
+  const name = basename(normalized);
+  if (
+    segments.some((segment) => CODEX_NON_CONFIG_DIRECTORIES.has(segment)) ||
+    name === ".env" ||
+    name.startsWith(".env.") ||
+    SENSITIVE_NAMES.has(name) ||
+    name.startsWith("service-account")
+  ) {
+    return false;
+  }
+  return PUBLISHABLE_EXTENSIONS.has(extname(name));
+}
+
 export function containsLikelySecret(content: string): boolean {
   if (/-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(content)) return true;
   if (/\b(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|AKIA[A-Z0-9]{16})\b/.test(content)) {
@@ -67,12 +108,18 @@ export function containsLikelySecret(content: string): boolean {
   );
 }
 
-export async function buildWorkspaceSnapshot(
+async function buildTextSnapshot(
   sandbox: FileSandbox,
+  options: {
+    isAllowed(path: string): boolean;
+    maxFiles: number;
+    maxTotalBytes: number;
+    pathPrefix?: string;
+  },
 ): Promise<WorkspaceFileContent[]> {
   const candidates = (await sandbox.list(2_000))
-    .filter((file) => file.size <= 256_000 && isPublishableWorkspacePath(file.path))
-    .slice(0, 500);
+    .filter((file) => file.size <= 256_000 && options.isAllowed(file.path))
+    .slice(0, options.maxFiles);
   const files: WorkspaceFileContent[] = [];
   let totalBytes = 0;
   for (const candidate of candidates) {
@@ -80,7 +127,7 @@ export async function buildWorkspaceSnapshot(
     const contentBytes = Buffer.byteLength(file.content);
     if (
       contentBytes > 256_000 ||
-      totalBytes + contentBytes > 5_000_000 ||
+      totalBytes + contentBytes > options.maxTotalBytes ||
       file.content.includes("\0") ||
       containsLikelySecret(file.content)
     ) {
@@ -88,7 +135,7 @@ export async function buildWorkspaceSnapshot(
     }
     totalBytes += contentBytes;
     files.push({
-      path: file.path,
+      path: `${options.pathPrefix ?? ""}${file.path}`,
       content: file.content,
       size: contentBytes,
       modifiedAt: file.modifiedAt,
@@ -96,4 +143,25 @@ export async function buildWorkspaceSnapshot(
     });
   }
   return files;
+}
+
+export async function buildWorkspaceSnapshot(
+  sandbox: FileSandbox,
+): Promise<WorkspaceFileContent[]> {
+  return buildTextSnapshot(sandbox, {
+    isAllowed: isPublishableWorkspacePath,
+    maxFiles: 400,
+    maxTotalBytes: 4_000_000,
+  });
+}
+
+export async function buildCodexConfigSnapshot(
+  sandbox: FileSandbox,
+): Promise<WorkspaceFileContent[]> {
+  return buildTextSnapshot(sandbox, {
+    isAllowed: isPublishableCodexConfigPath,
+    maxFiles: 200,
+    maxTotalBytes: 1_000_000,
+    pathPrefix: ".codex/",
+  });
 }

@@ -137,6 +137,13 @@ function timeLabel(value: string): string {
   }).format(new Date(value));
 }
 
+function recordRoleLabel(role: WorkspaceSummary["history"][number]["role"]): string {
+  if (role === "user") return "用户";
+  if (role === "assistant") return "Codex";
+  if (role === "reasoning") return "推理摘要";
+  return "命令执行";
+}
+
 function deviceLabel(): string {
   return navigator.platform || "Web device";
 }
@@ -705,6 +712,8 @@ export function App() {
 
   const owner = members.find((item) => item.role === "owner");
   const status = connectionPresentation(connection, Boolean(session));
+  const codexConfigFileCount =
+    workspaceSummary?.files.filter((file) => file.path.startsWith(".codex/")).length ?? 0;
 
   return (
     <FluentProvider
@@ -1013,8 +1022,8 @@ export function App() {
             <DialogTitle>Codex 任务与共享文件</DialogTitle>
             <DialogContent className="workspace-dialog-content">
               <p className="dialog-intro">
-                房主选择本机 Codex 任务后，只导入可见的用户/助手消息与安全文本文件。
-                已批准成员拥有只读访问权。
+                房主选择本机 Codex 任务后，导入可见消息、推理摘要、命令输出、项目文本，
+                以及单独授权的 .codex 非凭据配置。已批准成员拥有只读访问权。
               </p>
 
               {workspaceLoading && !workspaceSummary ? (
@@ -1070,7 +1079,8 @@ export function App() {
                       <p>
                         回到房主的 Codex 对话，让 Codex 使用
                         <strong> collab_pair_host </strong>
-                        认领此码，并明确传入要共享的项目绝对路径。
+                        认领此码，明确传入 projectRoot；如需配置文件，再单独传入
+                        codexConfigRoot（例如用户目录下的 .codex 绝对路径）。
                       </p>
                       <span>
                         {pairingCopied ? "配对码已复制 · " : ""}
@@ -1110,7 +1120,7 @@ export function App() {
                         hint={
                           workspaceSummary.threads.length === 0
                             ? "本机没有找到工作目录匹配的 Codex 任务。"
-                            : "选择后，本机插件会自动导入。再次选择可重新同步。"
+                            : "选择后自动导入消息、推理摘要、命令输出和共享文件。再次选择可重新同步。"
                         }
                       >
                         <Select
@@ -1168,7 +1178,7 @@ export function App() {
                           workspaceSummary.history.map((entry) => (
                             <article className={`record-entry ${entry.role}`} key={entry.id}>
                               <div>
-                                <strong>{entry.role === "user" ? "用户" : "Codex"}</strong>
+                                <strong>{recordRoleLabel(entry.role)}</strong>
                                 {entry.createdAt ? (
                                   <time dateTime={entry.createdAt}>
                                     {timeLabel(entry.createdAt)}
@@ -1188,7 +1198,12 @@ export function App() {
                           <span>只读快照</span>
                           <h3>项目文件</h3>
                         </div>
-                        <small>{workspaceSummary.files.length} 个</small>
+                        <small>
+                          {workspaceSummary.files.length} 个
+                          {codexConfigFileCount > 0
+                            ? ` · .codex 配置 ${codexConfigFileCount} 个`
+                            : ""}
+                        </small>
                       </div>
                       <div className="file-browser">
                         <nav aria-label="共享文件">

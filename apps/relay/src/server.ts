@@ -60,7 +60,7 @@ async function readJson(request: IncomingMessage): Promise<Record<string, unknow
   for await (const chunk of request) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     length += buffer.length;
-    if (length > 6_000_000) {
+    if (length > 9_000_000) {
       throw new ProtocolError(413, "payload_too_large", "Request body is too large");
     }
     chunks.push(buffer);
@@ -106,8 +106,8 @@ function parseThreadCatalog(value: unknown): CodexThreadCatalogEntry[] {
 }
 
 function parseHistory(value: unknown): CodexRecordEntry[] {
-  if (!Array.isArray(value) || value.length > 200) {
-    throw new ProtocolError(400, "invalid_request", "history must contain at most 200 entries");
+  if (!Array.isArray(value) || value.length > 500) {
+    throw new ProtocolError(400, "invalid_request", "history must contain at most 500 entries");
   }
   let totalLength = 0;
   return value.map((item, index) => {
@@ -115,16 +115,21 @@ function parseHistory(value: unknown): CodexRecordEntry[] {
       throw new ProtocolError(400, "invalid_request", `history[${index}] must be an object`);
     }
     const record = item as Record<string, unknown>;
-    if (record.role !== "user" && record.role !== "assistant") {
+    if (
+      record.role !== "user" &&
+      record.role !== "assistant" &&
+      record.role !== "reasoning" &&
+      record.role !== "command"
+    ) {
       throw new ProtocolError(
         400,
         "invalid_request",
-        `history[${index}].role must be user or assistant`,
+        `history[${index}].role is invalid`,
       );
     }
-    const text = requiredString(record.text, `history[${index}].text`, 20_000);
+    const text = requiredString(record.text, `history[${index}].text`, 50_000);
     totalLength += text.length;
-    if (totalLength > 500_000) {
+    if (totalLength > 2_000_000) {
       throw new ProtocolError(413, "history_too_large", "Imported Codex history is too large");
     }
     return {
@@ -140,8 +145,8 @@ function parseHistory(value: unknown): CodexRecordEntry[] {
 }
 
 function parseWorkspaceFiles(value: unknown): WorkspaceFileContent[] {
-  if (!Array.isArray(value) || value.length > 500) {
-    throw new ProtocolError(400, "invalid_request", "files must contain at most 500 files");
+  if (!Array.isArray(value) || value.length > 600) {
+    throw new ProtocolError(400, "invalid_request", "files must contain at most 600 files");
   }
   let totalLength = 0;
   return value.map((item, index) => {
