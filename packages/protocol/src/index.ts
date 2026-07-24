@@ -68,8 +68,57 @@ export interface JoinInviteResponse {
   memberToken: string;
 }
 
+export interface CodexThreadCatalogEntry {
+  id: string;
+  name: string | null;
+  preview: string;
+  updatedAt: number | null;
+}
+
+export interface CodexRecordEntry {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  createdAt: string | null;
+}
+
+export interface WorkspaceFile {
+  path: string;
+  size: number;
+  modifiedAt: string;
+  sha256: string;
+}
+
+export interface WorkspaceFileContent extends WorkspaceFile {
+  content: string;
+}
+
+export interface WorkspaceSummary {
+  hostConnected: boolean;
+  hostDeviceLabel: string | null;
+  rootLabel: string | null;
+  threads: CodexThreadCatalogEntry[];
+  selectedThreadId: string | null;
+  selectedThread: CodexThreadCatalogEntry | null;
+  history: CodexRecordEntry[];
+  files: WorkspaceFile[];
+  syncedAt: string | null;
+}
+
+export interface CreateHostPairingResponse {
+  sessionId: string;
+  pairingToken: string;
+  expiresAt: string;
+}
+
+export interface ClaimHostPairingResponse {
+  session: Session;
+  owner: Member;
+  memberToken: string;
+}
+
 export interface RealtimeEnvelope {
-  type: "ready" | "member.updated" | "message.created";
+  type: "ready" | "member.updated" | "message.created" | "workspace.updated";
   sessionId: string;
   payload: unknown;
   sentAt: string;

@@ -533,6 +533,335 @@ textarea {
   font-size: 13px;
 }
 
+.workspace-dialog-surface {
+  width: min(1180px, calc(100vw - 40px));
+  max-width: none;
+  max-height: calc(100dvh - 40px);
+}
+
+.workspace-dialog-content {
+  min-height: 560px;
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  overflow: auto;
+}
+
+.workspace-dialog-loading {
+  display: grid;
+  gap: 10px;
+  padding: 24px;
+}
+
+.workspace-dialog-loading > span {
+  display: grid;
+  gap: 10px;
+}
+
+.pairing-panel,
+.thread-picker,
+.history-panel,
+.files-panel {
+  padding: 16px;
+  border: 1px solid var(--colorNeutralStroke2);
+  border-radius: 12px;
+  background: var(--colorNeutralBackground1);
+}
+
+.pairing-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.workspace-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.workspace-section-heading.compact {
+  margin-bottom: 12px;
+}
+
+.workspace-section-heading span {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--colorNeutralForeground3);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.workspace-section-heading h3 {
+  margin: 0;
+  font-family: "Segoe UI Variable Display", "Segoe UI Variable", "Segoe UI", sans-serif;
+  font-size: 15px;
+}
+
+.workspace-section-heading small {
+  color: var(--colorNeutralForeground3);
+  font-size: 11px;
+}
+
+.pairing-instructions {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 10px;
+  background: var(--colorNeutralBackground2);
+}
+
+.pairing-instructions p,
+.pairing-instructions span {
+  margin: 0;
+  color: var(--colorNeutralForeground3);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.pairing-instructions strong {
+  color: var(--colorNeutralForeground1);
+}
+
+.workspace-status-card {
+  min-height: 62px;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid var(--colorStatusSuccessBorder1);
+  border-radius: 12px;
+  background: var(--colorStatusSuccessBackground1);
+}
+
+.workspace-status-card > div {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px 10px;
+}
+
+.workspace-status-card span {
+  grid-row: 1 / 3;
+  align-self: center;
+  color: var(--colorStatusSuccessForeground1);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.workspace-status-card strong,
+.workspace-status-card small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-status-card small {
+  color: var(--colorNeutralForeground3);
+}
+
+.thread-picker {
+  display: grid;
+  gap: 14px;
+}
+
+.selected-thread-summary {
+  min-height: 54px;
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  border-radius: 8px;
+  background: var(--colorNeutralBackground2);
+}
+
+.selected-thread-summary > svg {
+  color: var(--colorBrandForeground1);
+  font-size: 20px;
+}
+
+.selected-thread-summary > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.selected-thread-summary strong,
+.selected-thread-summary span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selected-thread-summary span {
+  color: var(--colorNeutralForeground3);
+  font-size: 12px;
+}
+
+.workspace-data-grid {
+  min-height: 360px;
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 16px;
+}
+
+.history-panel,
+.files-panel {
+  min-width: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.record-list {
+  max-height: 430px;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  overflow: auto;
+}
+
+.record-entry {
+  padding: 10px 12px;
+  border-left: 3px solid var(--colorNeutralStroke1);
+  border-radius: 4px 8px 8px 4px;
+  background: var(--colorNeutralBackground2);
+}
+
+.record-entry.assistant {
+  border-left-color: var(--colorBrandStroke1);
+}
+
+.record-entry > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.record-entry strong,
+.record-entry time {
+  font-size: 11px;
+}
+
+.record-entry time {
+  color: var(--colorNeutralForeground3);
+}
+
+.record-entry p {
+  margin: 6px 0 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.file-browser {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(150px, 0.75fr) minmax(220px, 1.25fr);
+  overflow: hidden;
+  border: 1px solid var(--colorNeutralStroke2);
+  border-radius: 8px;
+}
+
+.file-browser nav {
+  min-width: 0;
+  max-height: 390px;
+  overflow: auto;
+  border-right: 1px solid var(--colorNeutralStroke2);
+  background: var(--colorNeutralBackground2);
+}
+
+.file-browser nav button {
+  width: 100%;
+  min-height: 38px;
+  padding: 7px 8px;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-bottom: 1px solid var(--colorNeutralStroke3);
+  color: var(--colorNeutralForeground1);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.file-browser nav button:hover,
+.file-browser nav button.active {
+  background: var(--colorNeutralBackground1Hover);
+}
+
+.file-browser nav button.active {
+  color: var(--colorBrandForeground1);
+}
+
+.file-browser nav button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.file-browser nav button small {
+  color: var(--colorNeutralForeground3);
+  font-size: 10px;
+}
+
+.file-preview {
+  min-width: 0;
+  max-height: 390px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: auto;
+  background: var(--colorNeutralBackground1);
+}
+
+.file-preview > header {
+  padding: 8px 10px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid var(--colorNeutralStroke2);
+}
+
+.file-preview > header strong,
+.file-preview > header span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+}
+
+.file-preview > header span {
+  color: var(--colorNeutralForeground3);
+}
+
+.file-preview pre {
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  font: 11px/1.55 "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  white-space: pre;
+}
+
+.file-preview > span {
+  padding: 16px;
+  color: var(--colorNeutralForeground3);
+  font-size: 12px;
+}
+
+.workspace-empty {
+  padding: 28px 14px;
+  color: var(--colorNeutralForeground3);
+  font-size: 12px;
+  text-align: center;
+}
+
 .member-skeleton {
   height: 60px;
   display: grid;
@@ -598,8 +927,30 @@ textarea {
   }
 
   .product-context,
-  .topbar-actions > button:first-child {
+  .invite-button {
     display: none;
+  }
+
+  .workspace-button {
+    min-width: 32px;
+    padding-inline: 6px;
+  }
+
+  .workspace-button-label {
+    display: none;
+  }
+
+  .workspace-dialog-surface {
+    width: calc(100vw - 20px);
+    max-height: calc(100dvh - 20px);
+  }
+
+  .workspace-dialog-content {
+    min-height: 0;
+  }
+
+  .workspace-data-grid {
+    grid-template-columns: 1fr;
   }
 
   .brand-mark {
@@ -697,6 +1048,30 @@ textarea {
 
   .message-meta span:nth-child(2) {
     display: none;
+  }
+
+  .workspace-dialog-surface {
+    width: 100vw;
+    max-height: 100dvh;
+    border-radius: 0;
+  }
+
+  .workspace-section-heading {
+    align-items: flex-start;
+  }
+
+  .file-browser {
+    grid-template-columns: 1fr;
+  }
+
+  .file-browser nav {
+    max-height: 180px;
+    border-right: 0;
+    border-bottom: 1px solid var(--colorNeutralStroke2);
+  }
+
+  .file-preview {
+    min-height: 220px;
   }
 }
 

@@ -13,8 +13,10 @@ invited device ──HTTPS/WebSocket── relay ──HTTPS/WebSocket── own
                                                                └── bound thread
 ```
 
-The public relay authenticates members and distributes messages. It does not receive SSH access,
-Codex account credentials, project file contents, or the owner's `.codex` directory.
+The public relay authenticates members and distributes messages. It never receives SSH access,
+Codex account credentials, the owner's `.codex` directory, reasoning traces or command output.
+After explicit owner selection, it stores a bounded read-only snapshot of visible Codex messages
+and filtered safe-text project files so approved members can view them.
 
 The owner host is the only component allowed to touch local files or submit a turn to Codex. It
 accepts only messages whose identity and approval state were verified by the relay.
@@ -30,15 +32,20 @@ accepts only messages whose identity and approval state were verified by the rel
 
 Raw member tokens are never stored by the relay. SHA-256 hashes are stored in SQLite.
 
+The dashboard-to-host handoff uses a separate ten-minute, one-time pairing capability. The relay
+stores only its hash and exchanges it for a separate owner-host token, so the browser owner's token
+is neither copied nor rotated.
+
 ## Codex integration
 
 The plugin uses the local Codex `app-server` JSONL protocol:
 
 1. `initialize`
 2. `initialized`
-3. `thread/list` to select a task
-4. `thread/resume` to rejoin the task
-5. `turn/start` with identity metadata
+3. `thread/list` to publish tasks matching the explicit root
+4. `thread/read` to import only visible user and assistant messages
+5. `thread/resume` to rejoin the task
+6. `turn/start` with identity metadata
 
 The bridge does not set `approvalPolicy` or bypass sandbox settings, so the existing owner policy
 remains authoritative.
@@ -48,6 +55,12 @@ remains authoritative.
 The plugin resolves the owner-selected root with `realpath`. Reads and writes reject path traversal
 and symlink escape. Writes are atomic and require the caller's expected SHA-256; a mismatched hash
 produces a conflict instead of overwriting someone else's newer work.
+
+The web file browser is deliberately narrower than the MCP file sandbox. It receives a bounded,
+read-only snapshot of allow-listed text formats and excludes `.env`, `.codex`, credential filenames,
+private-key material, high-confidence embedded tokens, symlinks, dependency folders and build
+output. Switching the selected Codex task clears the previous history and file snapshot before the
+new import.
 
 For two active Codex writers, each writer gets a separate Git worktree. The relay coordinates
 messages and intent; Git remains the merge and audit mechanism.

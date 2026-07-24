@@ -1,10 +1,15 @@
 import type {
+  ClaimHostPairingResponse,
+  CodexRecordEntry,
+  CodexThreadCatalogEntry,
   CreateInviteResponse,
   CreateSessionResponse,
   JoinInviteResponse,
   Member,
   Message,
   MessageKind,
+  WorkspaceFileContent,
+  WorkspaceSummary,
 } from "@codex-collab/protocol";
 
 interface RelayErrorBody {
@@ -50,6 +55,17 @@ export class RelayClient {
     deviceLabel?: string;
   }): Promise<JoinInviteResponse> {
     return this.request("/v1/invites/join", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  }
+
+  async claimHostPairing(input: {
+    pairingToken: string;
+    deviceLabel: string;
+    rootLabel: string;
+  }): Promise<ClaimHostPairingResponse> {
+    return this.request("/v1/host-pairings/claim", {
       method: "POST",
       body: JSON.stringify(input),
     });
@@ -117,6 +133,54 @@ export class RelayClient {
       { headers: { authorization: `Bearer ${memberToken}` } },
     );
     return result.messages;
+  }
+
+  async getWorkspace(sessionId: string, memberToken: string): Promise<WorkspaceSummary> {
+    const result = await this.request<{ workspace: WorkspaceSummary }>(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/workspace`,
+      { headers: { authorization: `Bearer ${memberToken}` } },
+    );
+    return result.workspace;
+  }
+
+  async publishWorkspaceCatalog(
+    sessionId: string,
+    memberToken: string,
+    input: {
+      deviceLabel: string;
+      rootLabel: string;
+      threads: CodexThreadCatalogEntry[];
+    },
+  ): Promise<WorkspaceSummary> {
+    const result = await this.request<{ workspace: WorkspaceSummary }>(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/workspace/catalog`,
+      {
+        method: "PUT",
+        headers: { authorization: `Bearer ${memberToken}` },
+        body: JSON.stringify(input),
+      },
+    );
+    return result.workspace;
+  }
+
+  async publishWorkspaceSnapshot(
+    sessionId: string,
+    memberToken: string,
+    input: {
+      threadId: string;
+      history: CodexRecordEntry[];
+      files: WorkspaceFileContent[];
+    },
+  ): Promise<WorkspaceSummary> {
+    const result = await this.request<{ workspace: WorkspaceSummary }>(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/workspace/snapshot`,
+      {
+        method: "PUT",
+        headers: { authorization: `Bearer ${memberToken}` },
+        body: JSON.stringify(input),
+      },
+    );
+    return result.workspace;
   }
 
   private async request<T = Record<string, unknown>>(

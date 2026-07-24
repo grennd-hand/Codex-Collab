@@ -6,12 +6,17 @@
 npm run typecheck
 npm test
 npm run build
+npm run test:workspace-flow
 npm run validate:plugin
 node scripts/probe-mcp.mjs
 npm audit --audit-level=high
 ```
 
 MCP 验证必须真实完成 `initialize` 和 `tools/list`。仅看到进程运行或 HTTP 响应不算通过。
+
+`test:workspace-flow` 是纯代码/API 闭环，不启动或操控浏览器。它使用临时端口和临时
+SQLite，验证：创建房间 → 一次性 Host 配对 → 发布任务目录 → 待批准成员被拒绝 →
+房主批准 → 选择任务 → 发布历史和文件 → 已批准成员读取，结束后自动删除临时数据。
 
 ## 2. 公网健康检查
 
@@ -68,6 +73,11 @@ curl.exe --fail --silent --show-error `
 - 项目根目录授权不会隐式授权 `.codex`；
 - 公网只暴露 HTTPS Relay，不暴露 Codex `app-server`；
 - 转发 Codex 指令时不覆盖主人现有审批策略。
+- Host 配对码使用一次后失效，数据库不出现原始配对码或 Host token；
+- 非房主不能发布任务目录、选择任务或发布快照；
+- 切换任务会先清空旧历史和旧文件；
+- Codex 记录不包含 reasoning、命令输出或工具调用；
+- 网页文件快照排除 `.env`、`.codex`、私钥、高置信凭据、二进制与符号链接。
 
 ## 6. UI 回归
 
@@ -78,3 +88,6 @@ curl.exe --fail --silent --show-error `
 - 邀请弹窗、复制成功与复制失败反馈；
 - 页面刷新后的标签页会话恢复；
 - 离开本机会话不会删除服务器数据。
+- “Codex 与文件”支持未配对、已配对、等待导入、已同步和空文件状态；
+- 房主能选择本项目 Codex 任务，已批准协作者只能查看已选任务；
+- 文件列表和只读预览在桌面与 390px 宽度可用。

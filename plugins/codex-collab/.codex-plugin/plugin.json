@@ -9,16 +9,18 @@
   "interface": {
     "displayName": "Codex Collab",
     "shortDescription": "A shared control room for one Codex task.",
-    "longDescription": "Invite trusted collaborators, keep their identities visible, forward approved prompts into a bound Codex thread, and edit explicitly shared files with conflict protection.",
+    "longDescription": "Pair a web room to the owner's local Codex, import selected visible task records and safe read-only files, forward approved prompts, and edit explicitly shared files with conflict protection.",
     "developerName": "Codex Collab",
     "category": "Productivity",
     "capabilities": [
       "Realtime collaboration",
       "Thread control",
+      "Visible task import",
       "Protected file access"
     ],
     "defaultPrompt": [
       "Create a Codex Collab session for this project.",
+      "Pair this Codex host to the room and publish this project's tasks.",
       "Show members waiting for approval.",
       "Bind this Codex task to the active collaboration session."
     ],

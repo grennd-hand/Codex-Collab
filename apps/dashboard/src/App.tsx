@@ -14,6 +14,7 @@ import {
   MessageBar,
   MessageBarBody,
   MessageBarTitle,
+  Select,
   Skeleton,
   SkeletonItem,
   Textarea,
@@ -29,6 +30,9 @@ import {
   ChatMultipleRegular,
   CopyRegular,
   DismissRegular,
+  DocumentRegular,
+  FolderOpenRegular,
+  HistoryRegular,
   KeyRegular,
   LockClosedRegular,
   PersonAddRegular,
@@ -40,6 +44,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   CreateInviteResponse,
+  CreateHostPairingResponse,
   CreateSessionResponse,
   JoinInviteResponse,
   Member,
@@ -47,6 +52,8 @@ import type {
   MessageKind,
   RealtimeEnvelope,
   Session,
+  WorkspaceFileContent,
+  WorkspaceSummary,
 } from "@codex-collab/protocol";
 import { copyText } from "./clipboard.js";
 import { shouldRestoreCredential } from "./invite-session.js";
@@ -178,6 +185,14 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [setupOpen, setSetupOpen] = useState(!initialCredential);
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const [workspaceSummary, setWorkspaceSummary] = useState<WorkspaceSummary | null>(null);
+  const [workspaceLoading, setWorkspaceLoading] = useState(false);
+  const [pairingToken, setPairingToken] = useState("");
+  const [pairingExpiresAt, setPairingExpiresAt] = useState("");
+  const [pairingCopied, setPairingCopied] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<WorkspaceFileContent | null>(null);
+  const [fileLoading, setFileLoading] = useState(false);
   const [inviteLink, setInviteLink] = useState("");
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
@@ -191,6 +206,7 @@ export function App() {
   );
   const messageStreamRef = useRef<HTMLElement>(null);
   const inviteLinkRef = useRef<HTMLInputElement>(null);
+  const pairingTokenRef = useRef<HTMLInputElement>(null);
 
   const session = credential?.session ?? null;
   const member = credential?.member ?? null;
@@ -250,13 +266,30 @@ export function App() {
     );
   }, []);
 
+  const refreshWorkspace = useCallback(async () => {
+    if (!session || !token || !approved) {
+      return null;
+    }
+    const result = await requestJson<{ workspace: WorkspaceSummary }>(
+      `/v1/sessions/${session.id}/workspace`,
+      { headers: authHeaders() },
+    );
+    setWorkspaceSummary(result.workspace);
+    setSelectedFile((current) =>
+      current && !result.workspace.files.some((file) => file.path === current.path)
+        ? null
+        : current,
+    );
+    return result.workspace;
+  }, [approved, authHeaders, session, token]);
+
   const refresh = useCallback(async () => {
     if (!session || !token || !approved) {
       return;
     }
     setLoading(true);
     try {
-      const [messageResult, memberResult, meResult] = await Promise.all([
+      const [messageResult, memberResult, meResult, workspaceResult] = await Promise.all([
         requestJson<{ messages: Message[] }>(
           `/v1/sessions/${session.id}/messages`,
           { headers: authHeaders() },
@@ -268,9 +301,14 @@ export function App() {
         requestJson<{ member: Member }>(`/v1/sessions/${session.id}/me`, {
           headers: authHeaders(),
         }),
+        requestJson<{ workspace: WorkspaceSummary }>(
+          `/v1/sessions/${session.id}/workspace`,
+          { headers: authHeaders() },
+        ),
       ]);
       setMessages(messageResult.messages);
       setMembers(memberResult.members);
+      setWorkspaceSummary(workspaceResult.workspace);
       if (meResult.member.status !== member.status) {
         saveCredential({ session, member: meResult.member, token });
       }
@@ -386,6 +424,10 @@ export function App() {
           pushActivity("成员状态已变化", next.displayName, "success");
           void refresh();
         }
+        if (envelope.type === "workspace.updated") {
+          pushActivity("共享工作区已更新", "Codex 记录或文件发生变化", "success");
+          void refreshWorkspace().catch(showError);
+        }
       });
       socket.addEventListener("close", () => {
         if (!stopped) {
@@ -408,7 +450,7 @@ export function App() {
       }
       socket?.close();
     };
-  }, [addMessage, approved, pushActivity, refresh, session, token]);
+  }, [addMessage, approved, pushActivity, refresh, refreshWorkspace, session, showError, token]);
 
   const createSession = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -553,11 +595,108 @@ export function App() {
     }
   };
 
+  const openWorkspace = async () => {
+    setWorkspaceOpen(true);
+    setWorkspaceLoading(true);
+    try {
+      await refreshWorkspace();
+      setError(null);
+    } catch (caught) {
+      showError(caught);
+    } finally {
+      setWorkspaceLoading(false);
+    }
+  };
+
+  const createHostPairing = async () => {
+    if (!session || member?.role !== "owner") {
+      return;
+    }
+    setWorkspaceLoading(true);
+    try {
+      const result = await requestJson<CreateHostPairingResponse>(
+        `/v1/sessions/${session.id}/host-pairings`,
+        {
+          method: "POST",
+          headers: authHeaders(true),
+          body: JSON.stringify({ expiresInMinutes: 10 }),
+        },
+      );
+      setPairingToken(result.pairingToken);
+      setPairingExpiresAt(result.expiresAt);
+      setPairingCopied(false);
+      pushActivity("本机配对码已生成", "10 分钟内使用一次", "success");
+    } catch (caught) {
+      showError(caught);
+    } finally {
+      setWorkspaceLoading(false);
+    }
+  };
+
+  const copyPairingToken = async () => {
+    const copiedSuccessfully = await copyText(
+      pairingToken,
+      pairingTokenRef.current ?? undefined,
+    );
+    setPairingCopied(copiedSuccessfully);
+    if (!copiedSuccessfully) {
+      pairingTokenRef.current?.focus();
+      pairingTokenRef.current?.select();
+    }
+  };
+
+  const selectCodexThread = async (threadId: string) => {
+    if (!session || !threadId || member?.role !== "owner") {
+      return;
+    }
+    setWorkspaceLoading(true);
+    setSelectedFile(null);
+    try {
+      const result = await requestJson<{ workspace: WorkspaceSummary }>(
+        `/v1/sessions/${session.id}/workspace/selection`,
+        {
+          method: "PUT",
+          headers: authHeaders(true),
+          body: JSON.stringify({ threadId }),
+        },
+      );
+      setWorkspaceSummary(result.workspace);
+      pushActivity("已选择 Codex 任务", "等待本机插件导入记录与文件", "success");
+    } catch (caught) {
+      showError(caught);
+    } finally {
+      setWorkspaceLoading(false);
+    }
+  };
+
+  const openWorkspaceFile = async (path: string) => {
+    if (!session) {
+      return;
+    }
+    setFileLoading(true);
+    try {
+      const result = await requestJson<{ file: WorkspaceFileContent }>(
+        `/v1/sessions/${session.id}/workspace/file?path=${encodeURIComponent(path)}`,
+        { headers: authHeaders() },
+      );
+      setSelectedFile(result.file);
+      setError(null);
+    } catch (caught) {
+      showError(caught);
+    } finally {
+      setFileLoading(false);
+    }
+  };
+
   const resetSession = () => {
     sessionStorage.removeItem(storageKey);
     setCredential(null);
     setMembers([]);
     setMessages([]);
+    setWorkspaceSummary(null);
+    setWorkspaceOpen(false);
+    setPairingToken("");
+    setSelectedFile(null);
     setError(null);
     setConnection("ready");
     setSetupOpen(true);
@@ -585,10 +724,22 @@ export function App() {
           </div>
 
           <div className="topbar-actions">
+            {approved ? (
+              <Button
+                appearance="secondary"
+                icon={<FolderOpenRegular />}
+                className="workspace-button"
+                aria-label="Codex 与文件"
+                onClick={() => void openWorkspace()}
+              >
+                <span className="workspace-button-label">Codex 与文件</span>
+              </Button>
+            ) : null}
             {member?.role === "owner" && approved ? (
               <Button
                 appearance="secondary"
                 icon={<PersonAddRegular />}
+                className="invite-button"
                 onClick={createInvite}
               >
                 创建邀请
@@ -852,6 +1003,251 @@ export function App() {
           </aside>
         </div>
       </div>
+
+      <Dialog
+        open={workspaceOpen}
+        onOpenChange={(_, data) => setWorkspaceOpen(data.open)}
+      >
+        <DialogSurface className="workspace-dialog-surface">
+          <DialogBody>
+            <DialogTitle>Codex 任务与共享文件</DialogTitle>
+            <DialogContent className="workspace-dialog-content">
+              <p className="dialog-intro">
+                房主选择本机 Codex 任务后，只导入可见的用户/助手消息与安全文本文件。
+                已批准成员拥有只读访问权。
+              </p>
+
+              {workspaceLoading && !workspaceSummary ? (
+                <div className="workspace-dialog-loading">
+                  <Skeleton>
+                    <SkeletonItem />
+                    <SkeletonItem />
+                  </Skeleton>
+                </div>
+              ) : null}
+
+              {!workspaceSummary?.hostConnected ? (
+                <section className="pairing-panel">
+                  <div className="workspace-section-heading">
+                    <div>
+                      <span>步骤 1</span>
+                      <h3>连接房主的本机 Codex</h3>
+                    </div>
+                    {member?.role === "owner" ? (
+                      <Button
+                        appearance="primary"
+                        disabled={workspaceLoading}
+                        onClick={() => void createHostPairing()}
+                      >
+                        生成一次性配对码
+                      </Button>
+                    ) : null}
+                  </div>
+                  {member?.role !== "owner" ? (
+                    <MessageBar intent="info">
+                      <MessageBarBody>等待房主连接本机 Codex 工作区。</MessageBarBody>
+                    </MessageBar>
+                  ) : null}
+                  {pairingToken ? (
+                    <div className="pairing-instructions">
+                      <Field label="一次性配对码">
+                        <Input
+                          ref={pairingTokenRef}
+                          value={pairingToken}
+                          readOnly
+                          onClick={(event) => event.currentTarget.select()}
+                          onFocus={(event) => event.currentTarget.select()}
+                          contentAfter={
+                            <Button
+                              appearance="transparent"
+                              icon={<CopyRegular />}
+                              aria-label="复制配对码"
+                              onClick={() => void copyPairingToken()}
+                            />
+                          }
+                        />
+                      </Field>
+                      <p>
+                        回到房主的 Codex 对话，让 Codex 使用
+                        <strong> collab_pair_host </strong>
+                        认领此码，并明确传入要共享的项目绝对路径。
+                      </p>
+                      <span>
+                        {pairingCopied ? "配对码已复制 · " : ""}
+                        有效至 {new Date(pairingExpiresAt).toLocaleTimeString("zh-CN")}
+                      </span>
+                    </div>
+                  ) : null}
+                </section>
+              ) : (
+                <>
+                  <section className="workspace-status-card">
+                    <div>
+                      <span>本机已连接</span>
+                      <strong>{workspaceSummary.rootLabel}</strong>
+                      <small>{workspaceSummary.hostDeviceLabel}</small>
+                    </div>
+                    <Badge appearance="tint" color="success">
+                      {workspaceSummary.syncedAt ? "已同步" : "等待导入"}
+                    </Badge>
+                  </section>
+
+                  <section className="thread-picker">
+                    <div className="workspace-section-heading">
+                      <div>
+                        <span>步骤 2</span>
+                        <h3>选择要导入的 Codex 任务</h3>
+                      </div>
+                      {workspaceSummary.syncedAt ? (
+                        <small>
+                          最近同步 {timeLabel(workspaceSummary.syncedAt)}
+                        </small>
+                      ) : null}
+                    </div>
+                    {member?.role === "owner" ? (
+                      <Field
+                        label="本项目的 Codex 记录"
+                        hint={
+                          workspaceSummary.threads.length === 0
+                            ? "本机没有找到工作目录匹配的 Codex 任务。"
+                            : "选择后，本机插件会自动导入。再次选择可重新同步。"
+                        }
+                      >
+                        <Select
+                          value={workspaceSummary.selectedThreadId ?? ""}
+                          disabled={workspaceLoading || workspaceSummary.threads.length === 0}
+                          onChange={(_, data) => void selectCodexThread(data.value)}
+                        >
+                          <option value="">请选择 Codex 任务</option>
+                          {workspaceSummary.threads.map((thread) => (
+                            <option value={thread.id} key={thread.id}>
+                              {thread.name || thread.preview || thread.id}
+                            </option>
+                          ))}
+                        </Select>
+                      </Field>
+                    ) : workspaceSummary.selectedThread ? (
+                      <div className="selected-thread-summary">
+                        <HistoryRegular />
+                        <div>
+                          <strong>
+                            {workspaceSummary.selectedThread.name ||
+                              workspaceSummary.selectedThread.preview ||
+                              "已共享 Codex 任务"}
+                          </strong>
+                          <span>{workspaceSummary.selectedThread.preview}</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <MessageBar intent="info">
+                        <MessageBarBody>等待房主选择要共享的 Codex 任务。</MessageBarBody>
+                      </MessageBar>
+                    )}
+                    {workspaceSummary.selectedThreadId && !workspaceSummary.syncedAt ? (
+                      <MessageBar intent="info">
+                        <MessageBarBody>
+                          任务已选择，正在等待房主本机插件导入。请保持 Codex 运行。
+                        </MessageBarBody>
+                      </MessageBar>
+                    ) : null}
+                  </section>
+
+                  <div className="workspace-data-grid">
+                    <section className="history-panel">
+                      <div className="workspace-section-heading compact">
+                        <div>
+                          <span>导入记录</span>
+                          <h3>Codex 对话</h3>
+                        </div>
+                        <small>{workspaceSummary.history.length} 条</small>
+                      </div>
+                      <div className="record-list">
+                        {workspaceSummary.history.length === 0 ? (
+                          <div className="workspace-empty">选择任务并完成同步后显示记录</div>
+                        ) : (
+                          workspaceSummary.history.map((entry) => (
+                            <article className={`record-entry ${entry.role}`} key={entry.id}>
+                              <div>
+                                <strong>{entry.role === "user" ? "用户" : "Codex"}</strong>
+                                {entry.createdAt ? (
+                                  <time dateTime={entry.createdAt}>
+                                    {timeLabel(entry.createdAt)}
+                                  </time>
+                                ) : null}
+                              </div>
+                              <p>{entry.text}</p>
+                            </article>
+                          ))
+                        )}
+                      </div>
+                    </section>
+
+                    <section className="files-panel">
+                      <div className="workspace-section-heading compact">
+                        <div>
+                          <span>只读快照</span>
+                          <h3>项目文件</h3>
+                        </div>
+                        <small>{workspaceSummary.files.length} 个</small>
+                      </div>
+                      <div className="file-browser">
+                        <nav aria-label="共享文件">
+                          {workspaceSummary.files.length === 0 ? (
+                            <div className="workspace-empty">同步后显示可安全共享的文本文件</div>
+                          ) : (
+                            workspaceSummary.files.map((file) => (
+                              <button
+                                type="button"
+                                className={selectedFile?.path === file.path ? "active" : ""}
+                                key={file.path}
+                                onClick={() => void openWorkspaceFile(file.path)}
+                              >
+                                <DocumentRegular />
+                                <span>{file.path}</span>
+                                <small>{Math.max(1, Math.ceil(file.size / 1024))} KB</small>
+                              </button>
+                            ))
+                          )}
+                        </nav>
+                        <div className="file-preview">
+                          {fileLoading ? (
+                            <span>正在读取文件…</span>
+                          ) : selectedFile ? (
+                            <>
+                              <header>
+                                <strong>{selectedFile.path}</strong>
+                                <span>SHA {selectedFile.sha256.slice(0, 10)}</span>
+                              </header>
+                              <pre>{selectedFile.content}</pre>
+                            </>
+                          ) : (
+                            <div className="workspace-empty">选择文件查看内容</div>
+                          )}
+                        </div>
+                      </div>
+                    </section>
+                  </div>
+                </>
+              )}
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="secondary" onClick={() => setWorkspaceOpen(false)}>
+                关闭
+              </Button>
+              {workspaceSummary?.hostConnected ? (
+                <Button
+                  appearance="primary"
+                  icon={<ArrowSyncRegular />}
+                  disabled={workspaceLoading}
+                  onClick={() => void openWorkspace()}
+                >
+                  刷新
+                </Button>
+              ) : null}
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
 
       <Dialog open={setupOpen} modalType="alert">
         <DialogSurface>

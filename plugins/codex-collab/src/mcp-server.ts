@@ -1,5 +1,5 @@
 import { hostname } from "node:os";
-import { isAbsolute } from "node:path";
+import { basename, isAbsolute } from "node:path";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -11,6 +11,7 @@ import { CodexAppServerClient } from "./app-server-client.js";
 import { FileSandbox } from "./file-sandbox.js";
 import { LocalProfileStore, type LocalProfile } from "./local-profile.js";
 import { RelayClient } from "./relay-client.js";
+import { buildWorkspaceSnapshot } from "./workspace-snapshot.js";
 
 const server = new Server(
   { name: "codex-collab", version: "0.1.0" },
@@ -67,6 +68,30 @@ const tools = [
       },
       additionalProperties: false,
     },
+  },
+  {
+    name: "collab_pair_host",
+    description:
+      "Claim a short-lived pairing code from the web room, bind an explicit project root, and publish local Codex tasks for owner selection.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        relayUrl: { type: "string", default: "http://127.0.0.1:4177" },
+        pairingToken: { type: "string" },
+        projectRoot: {
+          type: "string",
+          description: "Absolute project root to publish. .codex is never implicit.",
+        },
+      },
+      required: ["pairingToken", "projectRoot"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "collab_refresh_workspace",
+    description:
+      "Refresh the room's local Codex task catalog and re-import the selected task history plus safe view-only project files.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
     name: "collab_join_session",
@@ -227,13 +252,98 @@ function publicProfile(profile: LocalProfile) {
   return safe;
 }
 
+function rootLabel(root: string): string {
+  return basename(root) || root;
+}
+
+async function publishCatalog(
+  profile: LocalProfile,
+  relay: RelayClient,
+): Promise<Awaited<ReturnType<RelayClient["publishWorkspaceCatalog"]>>> {
+  const sandbox = await FileSandbox.create(profile.projectRoot);
+  const threads = await codex.listThreads(sandbox.getRoot());
+  return relay.publishWorkspaceCatalog(profile.sessionId, profile.memberToken, {
+    deviceLabel: hostname(),
+    rootLabel: rootLabel(sandbox.getRoot()),
+    threads: threads.map((thread) => ({
+      id: thread.id,
+      name: thread.name ?? null,
+      preview: thread.preview?.trim().slice(0, 1_000) ?? "",
+      updatedAt:
+        typeof thread.updatedAt === "number" && Number.isFinite(thread.updatedAt)
+          ? thread.updatedAt
+          : null,
+    })),
+  });
+}
+
+let workspaceSyncActive = false;
+
+async function syncSelectedWorkspace(force = false): Promise<{
+  selectedThreadId: string | null;
+  syncedAt: string | null;
+  historyCount: number;
+  fileCount: number;
+}> {
+  if (workspaceSyncActive) {
+    return { selectedThreadId: null, syncedAt: null, historyCount: 0, fileCount: 0 };
+  }
+  workspaceSyncActive = true;
+  try {
+    const profile = await profiles.read();
+    if (!profile || profile.role !== "owner") {
+      return { selectedThreadId: null, syncedAt: null, historyCount: 0, fileCount: 0 };
+    }
+    const relay = new RelayClient(profile.relayUrl);
+    const workspace = await relay.getWorkspace(profile.sessionId, profile.memberToken);
+    if (!workspace.selectedThreadId || (!force && workspace.syncedAt)) {
+      return {
+        selectedThreadId: workspace.selectedThreadId,
+        syncedAt: workspace.syncedAt,
+        historyCount: workspace.history.length,
+        fileCount: workspace.files.length,
+      };
+    }
+
+    const sandbox = await FileSandbox.create(profile.projectRoot);
+    const localThreads = await codex.listThreads(sandbox.getRoot());
+    if (!localThreads.some((thread) => thread.id === workspace.selectedThreadId)) {
+      throw new Error("Selected Codex task no longer belongs to the explicitly shared root");
+    }
+    const [history, files] = await Promise.all([
+      codex.readThreadHistory(workspace.selectedThreadId),
+      buildWorkspaceSnapshot(sandbox),
+    ]);
+    const imported = await relay.publishWorkspaceSnapshot(
+      profile.sessionId,
+      profile.memberToken,
+      {
+        threadId: workspace.selectedThreadId,
+        history,
+        files,
+      },
+    );
+    await profiles.update({ threadId: workspace.selectedThreadId });
+    return {
+      selectedThreadId: imported.selectedThreadId,
+      syncedAt: imported.syncedAt,
+      historyCount: imported.history.length,
+      fileCount: imported.files.length,
+    };
+  } finally {
+    workspaceSyncActive = false;
+  }
+}
+
 async function current(): Promise<{
   profile: LocalProfile;
   relay: RelayClient;
 }> {
   const profile = await profiles.read();
   if (!profile) {
-    throw new Error("No active session. Use collab_create_session or collab_join_session first.");
+    throw new Error(
+      "No active session. Use collab_create_session, collab_pair_host or collab_join_session first.",
+    );
   }
   return { profile, relay: new RelayClient(profile.relayUrl) };
 }
@@ -288,6 +398,49 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           maxUses: integerArg(args, "maxUses", 1),
         });
         return text(invite);
+      }
+      case "collab_pair_host": {
+        const relayUrl =
+          stringArg(args, "relayUrl", true) ??
+          process.env.CODEX_COLLAB_RELAY_URL ??
+          "http://127.0.0.1:4177";
+        const sandbox = await FileSandbox.create(stringArg(args, "projectRoot")!);
+        const relay = new RelayClient(relayUrl);
+        const claimed = await relay.claimHostPairing({
+          pairingToken: stringArg(args, "pairingToken")!,
+          deviceLabel: hostname(),
+          rootLabel: rootLabel(sandbox.getRoot()),
+        });
+        const profile: LocalProfile = {
+          relayUrl,
+          sessionId: claimed.session.id,
+          memberId: claimed.owner.id,
+          displayName: claimed.owner.displayName,
+          role: "owner",
+          memberToken: claimed.memberToken,
+          projectRoot: sandbox.getRoot(),
+          forwardedMessageIds: [],
+        };
+        await profiles.write(profile);
+        const workspace = await publishCatalog(profile, relay);
+        return text({
+          session: claimed.session,
+          profile: publicProfile(profile),
+          publishedTaskCount: workspace.threads.length,
+          next: "Choose a Codex task in the room's Codex 与文件 panel. It will import automatically while this host is running.",
+        });
+      }
+      case "collab_refresh_workspace": {
+        const { profile, relay } = await current();
+        if (profile.role !== "owner") {
+          throw new Error("Only the owner host can publish a workspace");
+        }
+        const workspace = await publishCatalog(profile, relay);
+        const imported = await syncSelectedWorkspace(true);
+        return text({
+          publishedTaskCount: workspace.threads.length,
+          ...imported,
+        });
       }
       case "collab_join_session": {
         const relayUrl =
@@ -458,3 +611,13 @@ process.on("SIGINT", async () => {
 });
 
 await server.connect(new StdioServerTransport());
+
+const workspaceSyncTimer = setInterval(() => {
+  void syncSelectedWorkspace().catch((error) => {
+    console.error(
+      "[codex-collab workspace]",
+      error instanceof Error ? error.message : String(error),
+    );
+  });
+}, 2_500);
+workspaceSyncTimer.unref();

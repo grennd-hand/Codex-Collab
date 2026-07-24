@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import {
+  type ClaimHostPairingResponse,
+  type CodexRecordEntry,
+  type CodexThreadCatalogEntry,
   type CreateSessionResponse,
   type JoinInviteResponse,
   type Member,
@@ -8,6 +11,9 @@ import {
   type Message,
   type MessageKind,
   type Session,
+  type WorkspaceFile,
+  type WorkspaceFileContent,
+  type WorkspaceSummary,
   ProtocolError,
 } from "@codex-collab/protocol";
 import { hashToken, issueToken } from "./token.js";
@@ -46,6 +52,31 @@ interface InviteRow {
   expires_at: string;
   max_uses: number;
   uses: number;
+}
+
+interface HostPairingRow {
+  id: string;
+  session_id: string;
+  expires_at: string;
+  used_at: string | null;
+}
+
+interface WorkspaceStateRow {
+  session_id: string;
+  host_device_label: string;
+  root_label: string;
+  catalog_json: string;
+  selected_thread_id: string | null;
+  history_json: string;
+  synced_at: string | null;
+}
+
+interface WorkspaceFileRow {
+  path: string;
+  size: number;
+  modified_at: string;
+  sha256: string;
+  content: string;
 }
 
 function now(): string {
@@ -136,8 +167,45 @@ export class SessionStore {
         body TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS member_tokens (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        member_id TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+        token_hash TEXT NOT NULL UNIQUE,
+        device_label TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS host_pairings (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        token_hash TEXT NOT NULL UNIQUE,
+        created_by_member_id TEXT NOT NULL REFERENCES members(id),
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        used_at TEXT
+      );
+      CREATE TABLE IF NOT EXISTS workspace_state (
+        session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+        host_device_label TEXT NOT NULL,
+        root_label TEXT NOT NULL,
+        catalog_json TEXT NOT NULL DEFAULT '[]',
+        selected_thread_id TEXT,
+        history_json TEXT NOT NULL DEFAULT '[]',
+        synced_at TEXT
+      );
+      CREATE TABLE IF NOT EXISTS workspace_files (
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        path TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        modified_at TEXT NOT NULL,
+        sha256 TEXT NOT NULL,
+        content TEXT NOT NULL,
+        PRIMARY KEY (session_id, path)
+      );
       CREATE INDEX IF NOT EXISTS members_session_idx ON members(session_id);
       CREATE INDEX IF NOT EXISTS messages_session_created_idx ON messages(session_id, created_at);
+      CREATE INDEX IF NOT EXISTS member_tokens_member_idx ON member_tokens(member_id);
+      CREATE INDEX IF NOT EXISTS workspace_files_session_idx ON workspace_files(session_id);
     `);
   }
 
@@ -380,6 +448,300 @@ export class SessionStore {
     return rows.map(toMessage);
   }
 
+  createHostPairing(
+    sessionId: string,
+    memberToken: string,
+    expiresInMinutes: number,
+  ): { pairingToken: string; expiresAt: string } {
+    const owner = this.requireOwner(sessionId, memberToken);
+    const pairingToken = issueToken("ccp");
+    const expiresAt = new Date(Date.now() + expiresInMinutes * 60_000).toISOString();
+    this.db
+      .prepare(`
+        INSERT INTO host_pairings
+          (id, session_id, token_hash, created_by_member_id, created_at, expires_at, used_at)
+        VALUES (?, ?, ?, ?, ?, ?, NULL)
+      `)
+      .run(
+        randomUUID(),
+        sessionId,
+        hashToken(pairingToken),
+        owner.id,
+        now(),
+        expiresAt,
+      );
+    return { pairingToken, expiresAt };
+  }
+
+  claimHostPairing(
+    pairingToken: string,
+    deviceLabel: string,
+    rootLabel: string,
+  ): ClaimHostPairingResponse {
+    const pairing = this.db
+      .prepare(`
+        SELECT id, session_id, expires_at, used_at
+        FROM host_pairings WHERE token_hash = ?
+      `)
+      .get(hashToken(pairingToken)) as HostPairingRow | undefined;
+    if (!pairing) {
+      throw new ProtocolError(404, "pairing_not_found", "Host pairing code is invalid");
+    }
+    if (pairing.used_at) {
+      throw new ProtocolError(410, "pairing_used", "Host pairing code has already been used");
+    }
+    if (Date.parse(pairing.expires_at) <= Date.now()) {
+      throw new ProtocolError(410, "pairing_expired", "Host pairing code has expired");
+    }
+
+    const session = this.getSession(pairing.session_id);
+    const owner = this.memberById(pairing.session_id, session.ownerMemberId);
+    const memberToken = issueToken("cch");
+    const claimedAt = now();
+
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const claimed = this.db
+        .prepare(`
+          UPDATE host_pairings SET used_at = ?
+          WHERE id = ? AND used_at IS NULL
+        `)
+        .run(claimedAt, pairing.id);
+      if (claimed.changes !== 1) {
+        throw new ProtocolError(410, "pairing_used", "Host pairing code has already been used");
+      }
+      this.db
+        .prepare(`
+          INSERT INTO member_tokens
+            (id, session_id, member_id, token_hash, device_label, created_at)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `)
+        .run(
+          randomUUID(),
+          pairing.session_id,
+          owner.id,
+          hashToken(memberToken),
+          deviceLabel,
+          claimedAt,
+        );
+      this.db
+        .prepare(`
+          INSERT INTO workspace_state
+            (session_id, host_device_label, root_label, catalog_json, selected_thread_id,
+             history_json, synced_at)
+          VALUES (?, ?, ?, '[]', NULL, '[]', NULL)
+          ON CONFLICT(session_id) DO UPDATE SET
+            host_device_label = excluded.host_device_label,
+            root_label = excluded.root_label,
+            catalog_json = '[]',
+            selected_thread_id = NULL,
+            history_json = '[]',
+            synced_at = NULL
+        `)
+        .run(pairing.session_id, deviceLabel, rootLabel);
+      this.db.prepare("DELETE FROM workspace_files WHERE session_id = ?").run(pairing.session_id);
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+
+    return { session, owner, memberToken };
+  }
+
+  publishWorkspaceCatalog(
+    sessionId: string,
+    memberToken: string,
+    input: {
+      deviceLabel: string;
+      rootLabel: string;
+      threads: CodexThreadCatalogEntry[];
+    },
+  ): WorkspaceSummary {
+    this.requireOwner(sessionId, memberToken);
+    const current = this.workspaceState(sessionId);
+    const selectedStillExists =
+      current?.selected_thread_id &&
+      input.threads.some((thread) => thread.id === current.selected_thread_id);
+    const selectedThreadId = selectedStillExists ? current.selected_thread_id : null;
+    const historyJson = selectedStillExists ? current?.history_json ?? "[]" : "[]";
+    const syncedAt = selectedStillExists ? current?.synced_at ?? null : null;
+
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db
+        .prepare(`
+          INSERT INTO workspace_state
+            (session_id, host_device_label, root_label, catalog_json, selected_thread_id,
+             history_json, synced_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(session_id) DO UPDATE SET
+            host_device_label = excluded.host_device_label,
+            root_label = excluded.root_label,
+            catalog_json = excluded.catalog_json,
+            selected_thread_id = excluded.selected_thread_id,
+            history_json = excluded.history_json,
+            synced_at = excluded.synced_at
+        `)
+        .run(
+          sessionId,
+          input.deviceLabel,
+          input.rootLabel,
+          JSON.stringify(input.threads),
+          selectedThreadId,
+          historyJson,
+          syncedAt,
+        );
+      if (!selectedStillExists) {
+        this.db.prepare("DELETE FROM workspace_files WHERE session_id = ?").run(sessionId);
+      }
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+    return this.getWorkspace(sessionId, memberToken);
+  }
+
+  selectWorkspaceThread(
+    sessionId: string,
+    memberToken: string,
+    threadId: string,
+  ): WorkspaceSummary {
+    this.requireOwner(sessionId, memberToken);
+    const state = this.workspaceState(sessionId);
+    if (!state) {
+      throw new ProtocolError(409, "host_not_paired", "Pair the local Codex host first");
+    }
+    const catalog = this.parseCatalog(state.catalog_json);
+    if (!catalog.some((thread) => thread.id === threadId)) {
+      throw new ProtocolError(404, "thread_not_found", "Codex task is not in the host catalog");
+    }
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db
+        .prepare(`
+          UPDATE workspace_state
+          SET selected_thread_id = ?, history_json = '[]', synced_at = NULL
+          WHERE session_id = ?
+        `)
+        .run(threadId, sessionId);
+      this.db.prepare("DELETE FROM workspace_files WHERE session_id = ?").run(sessionId);
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+    return this.getWorkspace(sessionId, memberToken);
+  }
+
+  publishWorkspaceSnapshot(
+    sessionId: string,
+    memberToken: string,
+    input: {
+      threadId: string;
+      history: CodexRecordEntry[];
+      files: WorkspaceFileContent[];
+    },
+  ): WorkspaceSummary {
+    this.requireOwner(sessionId, memberToken);
+    const state = this.workspaceState(sessionId);
+    if (!state?.selected_thread_id || state.selected_thread_id !== input.threadId) {
+      throw new ProtocolError(
+        409,
+        "thread_not_selected",
+        "The owner must select this Codex task before it can be imported",
+      );
+    }
+    const syncedAt = now();
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db.prepare("DELETE FROM workspace_files WHERE session_id = ?").run(sessionId);
+      const insertFile = this.db.prepare(`
+        INSERT INTO workspace_files
+          (session_id, path, size, modified_at, sha256, content)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `);
+      for (const file of input.files) {
+        insertFile.run(
+          sessionId,
+          file.path,
+          file.size,
+          file.modifiedAt,
+          file.sha256,
+          file.content,
+        );
+      }
+      this.db
+        .prepare(`
+          UPDATE workspace_state SET history_json = ?, synced_at = ?
+          WHERE session_id = ?
+        `)
+        .run(JSON.stringify(input.history), syncedAt, sessionId);
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+    return this.getWorkspace(sessionId, memberToken);
+  }
+
+  getWorkspace(sessionId: string, memberToken: string): WorkspaceSummary {
+    const member = this.requireMember(sessionId, memberToken, true);
+    const state = this.workspaceState(sessionId);
+    if (!state) {
+      return {
+        hostConnected: false,
+        hostDeviceLabel: null,
+        rootLabel: null,
+        threads: [],
+        selectedThreadId: null,
+        selectedThread: null,
+        history: [],
+        files: [],
+        syncedAt: null,
+      };
+    }
+    const fullCatalog = this.parseCatalog(state.catalog_json);
+    const selectedThread =
+      fullCatalog.find((thread) => thread.id === state.selected_thread_id) ?? null;
+    const rows = this.db
+      .prepare(`
+        SELECT path, size, modified_at, sha256, content
+        FROM workspace_files WHERE session_id = ? ORDER BY path ASC
+      `)
+      .all(sessionId) as unknown as WorkspaceFileRow[];
+    return {
+      hostConnected: true,
+      hostDeviceLabel: state.host_device_label,
+      rootLabel: state.root_label,
+      threads: member.role === "owner" ? fullCatalog : [],
+      selectedThreadId: state.selected_thread_id,
+      selectedThread,
+      history: this.parseHistory(state.history_json),
+      files: rows.map((row) => this.toWorkspaceFile(row)),
+      syncedAt: state.synced_at,
+    };
+  }
+
+  getWorkspaceFile(
+    sessionId: string,
+    memberToken: string,
+    path: string,
+  ): WorkspaceFileContent {
+    this.requireMember(sessionId, memberToken, true);
+    const row = this.db
+      .prepare(`
+        SELECT path, size, modified_at, sha256, content
+        FROM workspace_files WHERE session_id = ? AND path = ?
+      `)
+      .get(sessionId, path) as WorkspaceFileRow | undefined;
+    if (!row) {
+      throw new ProtocolError(404, "workspace_file_not_found", "Shared file was not found");
+    }
+    return { ...this.toWorkspaceFile(row), content: row.content };
+  }
+
   authenticateRealtime(sessionId: string, memberToken: string): Member {
     return this.requireMember(sessionId, memberToken, true);
   }
@@ -402,12 +764,23 @@ export class SessionStore {
     memberToken: string,
     requireApproved: boolean,
   ): Member {
+    const tokenHash = hashToken(memberToken);
     const row = this.db
       .prepare(`
         SELECT id, session_id, display_name, device_label, role, status, created_at, approved_at
-        FROM members WHERE session_id = ? AND token_hash = ?
+        FROM members
+        WHERE session_id = ?
+          AND (
+            token_hash = ?
+            OR EXISTS (
+              SELECT 1 FROM member_tokens
+              WHERE member_tokens.session_id = members.session_id
+                AND member_tokens.member_id = members.id
+                AND member_tokens.token_hash = ?
+            )
+          )
       `)
-      .get(sessionId, hashToken(memberToken)) as MemberRow | undefined;
+      .get(sessionId, tokenHash, tokenHash) as MemberRow | undefined;
     if (!row) {
       throw new ProtocolError(401, "unauthorized", "Member token is invalid");
     }
@@ -415,5 +788,40 @@ export class SessionStore {
       throw new ProtocolError(403, "member_not_approved", "Owner approval is required");
     }
     return toMember(row);
+  }
+
+  private requireOwner(sessionId: string, memberToken: string): Member {
+    const member = this.requireMember(sessionId, memberToken, true);
+    if (member.role !== "owner") {
+      throw new ProtocolError(403, "owner_required", "Only the owner can manage the host workspace");
+    }
+    return member;
+  }
+
+  private workspaceState(sessionId: string): WorkspaceStateRow | undefined {
+    return this.db
+      .prepare(`
+        SELECT session_id, host_device_label, root_label, catalog_json, selected_thread_id,
+               history_json, synced_at
+        FROM workspace_state WHERE session_id = ?
+      `)
+      .get(sessionId) as WorkspaceStateRow | undefined;
+  }
+
+  private parseCatalog(value: string): CodexThreadCatalogEntry[] {
+    return JSON.parse(value) as CodexThreadCatalogEntry[];
+  }
+
+  private parseHistory(value: string): CodexRecordEntry[] {
+    return JSON.parse(value) as CodexRecordEntry[];
+  }
+
+  private toWorkspaceFile(row: WorkspaceFileRow): WorkspaceFile {
+    return {
+      path: row.path,
+      size: row.size,
+      modifiedAt: row.modified_at,
+      sha256: row.sha256,
+    };
   }
 }

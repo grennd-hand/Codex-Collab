@@ -7,8 +7,11 @@ import {
   optionalInteger,
   ProtocolError,
   requiredString,
+  type CodexRecordEntry,
+  type CodexThreadCatalogEntry,
   type MessageKind,
   type RealtimeEnvelope,
+  type WorkspaceFileContent,
 } from "@codex-collab/protocol";
 import { buildInviteLink, resolveInviteOrigin } from "./invite-link.js";
 import { SessionStore } from "./session-store.js";
@@ -57,7 +60,7 @@ async function readJson(request: IncomingMessage): Promise<Record<string, unknow
   for await (const chunk of request) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     length += buffer.length;
-    if (length > 1_000_000) {
+    if (length > 6_000_000) {
       throw new ProtocolError(413, "payload_too_large", "Request body is too large");
     }
     chunks.push(buffer);
@@ -74,6 +77,116 @@ async function readJson(request: IncomingMessage): Promise<Record<string, unknow
   } catch {
     throw new ProtocolError(400, "invalid_json", "Request body must be a JSON object");
   }
+}
+
+function parseThreadCatalog(value: unknown): CodexThreadCatalogEntry[] {
+  if (!Array.isArray(value) || value.length > 100) {
+    throw new ProtocolError(400, "invalid_request", "threads must contain at most 100 tasks");
+  }
+  return value.map((item, index) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new ProtocolError(400, "invalid_request", `threads[${index}] must be an object`);
+    }
+    const record = item as Record<string, unknown>;
+    const updatedAt =
+      typeof record.updatedAt === "number" && Number.isFinite(record.updatedAt)
+        ? record.updatedAt
+        : null;
+    return {
+      id: requiredString(record.id, `threads[${index}].id`, 120),
+      name:
+        typeof record.name === "string" && record.name.trim()
+          ? record.name.trim().slice(0, 200)
+          : null,
+      preview:
+        typeof record.preview === "string" ? record.preview.trim().slice(0, 1_000) : "",
+      updatedAt,
+    };
+  });
+}
+
+function parseHistory(value: unknown): CodexRecordEntry[] {
+  if (!Array.isArray(value) || value.length > 200) {
+    throw new ProtocolError(400, "invalid_request", "history must contain at most 200 entries");
+  }
+  let totalLength = 0;
+  return value.map((item, index) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new ProtocolError(400, "invalid_request", `history[${index}] must be an object`);
+    }
+    const record = item as Record<string, unknown>;
+    if (record.role !== "user" && record.role !== "assistant") {
+      throw new ProtocolError(
+        400,
+        "invalid_request",
+        `history[${index}].role must be user or assistant`,
+      );
+    }
+    const text = requiredString(record.text, `history[${index}].text`, 20_000);
+    totalLength += text.length;
+    if (totalLength > 500_000) {
+      throw new ProtocolError(413, "history_too_large", "Imported Codex history is too large");
+    }
+    return {
+      id: requiredString(record.id, `history[${index}].id`, 160),
+      role: record.role,
+      text,
+      createdAt:
+        typeof record.createdAt === "string" && !Number.isNaN(Date.parse(record.createdAt))
+          ? new Date(record.createdAt).toISOString()
+          : null,
+    };
+  });
+}
+
+function parseWorkspaceFiles(value: unknown): WorkspaceFileContent[] {
+  if (!Array.isArray(value) || value.length > 500) {
+    throw new ProtocolError(400, "invalid_request", "files must contain at most 500 files");
+  }
+  let totalLength = 0;
+  return value.map((item, index) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new ProtocolError(400, "invalid_request", `files[${index}] must be an object`);
+    }
+    const record = item as Record<string, unknown>;
+    const path = requiredString(record.path, `files[${index}].path`, 500).replaceAll("\\", "/");
+    if (path.startsWith("/") || path.split("/").some((segment) => segment === "..")) {
+      throw new ProtocolError(400, "invalid_request", `files[${index}].path is unsafe`);
+    }
+    const content =
+      typeof record.content === "string"
+        ? record.content
+        : (() => {
+            throw new ProtocolError(
+              400,
+              "invalid_request",
+              `files[${index}].content must be a string`,
+            );
+          })();
+    totalLength += Buffer.byteLength(content);
+    if (Buffer.byteLength(content) > 256_000 || totalLength > 5_000_000) {
+      throw new ProtocolError(413, "workspace_too_large", "Shared file snapshot is too large");
+    }
+    const size = record.size;
+    if (!Number.isInteger(size) || (size as number) < 0 || (size as number) > 256_000) {
+      throw new ProtocolError(400, "invalid_request", `files[${index}].size is invalid`);
+    }
+    const sha256 = requiredString(record.sha256, `files[${index}].sha256`, 64);
+    if (!/^[a-f0-9]{64}$/.test(sha256)) {
+      throw new ProtocolError(400, "invalid_request", `files[${index}].sha256 is invalid`);
+    }
+    const modifiedAt = requiredString(record.modifiedAt, `files[${index}].modifiedAt`, 40);
+    if (Number.isNaN(Date.parse(modifiedAt))) {
+      throw new ProtocolError(400, "invalid_request", `files[${index}].modifiedAt is invalid`);
+    }
+    return {
+      path,
+      content,
+      size: size as number,
+      sha256,
+      modifiedAt: new Date(modifiedAt).toISOString(),
+    };
+  });
 }
 
 function bearerToken(request: IncomingMessage): string {
@@ -185,6 +298,18 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (method === "POST" && url.pathname === "/v1/host-pairings/claim") {
+      const body = await readJson(request);
+      const result = store.claimHostPairing(
+        requiredString(body.pairingToken, "pairingToken", 200),
+        requiredString(body.deviceLabel, "deviceLabel", 120),
+        requiredString(body.rootLabel, "rootLabel", 200),
+      );
+      broadcast(result.session.id, "workspace.updated", { hostConnected: true });
+      sendJson(response, 201, result);
+      return;
+    }
+
     const inviteMatch = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/invites$/);
     if (method === "POST" && inviteMatch?.[1]) {
       const sessionId = inviteMatch[1];
@@ -220,6 +345,25 @@ const server = createServer(async (request, response) => {
           invite.inviteToken,
         ),
       });
+      return;
+    }
+
+    const pairingMatch = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/host-pairings$/);
+    if (method === "POST" && pairingMatch?.[1]) {
+      const body = await readJson(request);
+      const expiresInMinutes = optionalInteger(
+        body.expiresInMinutes,
+        10,
+        "expiresInMinutes",
+        2,
+        30,
+      );
+      const pairing = store.createHostPairing(
+        pairingMatch[1],
+        bearerToken(request),
+        expiresInMinutes,
+      );
+      sendJson(response, 201, { sessionId: pairingMatch[1], ...pairing });
       return;
     }
 
@@ -275,6 +419,91 @@ const server = createServer(async (request, response) => {
       );
       broadcast(messagesMatch[1], "message.created", message);
       sendJson(response, 201, { message });
+      return;
+    }
+
+    const workspaceMatch = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/workspace$/);
+    if (method === "GET" && workspaceMatch?.[1]) {
+      sendJson(response, 200, {
+        workspace: store.getWorkspace(workspaceMatch[1], bearerToken(request)),
+      });
+      return;
+    }
+
+    const workspaceCatalogMatch = url.pathname.match(
+      /^\/v1\/sessions\/([^/]+)\/workspace\/catalog$/,
+    );
+    if (method === "PUT" && workspaceCatalogMatch?.[1]) {
+      const body = await readJson(request);
+      const workspace = store.publishWorkspaceCatalog(
+        workspaceCatalogMatch[1],
+        bearerToken(request),
+        {
+          deviceLabel: requiredString(body.deviceLabel, "deviceLabel", 120),
+          rootLabel: requiredString(body.rootLabel, "rootLabel", 200),
+          threads: parseThreadCatalog(body.threads),
+        },
+      );
+      broadcast(workspaceCatalogMatch[1], "workspace.updated", {
+        hostConnected: true,
+        taskCount: workspace.threads.length,
+      });
+      sendJson(response, 200, { workspace });
+      return;
+    }
+
+    const workspaceSelectionMatch = url.pathname.match(
+      /^\/v1\/sessions\/([^/]+)\/workspace\/selection$/,
+    );
+    if (method === "PUT" && workspaceSelectionMatch?.[1]) {
+      const body = await readJson(request);
+      const workspace = store.selectWorkspaceThread(
+        workspaceSelectionMatch[1],
+        bearerToken(request),
+        requiredString(body.threadId, "threadId", 120),
+      );
+      broadcast(workspaceSelectionMatch[1], "workspace.updated", {
+        selectedThreadId: workspace.selectedThreadId,
+        syncedAt: null,
+      });
+      sendJson(response, 200, { workspace });
+      return;
+    }
+
+    const workspaceSnapshotMatch = url.pathname.match(
+      /^\/v1\/sessions\/([^/]+)\/workspace\/snapshot$/,
+    );
+    if (method === "PUT" && workspaceSnapshotMatch?.[1]) {
+      const body = await readJson(request);
+      const workspace = store.publishWorkspaceSnapshot(
+        workspaceSnapshotMatch[1],
+        bearerToken(request),
+        {
+          threadId: requiredString(body.threadId, "threadId", 120),
+          history: parseHistory(body.history),
+          files: parseWorkspaceFiles(body.files),
+        },
+      );
+      broadcast(workspaceSnapshotMatch[1], "workspace.updated", {
+        selectedThreadId: workspace.selectedThreadId,
+        syncedAt: workspace.syncedAt,
+      });
+      sendJson(response, 200, { workspace });
+      return;
+    }
+
+    const workspaceFileMatch = url.pathname.match(
+      /^\/v1\/sessions\/([^/]+)\/workspace\/file$/,
+    );
+    if (method === "GET" && workspaceFileMatch?.[1]) {
+      const path = url.searchParams.get("path");
+      sendJson(response, 200, {
+        file: store.getWorkspaceFile(
+          workspaceFileMatch[1],
+          bearerToken(request),
+          requiredString(path, "path", 500),
+        ),
+      });
       return;
     }
 

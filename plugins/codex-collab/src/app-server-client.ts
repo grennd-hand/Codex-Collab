@@ -5,6 +5,7 @@ import {
   type ChildProcessWithoutNullStreams,
 } from "node:child_process";
 import { createInterface } from "node:readline";
+import type { CodexRecordEntry } from "@codex-collab/protocol";
 
 interface RpcResponse {
   id: number;
@@ -20,9 +21,64 @@ interface PendingRequest {
 export interface CodexThreadSummary {
   id: string;
   name?: string | null;
+  preview?: string;
   cwd?: string | null;
   status?: unknown;
   updatedAt?: number;
+}
+
+interface CodexThreadItem {
+  type: string;
+  id?: string;
+  text?: string;
+  content?: Array<{ type: string; text?: string }>;
+}
+
+interface CodexTurn {
+  id: string;
+  items: CodexThreadItem[];
+  startedAt?: number | null;
+}
+
+export function extractCodexRecordEntries(turns: CodexTurn[]): CodexRecordEntry[] {
+  const entries: CodexRecordEntry[] = [];
+  for (const turn of turns) {
+    const createdAt =
+      typeof turn.startedAt === "number"
+        ? new Date(turn.startedAt * 1_000).toISOString()
+        : null;
+    for (const item of turn.items) {
+      let role: CodexRecordEntry["role"] | null = null;
+      let value = "";
+      if (item.type === "userMessage") {
+        role = "user";
+        value = (item.content ?? [])
+          .filter((part) => part.type === "text" && typeof part.text === "string")
+          .map((part) => part.text)
+          .join("\n");
+      } else if (item.type === "agentMessage" && typeof item.text === "string") {
+        role = "assistant";
+        value = item.text;
+      }
+      const normalized = value.trim();
+      if (!role || !normalized) continue;
+      entries.push({
+        id: item.id ?? `${turn.id}-${entries.length}`,
+        role,
+        text: normalized.slice(0, 20_000),
+        createdAt,
+      });
+    }
+  }
+
+  const selected: CodexRecordEntry[] = [];
+  let totalLength = 0;
+  for (const entry of entries.slice(-200).reverse()) {
+    if (totalLength + entry.text.length > 500_000) break;
+    selected.push(entry);
+    totalLength += entry.text.length;
+  }
+  return selected.reverse();
 }
 
 function resolveCodexExecutable(): string {
@@ -95,6 +151,15 @@ export class CodexAppServerClient extends EventEmitter {
       ...(cwd ? { cwd } : {}),
     })) as { data?: CodexThreadSummary[] };
     return response.data ?? [];
+  }
+
+  async readThreadHistory(threadId: string): Promise<CodexRecordEntry[]> {
+    await this.start();
+    const response = (await this.request("thread/read", {
+      threadId,
+      includeTurns: true,
+    })) as { thread?: { turns?: CodexTurn[] } };
+    return extractCodexRecordEntries(response.thread?.turns ?? []);
   }
 
   async submitPeerPrompt(input: {

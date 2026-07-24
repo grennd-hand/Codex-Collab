@@ -10,10 +10,15 @@ Use the `collab_*` MCP tools for shared sessions. Keep the owner as the security
 ## Start or join
 
 1. Check `collab_health`.
-2. For an owner, call `collab_create_session` with one explicit absolute project root.
-3. Use `collab_create_invite` to create a short-lived, low-use invite.
-4. For an invited device, call `collab_join_session`.
-5. Never call `collab_approve_member` until the owner explicitly accepts the displayed member.
+2. If the owner already created the room in the web dashboard, call `collab_pair_host` with the
+   dashboard's short-lived pairing code and one explicit absolute project root.
+3. If there is no web room, call `collab_create_session` with one explicit absolute project root.
+4. After web pairing, tell the owner to select a task in **Codex 与文件**. Keep the MCP host running
+   while the selected visible history and safe read-only file snapshot are imported.
+5. Use `collab_refresh_workspace` when the owner asks to refresh the task catalog or snapshot.
+6. Use `collab_create_invite` to create a short-lived, low-use invite.
+7. For an invited device, call `collab_join_session`.
+8. Never call `collab_approve_member` until the owner explicitly accepts the displayed member.
 
 ## Bind Codex
 
@@ -27,6 +32,8 @@ Use the `collab_*` MCP tools for shared sessions. Keep the owner as the security
 ## Files
 
 - The bound project root is the entire accessible boundary.
+- Web viewers receive only a bounded, read-only safe-text snapshot. Do not imply that the web file
+  browser exposes a live filesystem or permits edits.
 - Access to the owner's `.codex` directory requires a separate, explicit binding by the owner.
 - Read a file before editing it and pass the returned SHA-256 to `collab_write_file`.
 - If the hash is stale, report the conflict and merge intentionally. Never retry as a blind overwrite.

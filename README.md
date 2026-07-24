@@ -9,7 +9,9 @@ The first working slice includes:
 - one-time invitation tokens and explicit owner approval;
 - real-time WebSocket updates;
 - a Codex plugin exposed through MCP tools;
-- binding a collaboration room to an existing Codex thread;
+- one-time web-to-local host pairing and existing Codex task selection;
+- importing visible Codex conversation records into the room;
+- approved-member read-only browsing of a filtered project-file snapshot;
 - forwarding a relay-backed peer prompt through Codex `app-server`;
 - explicit project-root file access with symlink escape protection;
 - optimistic SHA-256 conflict detection for concurrent writes.
@@ -56,6 +58,21 @@ Open `http://127.0.0.1:4177`.
 2. Select **创建邀请** and copy the one-time web link.
 3. Send the complete link to the tester. Opening it pre-fills the invite token.
 4. After the tester submits a display name, approve the pending member in the dashboard.
+
+## Import Codex records and project files
+
+1. Create a room in the dashboard and open **Codex 与文件**.
+2. As the owner, generate the ten-minute, one-time host pairing code.
+3. In the owner's local Codex, ask it to run `collab_pair_host` with that code, the public Relay
+   URL, and the explicitly approved absolute project root.
+4. Return to **Codex 与文件** and select one of the Codex tasks discovered under that root.
+5. Keep the local Codex host running briefly. It imports visible user/assistant messages and a
+   view-only safe-text file snapshot.
+6. Approved members can inspect the selected task record and shared files; pending members cannot.
+
+The import excludes reasoning, command output, `.env`, `.codex`, private-key files, likely embedded
+credentials, binary files, dependency folders, build output and symlinks. Use
+`collab_refresh_workspace` to refresh the task catalog and re-import the selected snapshot.
 
 If the browser blocks automatic clipboard access, the dashboard falls back to synchronous copy.
 When both browser copy mechanisms are unavailable, it selects the complete link and prompts the

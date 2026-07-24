@@ -126,12 +126,13 @@ docker compose \
 
 ## 8. 插件连接公网 Relay
 
-创建主人会话时显式传入：
+推荐从网页房间的“Codex 与文件”生成一次性配对码，再让本机插件调用
+`collab_pair_host`，显式传入：
 
 ```text
 relayUrl = https://codex-collab.217.194.133.194.sslip.io
+pairingToken = 网页生成的短期一次性配对码
 projectRoot = 主人明确批准的绝对目录
 ```
 
 本地状态文件会记录当前会话的 Relay URL。不要把其中的成员 token 复制到聊天、日志或 Git。
-
