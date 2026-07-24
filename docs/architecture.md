@@ -60,4 +60,4 @@ messages and intent; Git remains the merge and audit mechanism.
 - a packaged Codex widget instead of the standalone web dashboard;
 - per-root permissions for read, write, execute, and Codex configuration;
 - end-to-end device-key signing and owner-visible revocation;
-- production TLS, rate limits, backups, and audit export.
+- rate limits, automated backups, monitoring, and audit export.

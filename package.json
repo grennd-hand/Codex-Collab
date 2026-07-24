@@ -13,7 +13,7 @@
     "dev": "npm run dev --workspace @codex-collab/relay",
     "dev:dashboard": "npm run dev --workspace @codex-collab/dashboard",
     "dev:mcp": "npm run dev --workspace codex-collab",
-    "test": "npm run build --workspace @codex-collab/protocol && npm run test --workspace @codex-collab/relay && npm run test --workspace codex-collab",
+    "test": "npm run build --workspace @codex-collab/protocol && npm run test --workspace @codex-collab/dashboard && npm run test --workspace @codex-collab/relay && npm run test --workspace codex-collab",
     "typecheck": "npm run build --workspace @codex-collab/protocol && npm run typecheck --workspace @codex-collab/dashboard && npm run typecheck --workspace @codex-collab/relay && npm run typecheck --workspace codex-collab",
     "validate:plugin": "python C:/Users/21497/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py ./plugins/codex-collab"
   },

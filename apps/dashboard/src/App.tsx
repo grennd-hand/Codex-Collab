@@ -48,6 +48,7 @@ import type {
   RealtimeEnvelope,
   Session,
 } from "@codex-collab/protocol";
+import { copyText } from "./clipboard.js";
 
 const brand: BrandVariants = {
   10: "#02040C",
@@ -175,6 +176,7 @@ export function App() {
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteLink, setInviteLink] = useState("");
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const [displayName, setDisplayName] = useState(initialInviteToken ? "" : "Owner");
   const [roomName, setRoomName] = useState("Codex shared task");
   const [joinToken, setJoinToken] = useState(initialInviteToken);
@@ -184,6 +186,7 @@ export function App() {
     window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light",
   );
   const messageStreamRef = useRef<HTMLElement>(null);
+  const inviteLinkRef = useRef<HTMLInputElement>(null);
 
   const session = credential?.session ?? null;
   const member = credential?.member ?? null;
@@ -526,6 +529,7 @@ export function App() {
       );
       setInviteLink(inviteLinkForCurrentOrigin(result.inviteToken));
       setCopied(false);
+      setCopyFailed(false);
       setInviteOpen(true);
       pushActivity("邀请已创建", "60 分钟内可使用一次", "success");
     } catch (caught) {
@@ -534,11 +538,14 @@ export function App() {
   };
 
   const copyInvite = async () => {
-    try {
-      await navigator.clipboard.writeText(inviteLink);
-      setCopied(true);
-    } catch (caught) {
-      showError(caught);
+    const copiedSuccessfully = await copyText(inviteLink, inviteLinkRef.current ?? undefined);
+    setCopied(copiedSuccessfully);
+    setCopyFailed(!copiedSuccessfully);
+    if (copiedSuccessfully) {
+      pushActivity("邀请链接已复制", "可以发送给协作者", "success");
+    } else {
+      inviteLinkRef.current?.focus();
+      inviteLinkRef.current?.select();
     }
   };
 
@@ -931,13 +938,27 @@ export function App() {
                 </MessageBar>
               ) : null}
               <Field label="一次性邀请链接">
-                <Input value={inviteLink} readOnly />
+                <Input
+                  ref={inviteLinkRef}
+                  value={inviteLink}
+                  readOnly
+                  onClick={(event) => event.currentTarget.select()}
+                  onFocus={(event) => event.currentTarget.select()}
+                />
               </Field>
               {copied ? (
-                <div className="copy-confirmation">
+                <div className="copy-confirmation" aria-live="polite">
                   <CheckmarkCircleRegular />
                   邀请链接已复制
                 </div>
+              ) : null}
+              {copyFailed ? (
+                <MessageBar intent="warning">
+                  <MessageBarBody>
+                    <MessageBarTitle>浏览器阻止了自动复制</MessageBarTitle>
+                    链接已经选中，请按 Ctrl+C 复制。
+                  </MessageBarBody>
+                </MessageBar>
               ) : null}
             </DialogContent>
             <DialogActions>
@@ -949,7 +970,7 @@ export function App() {
                 icon={<CopyRegular />}
                 onClick={() => void copyInvite()}
               >
-                复制邀请链接
+                {copied ? "已复制" : "复制邀请链接"}
               </Button>
             </DialogActions>
           </DialogBody>

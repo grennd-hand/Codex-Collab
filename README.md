@@ -14,6 +14,10 @@ The first working slice includes:
 - explicit project-root file access with symlink escape protection;
 - optimistic SHA-256 conflict detection for concurrent writes.
 
+The public test deployment is available at
+<https://codex-collab.217.194.133.194.sslip.io/>. Version `0.1.0` is ready for invited MVP
+testing; production-hardening work is tracked separately and is not represented as complete.
+
 ## Repository
 
 ```text
@@ -23,6 +27,14 @@ plugins/codex-collab/       Codex plugin, MCP server and collaboration skill
 .agents/plugins/            Repo-local Codex marketplace
 docs/                       Architecture and security notes
 ```
+
+## Documentation
+
+- [Complete project guide](docs/PROJECT.md)
+- [Architecture and trust model](docs/architecture.md)
+- [Deployment and operations](docs/DEPLOYMENT.md)
+- [Testing guide](docs/TESTING.md)
+- [Task plan and roadmap](docs/TASK_PLAN.md)
 
 ## Local development
 
@@ -44,6 +56,10 @@ Open `http://127.0.0.1:4177`.
 2. Select **创建邀请** and copy the one-time web link.
 3. Send the complete link to the tester. Opening it pre-fills the invite token.
 4. After the tester submits a display name, approve the pending member in the dashboard.
+
+If the browser blocks automatic clipboard access, the dashboard falls back to synchronous copy.
+When both browser copy mechanisms are unavailable, it selects the complete link and prompts the
+owner to press `Ctrl+C`.
 
 An invite created from `127.0.0.1` or `localhost` works only on the same computer. For another
 device on a trusted LAN, listen on all interfaces and open the dashboard through the owner's LAN
