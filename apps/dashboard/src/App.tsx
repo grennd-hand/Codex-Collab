@@ -49,6 +49,7 @@ import type {
   Session,
 } from "@codex-collab/protocol";
 import { copyText } from "./clipboard.js";
+import { shouldRestoreCredential } from "./invite-session.js";
 
 const brand: BrandVariants = {
   10: "#02040C",
@@ -153,8 +154,11 @@ function isLoopbackOrigin(): boolean {
 }
 
 export function App() {
-  const initialCredential = useMemo(loadCredential, []);
   const initialInviteToken = useMemo(inviteTokenFromLocation, []);
+  const initialCredential = useMemo(
+    () => (shouldRestoreCredential(initialInviteToken) ? loadCredential() : null),
+    [initialInviteToken],
+  );
   const [credential, setCredential] = useState<SavedCredential | null>(initialCredential);
   const [members, setMembers] = useState<Member[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);

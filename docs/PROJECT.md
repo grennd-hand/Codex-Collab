@@ -101,6 +101,7 @@ scripts/                    MCP 与 app-server 验证脚本
 - Relay SQLite：Docker `relay-data` 命名卷；
 - Caddy 证书与配置：独立命名卷；
 - 浏览器成员凭据：当前标签页的 `sessionStorage`；
+- URL 中存在一次性邀请时，邀请流程优先于当前标签页已有凭据；只有申请成功后才替换凭据；
 - 本地插件成员凭据：用户目录下 `.codex-collab/state.json`；
 - Relay 数据库只保存 token 哈希，不保存原始成员 token；
 - 邀请 token 位于 URL fragment，不会随普通 HTTP 请求发送给服务器；
@@ -122,4 +123,3 @@ scripts/                    MCP 与 app-server 验证脚本
 - [部署与运维](./DEPLOYMENT.md)
 - [测试手册](./TESTING.md)
 - [任务规划书](./TASK_PLAN.md)
-
