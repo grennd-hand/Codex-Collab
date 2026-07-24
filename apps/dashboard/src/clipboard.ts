@@ -8,21 +8,17 @@ export async function copyWithFallback(text: string, adapter: CopyAdapter): Prom
     return false;
   }
 
-  try {
-    if (adapter.legacyCopy(text)) {
+  if (adapter.writeClipboard) {
+    try {
+      await adapter.writeClipboard(text);
       return true;
+    } catch {
+      // Continue to the synchronous compatibility path when Clipboard API access is denied.
     }
-  } catch {
-    // Continue to the asynchronous Clipboard API when the legacy path is unavailable.
-  }
-
-  if (!adapter.writeClipboard) {
-    return false;
   }
 
   try {
-    await adapter.writeClipboard(text);
-    return true;
+    return adapter.legacyCopy(text);
   } catch {
     return false;
   }
