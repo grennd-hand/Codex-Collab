@@ -1,0 +1,19 @@
+services:
+  relay:
+    build:
+      context: .
+      dockerfile: apps/relay/Dockerfile
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: 4177
+      CODEX_COLLAB_DATA_DIR: /data
+      CODEX_COLLAB_PUBLIC_URL: ${CODEX_COLLAB_PUBLIC_URL:-}
+      CODEX_COLLAB_TRUST_PROXY: ${CODEX_COLLAB_TRUST_PROXY:-0}
+    volumes:
+      - relay-data:/data
+    ports:
+      - "127.0.0.1:4177:4177"
+
+volumes:
+  relay-data:

@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "codex-collab": {
+      "command": "node",
+      "args": [
+        "./dist/mcp-server.js"
+      ],
+      "env": {
+        "CODEX_COLLAB_RELAY_URL": "http://127.0.0.1:4177"
+      }
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "@codex-collab/relay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/server.js",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@codex-collab/protocol": "0.1.0",
+    "ws": "^8.18.3"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "name": "codex-collab",
+  "version": "0.1.0",
+  "description": "Share a Codex task, coordinate trusted members, and protect concurrent file edits.",
+  "author": {
+    "name": "Codex Collab"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Codex Collab",
+    "shortDescription": "A shared control room for one Codex task.",
+    "longDescription": "Invite trusted collaborators, keep their identities visible, forward approved prompts into a bound Codex thread, and edit explicitly shared files with conflict protection.",
+    "developerName": "Codex Collab",
+    "category": "Productivity",
+    "capabilities": [
+      "Realtime collaboration",
+      "Thread control",
+      "Protected file access"
+    ],
+    "defaultPrompt": [
+      "Create a Codex Collab session for this project.",
+      "Show members waiting for approval.",
+      "Bind this Codex task to the active collaboration session."
+    ],
+    "brandColor": "#2E5BFF"
+  },
+  "mcpServers": "./.mcp.json",
+  "apps": "./.app.json"
+}

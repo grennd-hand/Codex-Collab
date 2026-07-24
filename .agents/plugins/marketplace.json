@@ -1,0 +1,20 @@
+{
+  "name": "codex-collab-local",
+  "interface": {
+    "displayName": "Codex Collab Local"
+  },
+  "plugins": [
+    {
+      "name": "codex-collab",
+      "source": {
+        "source": "local",
+        "path": "./plugins/codex-collab"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
