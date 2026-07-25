@@ -92,6 +92,7 @@ import {
   buildMemberIdentityMap,
   fallbackMemberIdentity,
 } from "./member-identity.js";
+import { isCredentialRejected, requestJson } from "./api-client.js";
 
 const brand: BrandVariants = {
   10: "#02040C",
@@ -121,6 +122,7 @@ const maxAttachmentTotalSize = 6_000_000;
 
 type ThemeMode = "light" | "dark";
 type ConnectionState = "ready" | "connecting" | "live" | "waiting" | "error";
+type SessionExitReason = "manual" | "credential-rejected";
 export type ComposerMode = "codex" | "chat";
 export type CodexExecutionPhase = "idle" | "queued" | "running" | "stopping";
 export type ComposerPrimaryAction = "send_chat" | "send_codex" | "stop_codex";
@@ -203,12 +205,6 @@ interface ActivityItem {
   detail: string;
   createdAt: string;
   tone: "info" | "success" | "warning" | "danger";
-}
-
-interface ApiErrorBody {
-  error?: {
-    message?: string;
-  };
 }
 
 interface PendingAttachment {
@@ -315,15 +311,6 @@ function loadCredential(): SavedCredential | null {
   }
 }
 
-async function requestJson<T>(path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(path, options);
-  const body = (await response.json()) as T & ApiErrorBody;
-  if (!response.ok) {
-    throw new Error(body.error?.message ?? "请求未完成");
-  }
-  return body;
-}
-
 function timeLabel(value: string): string {
   return new Intl.DateTimeFormat("zh-CN", {
     hour: "2-digit",
@@ -368,6 +355,7 @@ export function App() {
     [initialInviteToken],
   );
   const [credential, setCredential] = useState<SavedCredential | null>(initialCredential);
+  const [credentialValidated, setCredentialValidated] = useState(!initialCredential);
   const [members, setMembers] = useState<Member[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [activities, setActivities] = useState<ActivityItem[]>([
@@ -387,6 +375,7 @@ export function App() {
     initialCredential?.member.status === "approved",
   );
   const [error, setError] = useState<string | null>(null);
+  const [credentialNotice, setCredentialNotice] = useState<string | null>(null);
   const [setupOpen, setSetupOpen] = useState(!initialCredential);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
@@ -453,14 +442,57 @@ export function App() {
     [],
   );
 
+  const clearSessionState = useCallback(
+    (reason: SessionExitReason) => {
+      sessionStorage.removeItem(storageKey);
+      setCredential(null);
+      setCredentialValidated(true);
+      setMembers([]);
+      setMessages([]);
+      setWorkspaceSummary(null);
+      setConversationLoading(false);
+      setLoading(false);
+      setWorkspaceLoading(false);
+      setWorkspaceOpen(false);
+      setInviteOpen(false);
+      setPairingToken("");
+      setPairingExpiresAt("");
+      setSelectedFile(null);
+      setFileLoading(false);
+      setInviteLink("");
+      setCopied(false);
+      setCopyFailed(false);
+      setDraft("");
+      setChatDraft("");
+      setPendingAttachments([]);
+      setJoinToken("");
+      setError(null);
+      setConnection("ready");
+      setSetupOpen(true);
+      if (reason === "credential-rejected") {
+        const detail = "上次保存的会话凭据已失效，请重新创建会话或使用新的邀请加入。";
+        setCredentialNotice(detail);
+        pushActivity("需要重新连接", detail, "warning");
+        return;
+      }
+      setCredentialNotice(null);
+      pushActivity("已离开本机会话", "服务器数据未删除", "info");
+    },
+    [pushActivity],
+  );
+
   const showError = useCallback(
     (caught: unknown) => {
+      if (isCredentialRejected(caught)) {
+        clearSessionState("credential-rejected");
+        return;
+      }
       const message = caught instanceof Error ? caught.message : "请求未完成";
       setError(message);
       setConnection("error");
       pushActivity("操作未完成", message, "danger");
     },
-    [pushActivity],
+    [clearSessionState, pushActivity],
   );
 
   const saveCredential = useCallback((next: SavedCredential) => {
@@ -485,6 +517,39 @@ export function App() {
       return updated;
     });
   }, []);
+
+  useEffect(() => {
+    if (!session || !token || credentialValidated) {
+      return;
+    }
+    let stopped = false;
+    setConnection("connecting");
+    void requestJson<{ member: Member; session: Session }>(
+      `/v1/sessions/${session.id}/me`,
+      { headers: { authorization: `Bearer ${token}` } },
+    )
+      .then((result) => {
+        if (stopped) {
+          return;
+        }
+        saveCredential({
+          session: result.session,
+          member: result.member,
+          token,
+        });
+        setCredentialValidated(true);
+        setConnection(result.member.status === "pending" ? "waiting" : "connecting");
+        setError(null);
+      })
+      .catch((caught: unknown) => {
+        if (!stopped) {
+          showError(caught);
+        }
+      });
+    return () => {
+      stopped = true;
+    };
+  }, [credentialValidated, saveCredential, session, showError, token]);
 
   const refreshWorkspace = useCallback(async () => {
     if (!session || !token || !approved) {
@@ -659,14 +724,14 @@ export function App() {
   }, [member?.role, members]);
 
   useEffect(() => {
-    if (!approved) {
+    if (!approved || !credentialValidated) {
       return;
     }
     void refresh();
-  }, [approved, refresh]);
+  }, [approved, credentialValidated, refresh]);
 
   useEffect(() => {
-    if (!session || !token || member?.status !== "pending") {
+    if (!session || !token || !credentialValidated || member?.status !== "pending") {
       return;
     }
     let stopped = false;
@@ -695,8 +760,10 @@ export function App() {
         }
       } catch (caught) {
         if (!stopped) {
-          setError(caught instanceof Error ? caught.message : "无法检查批准状态");
-          setConnection("error");
+          showError(caught);
+          if (isCredentialRejected(caught)) {
+            return;
+          }
         }
       }
       if (!stopped) {
@@ -711,10 +778,18 @@ export function App() {
         window.clearTimeout(timer);
       }
     };
-  }, [member?.status, pushActivity, saveCredential, session, token]);
+  }, [
+    credentialValidated,
+    member?.status,
+    pushActivity,
+    saveCredential,
+    session,
+    showError,
+    token,
+  ]);
 
   useEffect(() => {
-    if (!session || !token || !approved) {
+    if (!session || !token || !approved || !credentialValidated) {
       return;
     }
     let stopped = false;
@@ -789,6 +864,7 @@ export function App() {
   }, [
     addMessage,
     approved,
+    credentialValidated,
     member,
     pushActivity,
     refresh,
@@ -817,10 +893,12 @@ export function App() {
         member: result.owner,
         token: result.memberToken,
       });
+      setCredentialValidated(true);
       setMembers([result.owner]);
       setSetupOpen(false);
       setConnection("connecting");
       setError(null);
+      setCredentialNotice(null);
       pushActivity("共享任务已创建", "你是主人", "success");
     } catch (caught) {
       showError(caught);
@@ -846,10 +924,12 @@ export function App() {
         member: result.member,
         token: result.memberToken,
       });
+      setCredentialValidated(true);
       setMembers([result.member]);
       setSetupOpen(false);
       setConnection("waiting");
       setError(null);
+      setCredentialNotice(null);
       window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
       pushActivity("加入申请已发送", "等待主人批准", "warning");
     } catch (caught) {
@@ -1186,22 +1266,7 @@ export function App() {
   };
 
   const resetSession = () => {
-    sessionStorage.removeItem(storageKey);
-    setCredential(null);
-    setMembers([]);
-    setMessages([]);
-    setWorkspaceSummary(null);
-    setConversationLoading(false);
-    setWorkspaceOpen(false);
-    setPairingToken("");
-    setSelectedFile(null);
-    setDraft("");
-    setChatDraft("");
-    setPendingAttachments([]);
-    setError(null);
-    setConnection("ready");
-    setSetupOpen(true);
-    pushActivity("已离开本机会话", "服务器数据未删除", "info");
+    clearSessionState("manual");
   };
 
   const owner = members.find((item) => item.role === "owner");
@@ -2292,6 +2357,20 @@ export function App() {
             <DialogBody>
               <DialogTitle>连接协作会话</DialogTitle>
               <DialogContent className="setup-fields">
+                {credentialNotice ? (
+                  <MessageBar intent="warning">
+                    <MessageBarBody>
+                      <MessageBarTitle>需要重新连接</MessageBarTitle>
+                      {credentialNotice}
+                    </MessageBarBody>
+                    <Button
+                      appearance="transparent"
+                      icon={<DismissRegular />}
+                      aria-label="关闭会话失效提示"
+                      onClick={() => setCredentialNotice(null)}
+                    />
+                  </MessageBar>
+                ) : null}
                 <p className="dialog-intro">
                   {initialInviteToken
                     ? "你收到了一次性协作邀请。填写显示名称后申请加入。"
