@@ -25,6 +25,14 @@ Relay 不直接发布宿主机端口。Caddy 只发布 443，因而可以与已�
 - 数据卷：`codex-collab_relay-data`
 - TLS：Caddy 自动管理的受信任证书
 
+独立的第二实例：
+
+- 控制台与 API：<https://codex-collab-guest.217.194.133.194.sslip.io/>
+- 部署目录：`/opt/codex-collab-secondary/current`
+- Compose 项目名：`codex-collab-secondary`
+- 本机端口：`127.0.0.1:4178`
+- 数据卷：`codex-collab-secondary_relay-data`
+
 服务器登录凭据不得写入本文档、Git、Compose 环境文件或日志。
 
 ## 3. 首次部署
@@ -79,12 +87,35 @@ curl --fail --show-error \
 5. 校验本地与服务器 SHA-256 一致。
 6. 解压到同目录的 `app`，复制服务器私有 `deploy/.env`。
 7. 将 `/opt/codex-collab/current` 原子指向新发布目录。
-8. 执行 Compose `config --quiet` 后再 `up -d --build`。
+8. 执行 Compose `config --quiet` 后只更新目标 Relay：
+   `up -d --build --no-deps relay`。仅在反向代理配置发生变化时重建 Caddy。
 9. 验证容器、HTTPS 和完整邀请闭环。
 
 保留上一版发布目录，便于快速回滚。
 
-## 6. 回滚
+## 6. 更新第二实例
+
+第二实例使用 `deploy/docker-compose.secondary.yml`，共享主实例的 Caddy 网络，但不共享
+Relay 容器、发布目录或数据卷。部署主实例不会重启第二 Relay。
+
+```bash
+cd /opt/codex-collab-secondary/current
+docker compose \
+  -p codex-collab-secondary \
+  --env-file deploy/.env \
+  -f deploy/docker-compose.secondary.yml \
+  up -d --build
+```
+
+第二实例环境文件至少包含：
+
+```text
+CODEX_COLLAB_DOMAIN=codex-collab-guest.217.194.133.194.sslip.io
+CODEX_COLLAB_HOST_PORT=4178
+CODEX_COLLAB_PROXY_NETWORK=codex-collab_collab
+```
+
+## 7. 回滚
 
 ```bash
 ln -sfn /opt/codex-collab/releases/<previous-sha>/app /opt/codex-collab/current
@@ -98,7 +129,7 @@ docker compose \
 
 回滚后仍要重新检查容器健康状态和公网 `/health`。
 
-## 7. 数据备份
+## 8. 数据备份
 
 当前版本尚未自动备份。人工备份时应先短暂停止 Relay，避免复制 WAL 中间状态：
 
@@ -124,7 +155,7 @@ docker compose \
 
 备份文件应复制到服务器之外，并定期执行恢复演练。
 
-## 8. 插件连接公网 Relay
+## 9. 插件连接公网 Relay
 
 推荐从网页房间的“Codex 与文件”生成一次性配对码，再让本机插件调用
 `collab_pair_host`，显式传入：

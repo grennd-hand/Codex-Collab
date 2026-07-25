@@ -1,7 +1,12 @@
 import {
+  Accordion,
+  AccordionHeader,
+  AccordionItem,
+  AccordionPanel,
   Avatar,
   Badge,
   Button,
+  Checkbox,
   Dialog,
   DialogActions,
   DialogBody,
@@ -17,38 +22,50 @@ import {
   Select,
   Skeleton,
   SkeletonItem,
+  Spinner,
+  Switch,
   Textarea,
-  Tooltip,
   createDarkTheme,
   createLightTheme,
   type BrandVariants,
 } from "@fluentui/react-components";
 import {
   ArrowSyncRegular,
+  AttachRegular,
   BotRegular,
   CheckmarkCircleRegular,
+  ChatRegular,
   ChatMultipleRegular,
   CopyRegular,
+  DeleteRegular,
   DismissRegular,
   DocumentRegular,
   FolderOpenRegular,
   HistoryRegular,
   KeyRegular,
   LockClosedRegular,
+  MicRegular,
   PersonAddRegular,
   SendRegular,
   SignOutRegular,
+  StopRegular,
   WeatherMoonRegular,
   WeatherSunnyRegular,
 } from "@fluentui/react-icons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
+  CodexAccessMode,
+  CodexPromptOptions,
+  CodexReasoningEffort,
+  CodexRuntimeStatus,
+  CodexSpeed,
   CreateInviteResponse,
   CreateHostPairingResponse,
   CreateSessionResponse,
   JoinInviteResponse,
   Member,
   Message,
+  MessageAttachmentInput,
   MessageKind,
   RealtimeEnvelope,
   Session,
@@ -56,7 +73,14 @@ import type {
   WorkspaceSummary,
 } from "@codex-collab/protocol";
 import { copyText } from "./clipboard.js";
-import { shouldRestoreCredential } from "./invite-session.js";
+import {
+  buildUnifiedTimeline,
+  executionDetailLabel,
+} from "./imported-timeline.js";
+import {
+  setupSubmissionMode,
+  shouldRestoreCredential,
+} from "./invite-session.js";
 
 const brand: BrandVariants = {
   10: "#02040C",
@@ -80,9 +104,81 @@ const brand: BrandVariants = {
 const lightTheme = createLightTheme(brand);
 const darkTheme = createDarkTheme(brand);
 const storageKey = "codexCollab";
+const maxAttachmentCount = 8;
+const maxAttachmentSize = 4_000_000;
+const maxAttachmentTotalSize = 6_000_000;
 
 type ThemeMode = "light" | "dark";
 type ConnectionState = "ready" | "connecting" | "live" | "waiting" | "error";
+export type ComposerMode = "codex" | "chat";
+export type CodexExecutionPhase = "idle" | "queued" | "running" | "stopping";
+export type ComposerPrimaryAction = "send_chat" | "send_codex" | "stop_codex";
+
+export function workspaceNeedsConversationLoad(
+  workspace: Pick<WorkspaceSummary, "selectedThreadId" | "syncedAt"> | null,
+): boolean {
+  return Boolean(workspace?.selectedThreadId && !workspace.syncedAt);
+}
+
+export function codexExecutionPhase(
+  messages: readonly Pick<Message, "kind" | "deliveryStatus">[],
+  runtimeStatus: CodexRuntimeStatus | null | undefined,
+): CodexExecutionPhase {
+  let latestPromptIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.kind === "codex_prompt") {
+      latestPromptIndex = index;
+      break;
+    }
+  }
+
+  for (let index = messages.length - 1; index > latestPromptIndex; index -= 1) {
+    const message = messages[index];
+    if (message?.kind !== "codex_stop") continue;
+    if (
+      message.deliveryStatus === "queued" ||
+      message.deliveryStatus === "submitted"
+    ) {
+      return "stopping";
+    }
+    if (message.deliveryStatus === "completed") {
+      return "idle";
+    }
+    break;
+  }
+
+  const latestPrompt =
+    latestPromptIndex >= 0 ? messages[latestPromptIndex] : undefined;
+  if (
+    runtimeStatus === "running" ||
+    latestPrompt?.deliveryStatus === "submitted"
+  ) {
+    return "running";
+  }
+  if (latestPrompt?.deliveryStatus === "queued") {
+    return "queued";
+  }
+  return "idle";
+}
+
+export function canMemberStopCodex(
+  member: Pick<Member, "role" | "status"> | null,
+  phase: CodexExecutionPhase,
+): boolean {
+  return (
+    member?.status === "approved" &&
+    phase !== "idle" &&
+    phase !== "stopping"
+  );
+}
+
+export function composerPrimaryAction(
+  phase: CodexExecutionPhase,
+  mode: ComposerMode,
+): ComposerPrimaryAction {
+  if (phase !== "idle") return "stop_codex";
+  return mode === "chat" ? "send_chat" : "send_codex";
+}
 
 interface SavedCredential {
   session: Session;
@@ -102,6 +198,93 @@ interface ApiErrorBody {
   error?: {
     message?: string;
   };
+}
+
+interface PendingAttachment {
+  id: string;
+  file: File;
+}
+
+interface SpeechRecognitionResultLike {
+  readonly length: number;
+  readonly isFinal: boolean;
+  readonly [index: number]: { transcript: string };
+}
+
+interface SpeechRecognitionEventLike {
+  readonly resultIndex: number;
+  readonly results: {
+    readonly length: number;
+    readonly [index: number]: SpeechRecognitionResultLike;
+  };
+}
+
+interface SpeechRecognitionLike {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  onerror: (() => void) | null;
+  onend: (() => void) | null;
+  start(): void;
+  stop(): void;
+}
+
+type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
+
+const defaultCodexOptions: CodexPromptOptions = {
+  accessMode: "follow-desktop",
+  model: null,
+  reasoningEffort: "follow-desktop",
+  speed: "follow-desktop",
+  planMode: false,
+};
+
+function formatFileSize(size: number): string {
+  if (size < 1_000) return `${size} B`;
+  if (size < 1_000_000) return `${Math.round(size / 1_000)} KB`;
+  return `${(size / 1_000_000).toFixed(1)} MB`;
+}
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error(`无法读取附件：${file.name}`));
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result !== "string") {
+        reject(new Error(`无法读取附件：${file.name}`));
+        return;
+      }
+      resolve(result.slice(result.indexOf(",") + 1));
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+async function serializeAttachment(
+  attachment: PendingAttachment,
+): Promise<MessageAttachmentInput> {
+  return {
+    name: attachment.file.name,
+    mediaType: attachment.file.type || "application/octet-stream",
+    size: attachment.file.size,
+    dataBase64: await fileToBase64(attachment.file),
+  };
+}
+
+function deliveryStatusLabel(message: Message): string | null {
+  if (message.kind !== "codex_prompt" && message.kind !== "codex_stop") return null;
+  if (message.kind === "codex_stop") {
+    if (message.deliveryStatus === "submitted") return "停止中";
+    if (message.deliveryStatus === "completed") return "已停止";
+    if (message.deliveryStatus === "failed") return "停止失败";
+    return "停止排队中";
+  }
+  if (message.deliveryStatus === "submitted") return "执行中";
+  if (message.deliveryStatus === "completed") return "执行完成";
+  if (message.deliveryStatus === "failed") return "执行失败";
+  return "排队中";
 }
 
 function loadCredential(): SavedCredential | null {
@@ -189,6 +372,9 @@ export function App() {
     initialCredential?.member.status === "pending" ? "waiting" : "ready",
   );
   const [loading, setLoading] = useState(false);
+  const [conversationLoading, setConversationLoading] = useState(
+    initialCredential?.member.status === "approved",
+  );
   const [error, setError] = useState<string | null>(null);
   const [setupOpen, setSetupOpen] = useState(!initialCredential);
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -207,18 +393,30 @@ export function App() {
   const [roomName, setRoomName] = useState("Codex shared task");
   const [joinToken, setJoinToken] = useState(initialInviteToken);
   const [draft, setDraft] = useState("");
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
+  const [codexOptions, setCodexOptions] =
+    useState<CodexPromptOptions>(defaultCodexOptions);
+  const [composerMode, setComposerMode] = useState<ComposerMode>("codex");
+  const [dictating, setDictating] = useState(false);
+  const [draggingFiles, setDraggingFiles] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [roomStatusUpdating, setRoomStatusUpdating] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() =>
     window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light",
   );
   const messageStreamRef = useRef<HTMLElement>(null);
   const inviteLinkRef = useRef<HTMLInputElement>(null);
   const pairingTokenRef = useRef<HTMLInputElement>(null);
+  const attachmentInputRef = useRef<HTMLInputElement>(null);
+  const speechRecognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const loadedComposerKeyRef = useRef<string | null>(null);
 
   const session = credential?.session ?? null;
   const member = credential?.member ?? null;
   const token = credential?.token ?? null;
   const approved = member?.status === "approved";
+  const roomOpen = session?.roomStatus !== "closed";
+  const composerStorageKey = session ? `codexCollabComposer:${session.id}` : null;
 
   const pushActivity = useCallback(
     (
@@ -266,11 +464,13 @@ export function App() {
   );
 
   const addMessage = useCallback((next: Message) => {
-    setMessages((current) =>
-      current.some((message) => message.id === next.id)
-        ? current
-        : [...current, next],
-    );
+    setMessages((current) => {
+      const index = current.findIndex((message) => message.id === next.id);
+      if (index === -1) return [...current, next];
+      const updated = [...current];
+      updated[index] = next;
+      return updated;
+    });
   }, []);
 
   const refreshWorkspace = useCallback(async () => {
@@ -282,6 +482,7 @@ export function App() {
       { headers: authHeaders() },
     );
     setWorkspaceSummary(result.workspace);
+    setConversationLoading(workspaceNeedsConversationLoad(result.workspace));
     setSelectedFile((current) =>
       current && !result.workspace.files.some((file) => file.path === current.path)
         ? null
@@ -305,9 +506,12 @@ export function App() {
           `/v1/sessions/${session.id}/members`,
           { headers: authHeaders() },
         ),
-        requestJson<{ member: Member }>(`/v1/sessions/${session.id}/me`, {
+        requestJson<{ member: Member; session: Session }>(
+          `/v1/sessions/${session.id}/me`,
+          {
           headers: authHeaders(),
-        }),
+          },
+        ),
         requestJson<{ workspace: WorkspaceSummary }>(
           `/v1/sessions/${session.id}/workspace`,
           { headers: authHeaders() },
@@ -316,11 +520,20 @@ export function App() {
       setMessages(messageResult.messages);
       setMembers(memberResult.members);
       setWorkspaceSummary(workspaceResult.workspace);
-      if (meResult.member.status !== member.status) {
-        saveCredential({ session, member: meResult.member, token });
+      setConversationLoading(workspaceNeedsConversationLoad(workspaceResult.workspace));
+      if (
+        meResult.member.status !== member.status ||
+        meResult.session.roomStatus !== session.roomStatus
+      ) {
+        saveCredential({
+          session: meResult.session,
+          member: meResult.member,
+          token,
+        });
       }
       setError(null);
     } catch (caught) {
+      setConversationLoading(false);
       showError(caught);
     } finally {
       setLoading(false);
@@ -342,11 +555,60 @@ export function App() {
   }, [themeMode]);
 
   useEffect(() => {
+    if (!composerStorageKey) return;
+    if (loadedComposerKeyRef.current !== composerStorageKey) {
+      loadedComposerKeyRef.current = composerStorageKey;
+      try {
+        const saved = JSON.parse(localStorage.getItem(composerStorageKey) ?? "{}") as {
+          draft?: unknown;
+          codexOptions?: unknown;
+          composerMode?: unknown;
+        };
+        setDraft(typeof saved.draft === "string" ? saved.draft : "");
+        setComposerMode(saved.composerMode === "chat" ? "chat" : "codex");
+        if (
+          saved.codexOptions &&
+          typeof saved.codexOptions === "object" &&
+          !Array.isArray(saved.codexOptions)
+        ) {
+          setCodexOptions({
+            ...defaultCodexOptions,
+            ...(saved.codexOptions as Partial<CodexPromptOptions>),
+          });
+        } else {
+          setCodexOptions(defaultCodexOptions);
+        }
+      } catch {
+        setDraft("");
+        setCodexOptions(defaultCodexOptions);
+        setComposerMode("codex");
+      }
+      setPendingAttachments([]);
+      return;
+    }
+    localStorage.setItem(
+      composerStorageKey,
+      JSON.stringify({ draft, codexOptions, composerMode }),
+    );
+  }, [codexOptions, composerMode, composerStorageKey, draft]);
+
+  useEffect(
+    () => () => {
+      speechRecognitionRef.current?.stop();
+    },
+    [],
+  );
+
+  useEffect(() => {
     const stream = messageStreamRef.current;
     if (stream) {
       stream.scrollTop = stream.scrollHeight;
     }
-  }, [messages]);
+  }, [
+    messages,
+    workspaceSummary?.codexRuntimeStatus,
+    workspaceSummary?.history.length,
+  ]);
 
   useEffect(() => {
     if (!approved) {
@@ -364,7 +626,7 @@ export function App() {
 
     const checkApproval = async () => {
       try {
-        const result = await requestJson<{ member: Member }>(
+        const result = await requestJson<{ member: Member; session: Session }>(
           `/v1/sessions/${session.id}/me`,
           { headers: { authorization: `Bearer ${token}` } },
         );
@@ -372,7 +634,12 @@ export function App() {
           return;
         }
         if (result.member.status === "approved") {
-          saveCredential({ session, member: result.member, token });
+          setConversationLoading(true);
+          saveCredential({
+            session: result.session,
+            member: result.member,
+            token,
+          });
           setConnection("connecting");
           setError(null);
           pushActivity("主人已批准", "实时协作已启用", "success");
@@ -431,6 +698,20 @@ export function App() {
           pushActivity("成员状态已变化", next.displayName, "success");
           void refresh();
         }
+        if (envelope.type === "session.updated") {
+          const next = envelope.payload as Session;
+          saveCredential({ session: next, member, token });
+          if (next.roomStatus === "closed") {
+            setInviteOpen(false);
+          }
+          pushActivity(
+            next.roomStatus === "open" ? "房间已开启" : "房间已关闭",
+            next.roomStatus === "open"
+              ? "成员可以继续发送消息和 Codex 指令"
+              : "历史记录仍可查看，新的协作操作已暂停",
+            next.roomStatus === "open" ? "success" : "warning",
+          );
+        }
         if (envelope.type === "workspace.updated") {
           pushActivity("共享工作区已更新", "Codex 记录或文件发生变化", "success");
           void refreshWorkspace().catch(showError);
@@ -457,10 +738,20 @@ export function App() {
       }
       socket?.close();
     };
-  }, [addMessage, approved, pushActivity, refresh, refreshWorkspace, session, showError, token]);
+  }, [
+    addMessage,
+    approved,
+    member,
+    pushActivity,
+    refresh,
+    refreshWorkspace,
+    saveCredential,
+    session,
+    showError,
+    token,
+  ]);
 
-  const createSession = async (event: React.FormEvent) => {
-    event.preventDefault();
+  const createSession = async () => {
     setSubmitting(true);
     try {
       const result = await requestJson<CreateSessionResponse>("/v1/sessions", {
@@ -472,6 +763,7 @@ export function App() {
           deviceLabel: deviceLabel(),
         }),
       });
+      setConversationLoading(true);
       saveCredential({
         session: result.session,
         member: result.owner,
@@ -519,28 +811,147 @@ export function App() {
     }
   };
 
-  const sendMessage = async (kind: MessageKind) => {
-    const body = draft.trim();
-    if (!session || !token || !body || !approved) {
+  const submitSetup = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (setupSubmissionMode(joinToken) === "join") {
+      void joinSession();
       return;
     }
-    setDraft("");
+    void createSession();
+  };
+
+  const addAttachments = (files: FileList | File[]) => {
+    if (!roomOpen) return;
+    const incoming = Array.from(files);
+    if (incoming.length === 0) return;
+    const next = [...pendingAttachments];
+    for (const file of incoming) {
+      if (file.size === 0) {
+        setError(`空文件无法发送：${file.name}`);
+        continue;
+      }
+      if (file.size > maxAttachmentSize) {
+        setError(`${file.name} 超过 4 MB 单文件限制`);
+        continue;
+      }
+      if (
+        next.some(
+          (item) =>
+            item.file.name === file.name &&
+            item.file.size === file.size &&
+            item.file.lastModified === file.lastModified,
+        )
+      ) {
+        continue;
+      }
+      if (next.length >= maxAttachmentCount) {
+        setError("一次最多发送 8 个附件");
+        break;
+      }
+      if (next.reduce((sum, item) => sum + item.file.size, 0) + file.size > maxAttachmentTotalSize) {
+        setError("附件总大小不能超过 6 MB");
+        break;
+      }
+      next.push({ id: crypto.randomUUID(), file });
+    }
+    setPendingAttachments(next);
+  };
+
+  const toggleDictation = () => {
+    if (dictating) {
+      speechRecognitionRef.current?.stop();
+      return;
+    }
+    const speechWindow = window as unknown as {
+      SpeechRecognition?: SpeechRecognitionConstructor;
+      webkitSpeechRecognition?: SpeechRecognitionConstructor;
+    };
+    const Constructor =
+      speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
+    if (!Constructor) {
+      setError("当前浏览器不支持听写");
+      return;
+    }
+    const recognition = new Constructor();
+    recognition.lang = "zh-CN";
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.onresult = (event) => {
+      const fragments: string[] = [];
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        const result = event.results[index];
+        const transcript = result?.[0]?.transcript.trim();
+        if (result?.isFinal && transcript) fragments.push(transcript);
+      }
+      if (fragments.length > 0) {
+        setDraft((current) =>
+          `${current}${current && !/\s$/.test(current) ? " " : ""}${fragments.join(" ")}`,
+        );
+      }
+    };
+    recognition.onerror = () => {
+      setError("听写未完成，请检查浏览器麦克风权限");
+      setDictating(false);
+    };
+    recognition.onend = () => {
+      setDictating(false);
+      speechRecognitionRef.current = null;
+    };
+    speechRecognitionRef.current = recognition;
+    setDictating(true);
+    recognition.start();
+  };
+
+  const sendMessage = async (kind: MessageKind) => {
+    const trimmedDraft = draft.trim();
+    const body =
+      kind === "codex_stop"
+        ? "停止当前 Codex 任务"
+        : trimmedDraft ||
+          (kind === "codex_prompt" && pendingAttachments.length > 0
+            ? "请处理所附文件。"
+            : "");
+    if (
+      !session ||
+      !token ||
+      !body ||
+      !approved ||
+      (!roomOpen && kind !== "codex_stop") ||
+      kind === "system"
+    ) {
+      return;
+    }
     setSubmitting(true);
     try {
+      const attachments =
+        kind === "codex_prompt"
+          ? await Promise.all(pendingAttachments.map(serializeAttachment))
+          : [];
       const result = await requestJson<{ message: Message }>(
         `/v1/sessions/${session.id}/messages`,
         {
           method: "POST",
           headers: authHeaders(true),
-          body: JSON.stringify({ kind, body }),
+          body: JSON.stringify({
+            kind,
+            body,
+            attachments,
+            codexOptions: kind === "codex_prompt" ? codexOptions : null,
+          }),
         },
       );
       addMessage(result.message);
       if (kind === "codex_prompt") {
-        pushActivity("已交给 Codex", member?.displayName ?? "协作者", "success");
+        setDraft("");
+        setPendingAttachments([]);
+        pushActivity("已加入 Codex 队列", "Host 将在后台直接提交", "info");
+      } else if (kind === "codex_stop") {
+        pushActivity("停止请求已排队", "Host 将在后台中断当前任务", "warning");
+      } else {
+        setDraft("");
       }
+      setError(null);
     } catch (caught) {
-      setDraft(body);
       showError(caught);
     } finally {
       setSubmitting(false);
@@ -568,7 +979,7 @@ export function App() {
   };
 
   const createInvite = async () => {
-    if (!session) {
+    if (!session || !roomOpen) {
       return;
     }
     try {
@@ -587,6 +998,34 @@ export function App() {
       pushActivity("邀请已创建", "60 分钟内可使用一次", "success");
     } catch (caught) {
       showError(caught);
+    }
+  };
+
+  const updateRoomStatus = async (nextOpen: boolean) => {
+    if (!session || !member || !token || member.role !== "owner") {
+      return;
+    }
+    setRoomStatusUpdating(true);
+    try {
+      const result = await requestJson<{ session: Session }>(
+        `/v1/sessions/${session.id}/room-status`,
+        {
+          method: "PUT",
+          headers: authHeaders(true),
+          body: JSON.stringify({
+            roomStatus: nextOpen ? "open" : "closed",
+          }),
+        },
+      );
+      saveCredential({ session: result.session, member, token });
+      if (!nextOpen) {
+        setInviteOpen(false);
+      }
+      setError(null);
+    } catch (caught) {
+      showError(caught);
+    } finally {
+      setRoomStatusUpdating(false);
     }
   };
 
@@ -657,6 +1096,7 @@ export function App() {
       return;
     }
     setWorkspaceLoading(true);
+    setConversationLoading(true);
     setSelectedFile(null);
     try {
       const result = await requestJson<{ workspace: WorkspaceSummary }>(
@@ -668,8 +1108,10 @@ export function App() {
         },
       );
       setWorkspaceSummary(result.workspace);
+      setConversationLoading(workspaceNeedsConversationLoad(result.workspace));
       pushActivity("已选择 Codex 任务", "等待本机插件导入记录与文件", "success");
     } catch (caught) {
+      setConversationLoading(false);
       showError(caught);
     } finally {
       setWorkspaceLoading(false);
@@ -701,9 +1143,13 @@ export function App() {
     setMembers([]);
     setMessages([]);
     setWorkspaceSummary(null);
+    setConversationLoading(false);
     setWorkspaceOpen(false);
     setPairingToken("");
     setSelectedFile(null);
+    setDraft("");
+    setPendingAttachments([]);
+    setComposerMode("codex");
     setError(null);
     setConnection("ready");
     setSetupOpen(true);
@@ -712,8 +1158,20 @@ export function App() {
 
   const owner = members.find((item) => item.role === "owner");
   const status = connectionPresentation(connection, Boolean(session));
+  const importedHistory = workspaceSummary?.history ?? [];
+  const unifiedTimeline = buildUnifiedTimeline(importedHistory, messages);
+  const hasConversationContent = importedHistory.length > 0 || messages.length > 0;
   const codexConfigFileCount =
     workspaceSummary?.files.filter((file) => file.path.startsWith(".codex/")).length ?? 0;
+  const executionPhase = codexExecutionPhase(
+    messages,
+    workspaceSummary?.codexRuntimeStatus,
+  );
+  const canStopCodex = canMemberStopCodex(member, executionPhase);
+  const primaryComposerAction = composerPrimaryAction(executionPhase, composerMode);
+  const primaryStopsCodex = primaryComposerAction === "stop_codex";
+  const canSendCodex = Boolean(draft.trim() || pendingAttachments.length > 0);
+  const sendKind: MessageKind = composerMode === "chat" ? "chat" : "codex_prompt";
 
   return (
     <FluentProvider
@@ -732,7 +1190,46 @@ export function App() {
             </div>
           </div>
 
+          {member?.role === "owner" &&
+          approved &&
+          workspaceSummary?.hostConnected ? (
+            <div className="topbar-thread-control">
+              <HistoryRegular aria-hidden="true" />
+              <div>
+                <label htmlFor="topbar-codex-thread">聊天记录</label>
+                <Select
+                  id="topbar-codex-thread"
+                  aria-label="聊天记录"
+                  value={workspaceSummary.selectedThreadId ?? ""}
+                  disabled={workspaceLoading || workspaceSummary.threads.length === 0}
+                  onChange={(_, data) => void selectCodexThread(data.value)}
+                >
+                  <option value="">
+                    {workspaceSummary.threads.length === 0
+                      ? "暂无 Codex 记录"
+                      : "请选择 Codex 任务"}
+                  </option>
+                  {workspaceSummary.threads.map((thread) => (
+                    <option value={thread.id} key={thread.id}>
+                      {thread.name || thread.preview || thread.id}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            </div>
+          ) : null}
+
           <div className="topbar-actions">
+            {member?.role === "owner" && approved ? (
+              <Switch
+                className="room-switch"
+                checked={roomOpen}
+                disabled={roomStatusUpdating}
+                label={roomOpen ? "房间已开启" : "房间已关闭"}
+                aria-label={roomOpen ? "关闭房间" : "开启房间"}
+                onChange={(_, data) => void updateRoomStatus(data.checked)}
+              />
+            ) : null}
             {approved ? (
               <Button
                 appearance="secondary"
@@ -749,40 +1246,46 @@ export function App() {
                 appearance="secondary"
                 icon={<PersonAddRegular />}
                 className="invite-button"
+                disabled={!roomOpen || roomStatusUpdating}
                 onClick={createInvite}
               >
                 创建邀请
               </Button>
             ) : null}
-            <Tooltip content="切换明暗主题" relationship="label">
+            <Button
+              appearance="subtle"
+              className="stable-icon-button"
+              icon={
+                themeMode === "dark" ? (
+                  <WeatherSunnyRegular />
+                ) : (
+                  <WeatherMoonRegular />
+                )
+              }
+              title="切换明暗主题"
+              aria-label="切换明暗主题"
+              onClick={() =>
+                setThemeMode((current) =>
+                  current === "dark" ? "light" : "dark",
+                )
+              }
+            />
+            {session ? (
               <Button
                 appearance="subtle"
-                icon={
-                  themeMode === "dark" ? (
-                    <WeatherSunnyRegular />
-                  ) : (
-                    <WeatherMoonRegular />
-                  )
-                }
-                aria-label="切换明暗主题"
-                onClick={() =>
-                  setThemeMode((current) =>
-                    current === "dark" ? "light" : "dark",
-                  )
-                }
+                icon={<SignOutRegular />}
+                title="离开本机会话"
+                aria-label="离开本机会话"
+                onClick={resetSession}
               />
-            </Tooltip>
-            {session ? (
-              <Tooltip content="离开本机会话" relationship="label">
-                <Button
-                  appearance="subtle"
-                  icon={<SignOutRegular />}
-                  aria-label="离开本机会话"
-                  onClick={resetSession}
-                />
-              </Tooltip>
             ) : null}
-            <Badge appearance="tint" color={status.color} size="large">
+            <Badge
+              appearance="tint"
+              aria-label={status.label}
+              className="connection-badge"
+              color={status.color}
+              size="large"
+            >
               {status.label}
             </Badge>
           </div>
@@ -875,25 +1378,31 @@ export function App() {
                 <h2>{session?.name ?? "开始一个共享任务"}</h2>
               </div>
               {approved ? (
-                <Tooltip content="刷新消息和成员" relationship="label">
-                  <Button
-                    appearance="subtle"
-                    icon={<ArrowSyncRegular />}
-                    aria-label="刷新消息和成员"
-                    onClick={() => void refresh()}
-                  />
-                </Tooltip>
+                <Button
+                  appearance="subtle"
+                  icon={<ArrowSyncRegular />}
+                  title="刷新消息和成员"
+                  aria-label="刷新消息和成员"
+                  onClick={() => void refresh()}
+                />
               ) : null}
             </div>
 
             <section
               className="message-stream"
               aria-label="实时对话"
+              aria-busy={conversationLoading}
               ref={messageStreamRef}
             >
-              {loading && messages.length === 0 ? (
-                <MessageSkeleton />
-              ) : messages.length === 0 ? (
+              {conversationLoading ? (
+                <div className="conversation-loading" role="status" aria-live="polite">
+                  <Spinner
+                    label="正在加载对话记录"
+                    labelPosition="below"
+                    size="medium"
+                  />
+                </div>
+              ) : !hasConversationContent ? (
                 <div className="message-empty">
                   {member?.status === "pending" ? (
                     <>
@@ -910,77 +1419,478 @@ export function App() {
                   )}
                 </div>
               ) : (
-                messages.map((item) => {
-                  const mine = item.senderMemberId === member?.id;
-                  return (
-                    <article
-                      className={`message ${mine ? "mine" : ""} ${
-                        item.kind === "codex_prompt" ? "codex-message" : ""
-                      }`}
-                      key={item.id}
-                    >
-                      <div className="message-meta">
-                        <span>{item.senderDisplayName}</span>
-                        <span>
-                          {item.kind === "codex_prompt" ? "Codex 指令" : "消息"}
-                        </span>
-                        <time dateTime={item.createdAt}>
-                          {timeLabel(item.createdAt)}
-                        </time>
-                      </div>
-                      <div className="message-bubble">
-                        {item.kind === "codex_prompt" ? (
-                          <BotRegular aria-hidden="true" />
-                        ) : null}
-                        <p>{item.body}</p>
-                      </div>
-                    </article>
-                  );
-                })
+                <>
+                  {unifiedTimeline.map((timelineItem) => {
+                    if (timelineItem.kind === "shared") {
+                      const item = timelineItem.message;
+                      const mine = item.senderMemberId === member?.id;
+                      return (
+                        <article
+                          className={`message ${mine ? "mine" : ""} ${
+                            item.kind === "codex_prompt" || item.kind === "codex_stop"
+                              ? "codex-message"
+                              : ""
+                          }`}
+                          key={`shared-${item.id}`}
+                        >
+                          <div className="message-meta">
+                            <span>{item.senderDisplayName}</span>
+                            <span>
+                              {item.kind === "codex_prompt"
+                                ? "Codex 指令"
+                                : item.kind === "codex_stop"
+                                  ? "停止指令"
+                                  : "聊天"}
+                            </span>
+                            {deliveryStatusLabel(item) ? (
+                              <span
+                                className={`delivery-status ${
+                                  item.deliveryStatus ?? "queued"
+                                }`}
+                              >
+                                {deliveryStatusLabel(item)}
+                              </span>
+                            ) : null}
+                            <time dateTime={item.createdAt}>
+                              {timeLabel(item.createdAt)}
+                            </time>
+                          </div>
+                          <div className="message-bubble">
+                            {item.kind === "codex_prompt" || item.kind === "codex_stop" ? (
+                              <BotRegular aria-hidden="true" />
+                            ) : null}
+                            <div className="message-content">
+                              <p>{item.body}</p>
+                              {item.attachments.length > 0 ? (
+                                <div className="message-attachments">
+                                  {item.attachments.map((attachment) => (
+                                    <span key={attachment.id}>
+                                      <AttachRegular aria-hidden="true" />
+                                      <span>{attachment.name}</span>
+                                      <small>{formatFileSize(attachment.size)}</small>
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
+                          </div>
+                        </article>
+                      );
+                    }
+
+                    const item = timelineItem.item;
+                    if (item.kind === "message") {
+                      const entry = item.entry;
+                      return (
+                        <article
+                          className={`message imported-message ${entry.role} ${
+                            entry.role === "user" ? "mine" : ""
+                          }`}
+                          key={`codex-${entry.id}`}
+                        >
+                          <div className="message-meta">
+                            <span>{recordRoleLabel(entry.role)}</span>
+                            {entry.createdAt ? (
+                              <time dateTime={entry.createdAt}>
+                                {timeLabel(entry.createdAt)}
+                              </time>
+                            ) : null}
+                          </div>
+                          <div className="message-bubble">
+                            {entry.role === "assistant" ? (
+                              <BotRegular aria-hidden="true" />
+                            ) : null}
+                            <div className="message-content">
+                              <p>{entry.text}</p>
+                            </div>
+                          </div>
+                        </article>
+                      );
+                    }
+
+                    return (
+                      <Accordion
+                        className="execution-disclosure"
+                        collapsible
+                        key={item.id}
+                      >
+                        <AccordionItem value={item.id}>
+                          <AccordionHeader>
+                            <div className="execution-summary">
+                              <strong>执行详情</strong>
+                              <span>{executionDetailLabel(item.entries)}</span>
+                            </div>
+                          </AccordionHeader>
+                          <AccordionPanel>
+                            <div className="execution-record-list">
+                              {item.entries.map((entry) => (
+                                <article
+                                  className={`execution-record ${entry.role}`}
+                                  key={`codex-${entry.id}`}
+                                >
+                                  <div className="execution-record-meta">
+                                    {entry.role === "command" ? (
+                                      <DocumentRegular aria-hidden="true" />
+                                    ) : (
+                                      <HistoryRegular aria-hidden="true" />
+                                    )}
+                                    <strong>{recordRoleLabel(entry.role)}</strong>
+                                    {entry.createdAt ? (
+                                      <time dateTime={entry.createdAt}>
+                                        {timeLabel(entry.createdAt)}
+                                      </time>
+                                    ) : null}
+                                  </div>
+                                  {entry.role === "command" ? (
+                                    <pre>{entry.text}</pre>
+                                  ) : (
+                                    <p>{entry.text}</p>
+                                  )}
+                                </article>
+                              ))}
+                            </div>
+                          </AccordionPanel>
+                        </AccordionItem>
+                      </Accordion>
+                    );
+                  })}
+                </>
               )}
+              {!conversationLoading && executionPhase !== "idle" ? (
+                <div
+                  className={`codex-execution-status ${executionPhase}`}
+                  role="status"
+                  aria-live="polite"
+                >
+                  <Spinner size="tiny" />
+                  <div>
+                    <strong>
+                      {executionPhase === "queued"
+                        ? "Codex 指令已排队"
+                        : executionPhase === "stopping"
+                          ? "正在停止 Codex"
+                          : "Codex 正在执行"}
+                    </strong>
+                    <span>
+                      {executionPhase === "queued"
+                        ? "等待共享任务开始执行"
+                        : executionPhase === "stopping"
+                          ? "停止请求已发送，请稍候"
+                          : "输出会实时同步到当前对话"}
+                    </span>
+                  </div>
+                </div>
+              ) : null}
             </section>
 
             <form
-              className="composer"
+              className={`composer ${draggingFiles ? "dragging" : ""}`}
               onSubmit={(event) => {
                 event.preventDefault();
-                void sendMessage("chat");
+                if (primaryStopsCodex) {
+                  if (canStopCodex) void sendMessage("codex_stop");
+                  return;
+                }
+                void sendMessage(sendKind);
+              }}
+              onDragEnter={(event) => {
+                event.preventDefault();
+                if (approved) setDraggingFiles(true);
+              }}
+              onDragOver={(event) => event.preventDefault()}
+              onDragLeave={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                  setDraggingFiles(false);
+                }
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                setDraggingFiles(false);
+                if (approved) addAttachments(event.dataTransfer.files);
               }}
             >
-              <Field
-                label="发送到共享任务"
-                hint={
-                  approved
-                    ? "普通消息用于讨论，Codex 指令会发送给主人的 Codex。"
-                    : "连接并通过批准后即可发送。"
-                }
-              >
+              <input
+                ref={attachmentInputRef}
+                className="visually-hidden"
+                type="file"
+                multiple
+                disabled={!roomOpen}
+                tabIndex={-1}
+                onChange={(event) => {
+                  if (event.currentTarget.files) {
+                    addAttachments(event.currentTarget.files);
+                  }
+                  event.currentTarget.value = "";
+                }}
+              />
+              <div className="composer-surface">
                 <Textarea
                   value={draft}
-                  resize="vertical"
-                  disabled={!approved || submitting}
-                  placeholder="输入消息或要 Codex 执行的任务"
+                  resize="none"
+                  disabled={!approved || submitting || !roomOpen}
+                  aria-label={composerMode === "chat" ? "聊天消息" : "发送给 Codex"}
+                  placeholder={
+                    !roomOpen
+                      ? "房间已关闭"
+                      : approved
+                      ? composerMode === "chat"
+                        ? "输入聊天消息"
+                        : "随心输入"
+                      : "连接并通过批准后即可发送"
+                  }
                   onChange={(_, data) => setDraft(data.value)}
+                  onPaste={(event) => {
+                    if (event.clipboardData.files.length > 0) {
+                      event.preventDefault();
+                      addAttachments(event.clipboardData.files);
+                    }
+                  }}
+                  onKeyDown={(event) => {
+                    if (
+                      event.key === "Enter" &&
+                      !event.shiftKey &&
+                      !event.nativeEvent.isComposing
+                    ) {
+                      event.preventDefault();
+                      if (primaryStopsCodex) {
+                        if (canStopCodex) void sendMessage("codex_stop");
+                      } else if (
+                        composerMode === "chat" ? Boolean(draft.trim()) : canSendCodex
+                      ) {
+                        void sendMessage(sendKind);
+                      }
+                    }
+                  }}
                 />
-              </Field>
-              <div className="composer-actions">
-                <Button
-                  type="button"
-                  appearance="secondary"
-                  icon={<BotRegular />}
-                  disabled={!approved || !draft.trim() || submitting}
-                  onClick={() => void sendMessage("codex_prompt")}
-                >
-                  交给 Codex
-                </Button>
-                <Button
-                  type="submit"
-                  appearance="primary"
-                  icon={<SendRegular />}
-                  disabled={!approved || !draft.trim() || submitting}
-                >
-                  发送消息
-                </Button>
+                {pendingAttachments.length > 0 ? (
+                  <div className="pending-attachments" aria-label="待发送附件">
+                    {pendingAttachments.map((attachment) => (
+                      <span key={attachment.id}>
+                        <AttachRegular aria-hidden="true" />
+                        <span title={attachment.file.name}>{attachment.file.name}</span>
+                        <small>{formatFileSize(attachment.file.size)}</small>
+                        <Button
+                          type="button"
+                          appearance="subtle"
+                          size="small"
+                          icon={<DeleteRegular />}
+                          title={`移除 ${attachment.file.name}`}
+                          aria-label={`移除 ${attachment.file.name}`}
+                          onClick={() =>
+                            setPendingAttachments((current) =>
+                              current.filter((item) => item.id !== attachment.id),
+                            )
+                          }
+                        />
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+
+                <div className="composer-toolbar">
+                  <div className="composer-tools">
+                    <Button
+                      type="button"
+                      appearance="subtle"
+                      className="stable-icon-button"
+                      icon={<AttachRegular />}
+                      title="添加文件或图片"
+                      aria-label="添加文件或图片"
+                      disabled={
+                        !approved ||
+                        submitting ||
+                        !roomOpen ||
+                        composerMode === "chat"
+                      }
+                      onClick={() => attachmentInputRef.current?.click()}
+                    />
+                    <Button
+                      type="button"
+                      appearance={dictating ? "primary" : "subtle"}
+                      className="stable-icon-button"
+                      icon={dictating ? <StopRegular /> : <MicRegular />}
+                      title={dictating ? "停止听写" : "听写"}
+                      aria-label={dictating ? "停止听写" : "听写"}
+                      disabled={!approved || submitting || !roomOpen}
+                      onClick={toggleDictation}
+                    />
+                    <div className="composer-mode-switch" role="group" aria-label="发送模式">
+                      <Button
+                        type="button"
+                        size="small"
+                        appearance={composerMode === "codex" ? "primary" : "subtle"}
+                        icon={<BotRegular />}
+                        aria-pressed={composerMode === "codex"}
+                        disabled={!roomOpen}
+                        onClick={() => setComposerMode("codex")}
+                      >
+                        Codex
+                      </Button>
+                      <Button
+                        type="button"
+                        size="small"
+                        appearance={composerMode === "chat" ? "primary" : "subtle"}
+                        icon={<ChatRegular />}
+                        aria-pressed={composerMode === "chat"}
+                        disabled={!roomOpen}
+                        onClick={() => setComposerMode("chat")}
+                      >
+                        聊天
+                      </Button>
+                    </div>
+                    <Select
+                      aria-label="Codex 权限"
+                      title="Codex 权限"
+                      value={codexOptions.accessMode}
+                      disabled={
+                        !approved ||
+                        submitting ||
+                        !roomOpen ||
+                        composerMode === "chat" ||
+                        member?.role !== "owner"
+                      }
+                      onChange={(event) => {
+                        const accessMode = event.currentTarget.value as CodexAccessMode;
+                        setCodexOptions((current) => ({
+                          ...current,
+                          accessMode,
+                        }));
+                      }}
+                    >
+                      <option value="follow-desktop">跟随当前任务权限</option>
+                      <option value="request-approval">请求批准</option>
+                      <option value="auto">替我审批</option>
+                      <option value="full-access">完全访问</option>
+                      <option value="custom">自定义权限</option>
+                    </Select>
+                    <Select
+                      aria-label="Codex 模型"
+                      title="Codex 模型"
+                      value={codexOptions.model ?? ""}
+                      disabled={
+                        !approved ||
+                        submitting ||
+                        !roomOpen ||
+                        composerMode === "chat"
+                      }
+                      onChange={(event) => {
+                        const model = event.currentTarget.value || null;
+                        setCodexOptions((current) => ({
+                          ...current,
+                          model,
+                        }));
+                      }}
+                    >
+                      <option value="">跟随当前任务模型</option>
+                      <option value="gpt-5.6-sol">5.6 Sol</option>
+                      <option value="gpt-5.6-terra">5.6 Terra</option>
+                      <option value="gpt-5.6-luna">5.6 Luna</option>
+                      <option value="gpt-5.5">5.5</option>
+                      <option value="gpt-5.4">5.4</option>
+                      <option value="gpt-5.4-mini">5.4 Mini</option>
+                      <option value="gpt-5.3-codex-spark">5.3 Codex Spark</option>
+                    </Select>
+                    <Select
+                      aria-label="推理强度"
+                      title="推理强度"
+                      value={codexOptions.reasoningEffort}
+                      disabled={
+                        !approved ||
+                        submitting ||
+                        !roomOpen ||
+                        composerMode === "chat"
+                      }
+                      onChange={(event) => {
+                        const reasoningEffort =
+                          event.currentTarget.value as CodexReasoningEffort;
+                        setCodexOptions((current) => ({
+                          ...current,
+                          reasoningEffort,
+                        }));
+                      }}
+                    >
+                      <option value="follow-desktop">跟随推理强度</option>
+                      <option value="low">轻度</option>
+                      <option value="medium">中</option>
+                      <option value="high">高</option>
+                      <option value="xhigh">极高</option>
+                    </Select>
+                    <Select
+                      aria-label="响应速度"
+                      title="响应速度"
+                      value={codexOptions.speed}
+                      disabled={
+                        !approved ||
+                        submitting ||
+                        !roomOpen ||
+                        composerMode === "chat"
+                      }
+                      onChange={(event) => {
+                        const speed = event.currentTarget.value as CodexSpeed;
+                        setCodexOptions((current) => ({
+                          ...current,
+                          speed,
+                        }));
+                      }}
+                    >
+                      <option value="follow-desktop">跟随速度</option>
+                      <option value="standard">标准</option>
+                      <option value="fast">快速</option>
+                    </Select>
+                    <Checkbox
+                      label="计划模式"
+                      checked={codexOptions.planMode}
+                      disabled={
+                        !approved ||
+                        submitting ||
+                        !roomOpen ||
+                        composerMode === "chat"
+                      }
+                      onChange={(_, data) =>
+                        setCodexOptions((current) => ({
+                          ...current,
+                          planMode: data.checked === true,
+                        }))
+                      }
+                    />
+                  </div>
+                  <div className="composer-actions">
+                    <Button
+                      type="submit"
+                      appearance="primary"
+                      shape="circular"
+                      icon={primaryStopsCodex ? <StopRegular /> : <SendRegular />}
+                      title={
+                        primaryStopsCodex
+                          ? executionPhase === "stopping"
+                            ? "正在停止 Codex"
+                            : "停止 Codex"
+                          : composerMode === "chat"
+                          ? "发送聊天消息"
+                          : "发送给 Codex"
+                      }
+                      aria-label={
+                        primaryStopsCodex
+                          ? executionPhase === "stopping"
+                            ? "正在停止 Codex"
+                            : "停止 Codex"
+                          : composerMode === "chat"
+                          ? "发送聊天消息"
+                          : "发送给 Codex"
+                      }
+                      disabled={
+                        !approved ||
+                        submitting ||
+                        (primaryStopsCodex
+                          ? !canStopCodex
+                          : !roomOpen ||
+                            (composerMode === "chat"
+                              ? !draft.trim()
+                              : !canSendCodex))
+                      }
+                    />
+                  </div>
+                </div>
               </div>
             </form>
           </main>
@@ -1105,8 +2015,8 @@ export function App() {
                   <section className="thread-picker">
                     <div className="workspace-section-heading">
                       <div>
-                        <span>步骤 2</span>
-                        <h3>选择要导入的 Codex 任务</h3>
+                        <span>当前记录</span>
+                        <h3>已共享的 Codex 任务</h3>
                       </div>
                       {workspaceSummary.syncedAt ? (
                         <small>
@@ -1114,29 +2024,7 @@ export function App() {
                         </small>
                       ) : null}
                     </div>
-                    {member?.role === "owner" ? (
-                      <Field
-                        label="本项目的 Codex 记录"
-                        hint={
-                          workspaceSummary.threads.length === 0
-                            ? "本机没有找到工作目录匹配的 Codex 任务。"
-                            : "选择后自动导入消息、推理摘要、命令输出和共享文件。再次选择可重新同步。"
-                        }
-                      >
-                        <Select
-                          value={workspaceSummary.selectedThreadId ?? ""}
-                          disabled={workspaceLoading || workspaceSummary.threads.length === 0}
-                          onChange={(_, data) => void selectCodexThread(data.value)}
-                        >
-                          <option value="">请选择 Codex 任务</option>
-                          {workspaceSummary.threads.map((thread) => (
-                            <option value={thread.id} key={thread.id}>
-                              {thread.name || thread.preview || thread.id}
-                            </option>
-                          ))}
-                        </Select>
-                      </Field>
-                    ) : workspaceSummary.selectedThread ? (
+                    {workspaceSummary.selectedThread ? (
                       <div className="selected-thread-summary">
                         <HistoryRegular />
                         <div>
@@ -1150,7 +2038,11 @@ export function App() {
                       </div>
                     ) : (
                       <MessageBar intent="info">
-                        <MessageBarBody>等待房主选择要共享的 Codex 任务。</MessageBarBody>
+                        <MessageBarBody>
+                          {member?.role === "owner"
+                            ? "请在页面顶部选择要共享的聊天记录。"
+                            : "等待房主选择要共享的 Codex 任务。"}
+                        </MessageBarBody>
                       </MessageBar>
                     )}
                     {workspaceSummary.selectedThreadId && !workspaceSummary.syncedAt ? (
@@ -1266,7 +2158,7 @@ export function App() {
 
       <Dialog open={setupOpen} modalType="alert">
         <DialogSurface>
-          <form onSubmit={createSession}>
+          <form onSubmit={submitSetup}>
             <DialogBody>
               <DialogTitle>连接协作会话</DialogTitle>
               <DialogContent className="setup-fields">
@@ -1314,10 +2206,9 @@ export function App() {
               <DialogActions>
                 {joinToken.trim() ? (
                   <Button
-                    type="button"
+                    type="submit"
                     appearance="primary"
                     disabled={!displayName.trim() || submitting}
-                    onClick={() => void joinSession()}
                   >
                     申请加入
                   </Button>
@@ -1430,21 +2321,6 @@ function MemberSkeleton() {
           <SkeletonItem size={12} />
           <SkeletonItem size={8} />
         </div>
-      </div>
-    </Skeleton>
-  );
-}
-
-function MessageSkeleton() {
-  return (
-    <Skeleton aria-label="正在加载消息">
-      <div className="message-skeleton">
-        <SkeletonItem size={8} />
-        <SkeletonItem size={64} />
-      </div>
-      <div className="message-skeleton right">
-        <SkeletonItem size={8} />
-        <SkeletonItem size={56} />
       </div>
     </Skeleton>
   );

@@ -11,10 +11,8 @@ import { CodexAppServerClient } from "./app-server-client.js";
 import { FileSandbox } from "./file-sandbox.js";
 import { LocalProfileStore, type LocalProfile } from "./local-profile.js";
 import { RelayClient } from "./relay-client.js";
-import {
-  buildCodexConfigSnapshot,
-  buildWorkspaceSnapshot,
-} from "./workspace-snapshot.js";
+import { WorkspaceSyncService } from "./workspace-sync-service.js";
+import { ensureWorkspaceSyncWorker } from "./workspace-sync-worker-control.js";
 
 const server = new Server(
   { name: "codex-collab", version: "0.1.0" },
@@ -22,6 +20,7 @@ const server = new Server(
 );
 const profiles = new LocalProfileStore();
 const codex = new CodexAppServerClient();
+const workspaceSync = new WorkspaceSyncService(profiles, codex);
 
 type Arguments = Record<string, unknown>;
 
@@ -308,72 +307,6 @@ async function publishCatalog(
   });
 }
 
-let workspaceSyncActive = false;
-
-async function syncSelectedWorkspace(force = false): Promise<{
-  selectedThreadId: string | null;
-  syncedAt: string | null;
-  historyCount: number;
-  fileCount: number;
-}> {
-  if (workspaceSyncActive) {
-    return { selectedThreadId: null, syncedAt: null, historyCount: 0, fileCount: 0 };
-  }
-  workspaceSyncActive = true;
-  try {
-    const profile = await profiles.read();
-    if (!profile || profile.role !== "owner") {
-      return { selectedThreadId: null, syncedAt: null, historyCount: 0, fileCount: 0 };
-    }
-    const relay = new RelayClient(profile.relayUrl);
-    const workspace = await relay.getWorkspace(profile.sessionId, profile.memberToken);
-    if (!workspace.selectedThreadId || (!force && workspace.syncedAt)) {
-      return {
-        selectedThreadId: workspace.selectedThreadId,
-        syncedAt: workspace.syncedAt,
-        historyCount: workspace.history.length,
-        fileCount: workspace.files.length,
-      };
-    }
-
-    const sandbox = await FileSandbox.create(profile.projectRoot);
-    const localThreads = await codex.listThreads(sandbox.getRoot());
-    const selectedLocalThread = localThreads.find(
-      (thread) => thread.id === workspace.selectedThreadId,
-    );
-    if (!selectedLocalThread) {
-      throw new Error("Selected Codex task no longer belongs to the explicitly shared root");
-    }
-    const codexConfigSandbox = profile.codexConfigRoot
-      ? await FileSandbox.create(profile.codexConfigRoot)
-      : null;
-    const [history, projectFiles, codexConfigFiles] = await Promise.all([
-      codex.readThreadHistory(workspace.selectedThreadId, selectedLocalThread.path),
-      buildWorkspaceSnapshot(sandbox),
-      codexConfigSandbox ? buildCodexConfigSnapshot(codexConfigSandbox) : Promise.resolve([]),
-    ]);
-    const files = [...projectFiles, ...codexConfigFiles];
-    const imported = await relay.publishWorkspaceSnapshot(
-      profile.sessionId,
-      profile.memberToken,
-      {
-        threadId: workspace.selectedThreadId,
-        history,
-        files,
-      },
-    );
-    await profiles.update({ threadId: workspace.selectedThreadId });
-    return {
-      selectedThreadId: imported.selectedThreadId,
-      syncedAt: imported.syncedAt,
-      historyCount: imported.history.length,
-      fileCount: imported.files.length,
-    };
-  } finally {
-    workspaceSyncActive = false;
-  }
-}
-
 async function current(): Promise<{
   profile: LocalProfile;
   relay: RelayClient;
@@ -494,7 +427,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           });
         }
         const workspace = await publishCatalog(profile, relay);
-        const imported = await syncSelectedWorkspace(true);
+        const imported = await workspaceSync.sync(true);
         return text({
           publishedTaskCount: workspace.threads.length,
           ...imported,
@@ -609,17 +542,55 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (message.kind !== "codex_prompt") {
           throw new Error("Only codex_prompt messages can be forwarded");
         }
-        if (message.senderMemberId === profile.memberId) {
-          throw new Error("Owner messages do not require peer forwarding");
+        const selectedThread = (
+          await codex.listThreads(profile.projectRoot)
+        ).find((thread) => thread.id === profile.threadId);
+        if (!selectedThread) {
+          throw new Error(
+            "Bound Codex task no longer belongs to the explicitly shared root",
+          );
         }
         const result = await codex.submitPeerPrompt({
           threadId: profile.threadId,
+          projectRoot: profile.projectRoot,
+          commandId: message.id,
           peerDisplayName: message.senderDisplayName,
           body: message.body,
+          attachments: await Promise.all(
+            message.attachments.map(async (attachment) => ({
+              name: attachment.name,
+              mediaType: attachment.mediaType,
+              content: await relay.readMessageAttachment(
+                profile.sessionId,
+                profile.memberToken,
+                message.id,
+                attachment,
+              ),
+            })),
+          ),
+          codexOptions: message.codexOptions ?? {
+            accessMode: "follow-desktop",
+            model: null,
+            reasoningEffort: "follow-desktop",
+            speed: "follow-desktop",
+            planMode: false,
+          },
         });
-        const forwardedMessageIds = [...(profile.forwardedMessageIds ?? []), message.id].slice(-500);
+        if (result.status !== "submitted") {
+          throw new Error(
+            `Codex app-server did not submit the prompt (${result.reason ?? "not-ready"}). The prompt remains queued.`,
+          );
+        }
+        const forwardedMessageIds = [...(profile.forwardedMessageIds ?? []), message.id];
         await profiles.update({ forwardedMessageIds });
-        return text({ forwarded: message, codexTurn: result });
+        await relay.updateMessageDeliveryStatus(
+          profile.sessionId,
+          profile.memberToken,
+          message.id,
+          "submitted",
+          result.turnId ?? null,
+        );
+        return text({ forwarded: message, appServerSubmission: result });
       }
       case "collab_list_files": {
         const { profile } = await current();
@@ -669,13 +640,4 @@ process.on("SIGINT", async () => {
 });
 
 await server.connect(new StdioServerTransport());
-
-const workspaceSyncTimer = setInterval(() => {
-  void syncSelectedWorkspace().catch((error) => {
-    console.error(
-      "[codex-collab workspace]",
-      error instanceof Error ? error.message : String(error),
-    );
-  });
-}, 2_500);
-workspaceSyncTimer.unref();
+ensureWorkspaceSyncWorker();

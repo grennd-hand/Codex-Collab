@@ -7,3 +7,4 @@ coverage/
 *.sqlite-wal
 .env
 .codex-collab/
+.runtime-data/

@@ -5,9 +5,23 @@ import {
   type ChildProcessWithoutNullStreams,
 } from "node:child_process";
 import { createInterface } from "node:readline";
-import { readFile, realpath, stat } from "node:fs/promises";
-import { basename, extname, isAbsolute } from "node:path";
-import type { CodexRecordEntry } from "@codex-collab/protocol";
+import {
+  mkdir,
+  mkdtemp,
+  open as openFile,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
+import { basename, extname, isAbsolute, join } from "node:path";
+import { StringDecoder } from "node:string_decoder";
+import type {
+  CodexPromptOptions,
+  CodexRecordEntry,
+} from "@codex-collab/protocol";
+import { CodexDesktopIpcClient } from "./codex-desktop-ipc-client.js";
 
 interface RpcResponse {
   id: number;
@@ -30,6 +44,241 @@ export interface CodexThreadSummary {
   path?: string | null;
 }
 
+export interface CodexPromptSubmission {
+  status: "submitted" | "deferred";
+  reason?: string | null;
+  mode?: "started" | "steered" | "interrupted";
+  turnId?: string | null;
+}
+
+type CodexUserInput =
+  | { type: "text"; text: string; text_elements: [] }
+  | { type: "localImage"; path: string; detail: "auto" }
+  | { type: "mention"; name: string; path: string };
+
+interface ResumedCodexThread {
+  model?: string | null;
+  reasoningEffort?: string | null;
+}
+
+interface ThreadResumeResponse {
+  thread?: ResumedCodexThread;
+}
+
+interface TurnStartResponse {
+  turn?: { id?: string };
+}
+
+type CodexDesktopBridge = Pick<
+  CodexDesktopIpcClient,
+  "startTurn" | "steerTurn" | "interruptTurn" | "close"
+>;
+
+export interface CodexAppServerClientOptions {
+  desktopIpc?: CodexDesktopBridge;
+  platform?: NodeJS.Platform;
+}
+
+const MODEL_IDS: Readonly<Record<string, string>> = {
+  "5.6 Sol": "gpt-5.6-sol",
+  "5.6 Terra": "gpt-5.6-terra",
+  "5.6 Luna": "gpt-5.6-luna",
+  "5.5": "gpt-5.5",
+  "5.4": "gpt-5.4",
+  "5.4 Mini": "gpt-5.4-mini",
+  "5.3 Codex Spark": "gpt-5.3-codex-spark",
+};
+
+const INLINE_TEXT_EXTENSIONS = new Set([
+  ".cfg",
+  ".conf",
+  ".css",
+  ".csv",
+  ".html",
+  ".ini",
+  ".js",
+  ".json",
+  ".jsonc",
+  ".jsx",
+  ".log",
+  ".md",
+  ".mjs",
+  ".mts",
+  ".ps1",
+  ".py",
+  ".sh",
+  ".sql",
+  ".toml",
+  ".ts",
+  ".tsx",
+  ".txt",
+  ".xml",
+  ".yaml",
+  ".yml",
+]);
+
+export function decodeInlineTextAttachment(input: {
+  name: string;
+  mediaType: string;
+  content: Uint8Array;
+}): string | null {
+  if (input.content.byteLength > 1_000_000) return null;
+  const mediaType = input.mediaType.toLowerCase();
+  const isText =
+    mediaType.startsWith("text/") ||
+    mediaType === "application/json" ||
+    mediaType === "application/javascript" ||
+    mediaType === "application/xml" ||
+    INLINE_TEXT_EXTENSIONS.has(extname(input.name).toLowerCase());
+  if (!isText) return null;
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(input.content);
+  } catch {
+    return null;
+  }
+}
+
+function resolveModelId(model: string | null): string | null {
+  if (!model) return null;
+  return MODEL_IDS[model] ?? model;
+}
+
+function isUnmaterializedThreadError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.message.includes("is not materialized yet") ||
+      error.message.includes("no rollout found for thread id"))
+  );
+}
+
+function isEmptyRolloutError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes("rollout") &&
+    error.message.includes("is empty");
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function nestedTurnId(value: unknown, depth = 0): string | null {
+  if (
+    depth > 6 ||
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value)
+  ) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  if (typeof record.turnId === "string" && record.turnId.length > 0) {
+    return record.turnId;
+  }
+  const turn = record.turn;
+  if (
+    typeof turn === "object" &&
+    turn !== null &&
+    !Array.isArray(turn) &&
+    typeof (turn as Record<string, unknown>).id === "string"
+  ) {
+    return (turn as Record<string, unknown>).id as string;
+  }
+  for (const key of ["result", "response", "data"]) {
+    const found = nestedTurnId(record[key], depth + 1);
+    if (found) return found;
+  }
+  return null;
+}
+
+export function buildCodexTurnStartParams(input: {
+  threadId: string;
+  userInput: CodexUserInput[];
+  options: CodexPromptOptions;
+  currentModel?: string | null;
+  currentReasoningEffort?: string | null;
+  peerDisplayName: string;
+  commandId?: string;
+}): Record<string, unknown> {
+  const requestedModel = resolveModelId(input.options.model);
+  const effectiveModel = requestedModel ?? input.currentModel ?? null;
+  const requestedEffort =
+    input.options.reasoningEffort === "follow-desktop"
+      ? null
+      : input.options.reasoningEffort;
+  const parameters: Record<string, unknown> = {
+    threadId: input.threadId,
+    input: input.userInput,
+    responsesapiClientMetadata: {
+      source: "codex-collab",
+      collab_member: input.peerDisplayName,
+      ...(input.commandId ? { collab_command_id: input.commandId } : {}),
+    },
+  };
+
+  if (requestedModel) parameters.model = requestedModel;
+  if (requestedEffort) parameters.effort = requestedEffort;
+  if (input.options.speed === "fast") {
+    parameters.serviceTier = "priority";
+  } else if (input.options.speed === "standard") {
+    parameters.serviceTier = null;
+  }
+
+  if (input.options.accessMode === "request-approval") {
+    parameters.permissions = ":workspace";
+    parameters.approvalPolicy = "on-request";
+  } else if (input.options.accessMode === "auto") {
+    parameters.permissions = ":workspace";
+    parameters.approvalPolicy = "never";
+  } else if (input.options.accessMode === "full-access") {
+    parameters.permissions = ":danger-full-access";
+    parameters.approvalPolicy = "never";
+  }
+
+  if (input.options.planMode) {
+    if (!effectiveModel) {
+      throw new Error("Plan mode requires the selected task's current model");
+    }
+    parameters.collaborationMode = {
+      mode: "plan",
+      settings: {
+        model: effectiveModel,
+        reasoning_effort:
+          requestedEffort ?? input.currentReasoningEffort ?? null,
+        developer_instructions: null,
+      },
+    };
+  }
+  return parameters;
+}
+
+export async function readCodexThreadRevision(
+  thread: CodexThreadSummary,
+): Promise<string | null> {
+  const updatedAt =
+    typeof thread.updatedAt === "number" && Number.isFinite(thread.updatedAt)
+      ? `updated:${thread.updatedAt}`
+      : null;
+  if (
+    !thread.path ||
+    !isAbsolute(thread.path) ||
+    extname(thread.path).toLowerCase() !== ".jsonl" ||
+    !basename(thread.path).includes(thread.id)
+  ) {
+    return updatedAt;
+  }
+  try {
+    const resolved = await realpath(thread.path);
+    const metadata = await stat(resolved);
+    if (!metadata.isFile()) {
+      return updatedAt;
+    }
+    return [updatedAt, `rollout:${metadata.size}:${metadata.mtimeMs}`]
+      .filter(Boolean)
+      .join("|");
+  } catch {
+    return updatedAt;
+  }
+}
+
 interface CodexThreadItem {
   type: string;
   id?: string;
@@ -46,7 +295,104 @@ interface CodexThreadItem {
 interface CodexTurn {
   id: string;
   items: CodexThreadItem[];
+  status?: CodexTurnStatus;
   startedAt?: number | null;
+}
+
+export type CodexTurnStatus =
+  | "completed"
+  | "interrupted"
+  | "failed"
+  | "inProgress";
+
+export interface CodexRolloutActivity {
+  openTurnIds: string[];
+  latestObservedTurnId: string | null;
+  latestObservedAtMs: number | null;
+}
+
+export function extractCodexRolloutActivity(
+  lines: string[],
+  initial: CodexRolloutActivity = {
+    openTurnIds: [],
+    latestObservedTurnId: null,
+    latestObservedAtMs: null,
+  },
+): CodexRolloutActivity {
+  const openTurnIds = new Set(initial.openTurnIds);
+  let latestObservedTurnId = initial.latestObservedTurnId;
+  let latestObservedAtMs = initial.latestObservedAtMs;
+
+  for (const line of lines) {
+    let item: RolloutItem;
+    try {
+      item = JSON.parse(line) as RolloutItem;
+    } catch {
+      continue;
+    }
+    if (!item.payload) continue;
+
+    const directTurnId =
+      typeof item.payload.turn_id === "string"
+        ? item.payload.turn_id
+        : null;
+    const metadata = item.payload.internal_chat_message_metadata_passthrough;
+    const metadataTurnId =
+      metadata &&
+      typeof metadata === "object" &&
+      "turn_id" in metadata &&
+      typeof metadata.turn_id === "string"
+        ? metadata.turn_id
+        : null;
+    const observedTurnId = metadataTurnId ?? directTurnId;
+    if (observedTurnId) {
+      latestObservedTurnId = observedTurnId;
+      if (
+        typeof item.timestamp === "string" &&
+        !Number.isNaN(Date.parse(item.timestamp))
+      ) {
+        latestObservedAtMs = Date.parse(item.timestamp);
+      }
+    }
+
+    if (item.type !== "event_msg" || !directTurnId) continue;
+    if (item.payload.type === "task_started") {
+      openTurnIds.add(directTurnId);
+    } else if (item.payload.type === "task_complete") {
+      openTurnIds.delete(directTurnId);
+    }
+  }
+
+  return {
+    openTurnIds: [...openTurnIds],
+    latestObservedTurnId,
+    latestObservedAtMs,
+  };
+}
+
+const TERMINAL_ROLLOUT_GRACE_MS = 120_000;
+
+export function isCodexThreadBusy(
+  activity: CodexRolloutActivity,
+  turns: ReadonlyArray<{ id: string; status?: CodexTurnStatus }>,
+  nowMs = Date.now(),
+): boolean {
+  if (turns.some((turn) => turn.status === "inProgress")) {
+    return true;
+  }
+  if (activity.openTurnIds.length === 0) {
+    return false;
+  }
+  if (
+    !activity.latestObservedTurnId ||
+    !activity.openTurnIds.includes(activity.latestObservedTurnId)
+  ) {
+    return false;
+  }
+  if (activity.latestObservedAtMs === null) {
+    return true;
+  }
+  return nowMs - activity.latestObservedAtMs < TERMINAL_ROLLOUT_GRACE_MS;
 }
 
 export function redactSensitiveText(value: string): string {
@@ -271,6 +617,23 @@ export class CodexAppServerClient extends EventEmitter {
   private process: ChildProcessWithoutNullStreams | null = null;
   private nextId = 1;
   private readonly pending = new Map<number, PendingRequest>();
+  private readonly stagedAttachments = new Map<string, Set<string>>();
+  private readonly rolloutActivityCache = new Map<
+    string,
+    {
+      size: number;
+      pendingLine: string;
+      activity: CodexRolloutActivity;
+    }
+  >();
+  private readonly desktopIpc: CodexDesktopBridge;
+  private readonly platform: NodeJS.Platform;
+
+  constructor(options: CodexAppServerClientOptions = {}) {
+    super();
+    this.desktopIpc = options.desktopIpc ?? new CodexDesktopIpcClient();
+    this.platform = options.platform ?? process.platform;
+  }
 
   async start(): Promise<void> {
     if (this.process) return;
@@ -291,6 +654,7 @@ export class CodexAppServerClient extends EventEmitter {
       for (const request of this.pending.values()) request.reject(error);
       this.pending.clear();
       this.process = null;
+      void this.cleanupAllStagedAttachments();
     });
 
     await this.request("initialize", {
@@ -333,11 +697,10 @@ export class CodexAppServerClient extends EventEmitter {
     ) {
       const resolved = await realpath(rolloutPath);
       const metadata = await stat(resolved);
-      if (!metadata.isFile() || metadata.size > 20_000_000) {
-        throw new Error("Selected Codex task history exceeds the 20 MB import limit");
+      if (metadata.isFile() && metadata.size <= 20_000_000) {
+        const content = await readFile(resolved, "utf8");
+        return extractCodexRolloutEntries(content.split(/\r?\n/), threadId);
       }
-      const content = await readFile(resolved, "utf8");
-      return extractCodexRolloutEntries(content.split(/\r?\n/), threadId);
     }
     const turns: CodexTurn[] = [];
     let cursor: string | null = null;
@@ -355,31 +718,381 @@ export class CodexAppServerClient extends EventEmitter {
     return extractCodexRecordEntries(turns);
   }
 
-  async submitPeerPrompt(input: {
-    threadId: string;
-    peerDisplayName: string;
-    body: string;
-  }): Promise<unknown> {
+  async isThreadBusyForPrompt(
+    threadId: string,
+    rolloutPath?: string | null,
+  ): Promise<boolean> {
     await this.start();
     await this.request("thread/resume", {
-      threadId: input.threadId,
+      threadId,
       excludeTurns: true,
     });
-    const prompt = `[Codex Collab member: ${input.peerDisplayName}]\n\n${input.body}`;
-    return this.request("turn/start", {
-      threadId: input.threadId,
-      input: [{ type: "text", text: prompt, text_elements: [] }],
-      responsesapiClientMetadata: {
-        source: "codex-collab",
-        collab_member: input.peerDisplayName,
-      },
-    });
+    const response = (await this.request("thread/turns/list", {
+      threadId,
+      limit: 50,
+      sortDirection: "desc",
+      itemsView: "summary",
+    })) as { data?: CodexTurn[] };
+
+    let activity: CodexRolloutActivity = {
+      openTurnIds: [],
+      latestObservedTurnId: null,
+      latestObservedAtMs: null,
+    };
+    if (
+      rolloutPath &&
+      isAbsolute(rolloutPath) &&
+      extname(rolloutPath).toLowerCase() === ".jsonl" &&
+      basename(rolloutPath).includes(threadId)
+    ) {
+      const resolved = await realpath(rolloutPath);
+      const metadata = await stat(resolved);
+      if (metadata.isFile()) {
+        activity = await this.readRolloutActivity(resolved, metadata.size);
+      }
+    }
+
+    return isCodexThreadBusy(activity, response.data ?? []);
+  }
+
+  async submitPeerPrompt(input: {
+    threadId: string;
+    projectRoot: string;
+    commandId: string;
+    peerDisplayName: string;
+    body: string;
+    attachments: Array<{
+      name: string;
+      mediaType: string;
+      content: Uint8Array;
+    }>;
+    codexOptions: CodexPromptOptions;
+  }): Promise<CodexPromptSubmission> {
+    await this.start();
+    const preparedAttachments = input.attachments.map((attachment) => ({
+      attachment,
+      inlineText: decodeInlineTextAttachment(attachment),
+    }));
+    let stagingDirectory: string | null = null;
+    if (preparedAttachments.some((entry) => entry.inlineText === null)) {
+      const approvedRoot = await realpath(input.projectRoot);
+      const stagingRoot = join(approvedRoot, ".codex-collab");
+      await mkdir(stagingRoot, { recursive: true, mode: 0o700 });
+      stagingDirectory = await mkdtemp(join(stagingRoot, "attachments-"));
+    }
+    const userInput: CodexUserInput[] = [
+      { type: "text", text: input.body, text_elements: [] },
+    ];
+    let stagingRegistered = false;
+    try {
+      for (const [index, prepared] of preparedAttachments.entries()) {
+        const { attachment, inlineText } = prepared;
+        if (inlineText !== null) {
+          userInput.push({
+            type: "text",
+            text: `\n\nAttached file: ${attachment.name}\n${inlineText}`,
+            text_elements: [],
+          });
+          continue;
+        }
+        if (stagingDirectory) {
+          const path = join(
+            stagingDirectory,
+            `${String(index + 1).padStart(2, "0")}-${basename(attachment.name)}`,
+          );
+          await writeFile(path, attachment.content, { mode: 0o600 });
+          userInput.push(
+            attachment.mediaType.startsWith("image/")
+              ? { type: "localImage", path, detail: "auto" }
+              : { type: "mention", name: attachment.name, path },
+          );
+        }
+      }
+
+      const activeTurnId = await this.getActiveTurnId(input.threadId);
+      if (activeTurnId) {
+        if (this.platform === "win32") {
+          await this.desktopIpc.steerTurn({
+            conversationId: input.threadId,
+            input: userInput,
+            restoreMessage: null,
+            serviceTier:
+              input.codexOptions.speed === "fast"
+                ? "priority"
+                : input.codexOptions.speed === "standard"
+                  ? null
+                  : undefined,
+            attachments: [],
+            clientUserMessageId: input.commandId,
+            additionalContext: null,
+          });
+        } else {
+          await this.request("turn/steer", {
+            threadId: input.threadId,
+            expectedTurnId: activeTurnId,
+            input: userInput,
+            responsesapiClientMetadata: {
+              source: "codex-collab",
+              collab_member: input.peerDisplayName,
+              collab_command_id: input.commandId,
+            },
+          });
+        }
+        if (stagingDirectory) {
+          this.registerStagingDirectory(activeTurnId, stagingDirectory);
+          stagingRegistered = true;
+        }
+        return {
+          status: "submitted",
+          mode: "steered",
+          turnId: activeTurnId,
+        };
+      }
+
+      let resumed: ThreadResumeResponse = {};
+      try {
+        resumed = (await this.request("thread/resume", {
+          threadId: input.threadId,
+          excludeTurns: true,
+        })) as ThreadResumeResponse;
+      } catch (error) {
+        if (!isUnmaterializedThreadError(error)) throw error;
+      }
+      const startParameters = buildCodexTurnStartParams({
+        threadId: input.threadId,
+        userInput,
+        options: input.codexOptions,
+        currentModel: resumed.thread?.model ?? null,
+        currentReasoningEffort: resumed.thread?.reasoningEffort ?? null,
+        peerDisplayName: input.peerDisplayName,
+        commandId: input.commandId,
+      });
+      let turnId: string | null = null;
+      if (this.platform === "win32") {
+        const { threadId: _threadId, ...turnStartParams } = startParameters;
+        const response = await this.desktopIpc.startTurn({
+          conversationId: input.threadId,
+          turnStartParams: {
+            ...turnStartParams,
+            clientUserMessageId: input.commandId,
+            additionalContext: null,
+          },
+        });
+        turnId = nestedTurnId(response);
+      } else {
+        const response = (await this.request(
+          "turn/start",
+          startParameters,
+        )) as TurnStartResponse;
+        turnId = response.turn?.id ?? null;
+      }
+      if (!turnId) {
+        throw new Error("Codex Desktop did not return a started turn id");
+      }
+      if (stagingDirectory) {
+        this.registerStagingDirectory(turnId, stagingDirectory);
+        stagingRegistered = true;
+      }
+      return { status: "submitted", mode: "started", turnId };
+    } finally {
+      if (stagingDirectory && !stagingRegistered) {
+        await rm(stagingDirectory, { recursive: true, force: true });
+      }
+    }
+  }
+
+  async stopPeerPrompt(input: {
+    threadId: string;
+  }): Promise<CodexPromptSubmission> {
+    await this.start();
+    let desktopError: unknown = null;
+    if (this.platform === "win32") {
+      try {
+        const result = await this.desktopIpc.interruptTurn({
+          conversationId: input.threadId,
+          mode: "user-stop",
+        });
+        if (result.interruptedTurnId) {
+          return {
+            status: "submitted",
+            mode: "interrupted",
+            turnId: result.interruptedTurnId,
+          };
+        }
+      } catch (error) {
+        desktopError = error;
+      }
+    }
+
+    const turnId = await this.getActiveTurnId(input.threadId);
+    if (!turnId) {
+      if (desktopError) throw desktopError;
+      return { status: "deferred", reason: "no-active-turn", turnId: null };
+    }
+
+    try {
+      await this.request("thread/resume", {
+        threadId: input.threadId,
+        excludeTurns: true,
+      });
+      await this.request("turn/interrupt", {
+        threadId: input.threadId,
+        turnId,
+      });
+      await this.waitForTurnInterruption(input.threadId, turnId);
+    } catch (error) {
+      if (desktopError) {
+        throw new AggregateError(
+          [desktopError, error],
+          "Codex Desktop IPC and app-server both failed to interrupt the active turn",
+        );
+      }
+      throw error;
+    }
+
+    return { status: "submitted", mode: "interrupted", turnId };
+  }
+
+  async getTurnStatus(
+    threadId: string,
+    turnId: string,
+  ): Promise<CodexTurnStatus | null> {
+    await this.start();
+    const response = (await this.request("thread/turns/list", {
+      threadId,
+      limit: 100,
+      sortDirection: "desc",
+      itemsView: "summary",
+    })) as { data?: CodexTurn[] };
+    return response.data?.find((turn) => turn.id === turnId)?.status ?? null;
+  }
+
+  private async getActiveTurnId(threadId: string): Promise<string | null> {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      try {
+        const response = (await this.request("thread/turns/list", {
+          threadId,
+          limit: 50,
+          sortDirection: "desc",
+          itemsView: "summary",
+        })) as { data?: CodexTurn[] };
+        return response.data?.find((turn) => turn.status === "inProgress")?.id ?? null;
+      } catch (error) {
+        if (isUnmaterializedThreadError(error)) return null;
+        if (isEmptyRolloutError(error) && attempt < 9) {
+          await delay(100);
+          continue;
+        }
+        throw error;
+      }
+    }
+    return null;
+  }
+
+  private async waitForTurnInterruption(
+    threadId: string,
+    turnId: string,
+  ): Promise<void> {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const status = await this.getTurnStatus(threadId, turnId);
+      if (
+        status === "interrupted" ||
+        status === "failed" ||
+        status === "completed"
+      ) {
+        return;
+      }
+      if (attempt < 19) {
+        await delay(100);
+      }
+    }
+    throw new Error(
+      `Codex app-server did not confirm interruption of turn ${turnId}`,
+    );
+  }
+
+  private registerStagingDirectory(turnId: string, path: string): void {
+    const paths = this.stagedAttachments.get(turnId) ?? new Set<string>();
+    paths.add(path);
+    this.stagedAttachments.set(turnId, paths);
+    const fallback = setTimeout(() => {
+      void this.cleanupStagedAttachments(turnId);
+    }, 60 * 60 * 1_000);
+    fallback.unref();
+  }
+
+  private async cleanupStagedAttachments(turnId: string): Promise<void> {
+    const paths = this.stagedAttachments.get(turnId);
+    if (!paths) return;
+    this.stagedAttachments.delete(turnId);
+    await Promise.all(
+      [...paths].map((path) => rm(path, { recursive: true, force: true })),
+    );
+  }
+
+  private async cleanupAllStagedAttachments(): Promise<void> {
+    const turnIds = [...this.stagedAttachments.keys()];
+    await Promise.all(
+      turnIds.map((turnId) => this.cleanupStagedAttachments(turnId)),
+    );
   }
 
   async close(): Promise<void> {
-    if (!this.process) return;
-    this.process.kill();
-    this.process = null;
+    if (this.process) {
+      this.process.kill();
+      this.process = null;
+    }
+    await this.desktopIpc.close();
+    await this.cleanupAllStagedAttachments();
+    this.rolloutActivityCache.clear();
+  }
+
+  private async readRolloutActivity(
+    path: string,
+    size: number,
+  ): Promise<CodexRolloutActivity> {
+    let cached = this.rolloutActivityCache.get(path);
+    if (cached && size < cached.size) {
+      cached = undefined;
+    }
+    let offset = cached?.size ?? 0;
+    let pendingLine = cached?.pendingLine ?? "";
+    let activity = cached?.activity ?? {
+      openTurnIds: [],
+      latestObservedTurnId: null,
+      latestObservedAtMs: null,
+    };
+    if (offset >= size) return activity;
+
+    const handle = await openFile(path, "r");
+    const decoder = new StringDecoder("utf8");
+    const buffer = Buffer.allocUnsafe(Math.min(1_048_576, size - offset));
+    try {
+      while (offset < size) {
+        const length = Math.min(buffer.length, size - offset);
+        const { bytesRead } = await handle.read(
+          buffer,
+          0,
+          length,
+          offset,
+        );
+        if (bytesRead === 0) break;
+        offset += bytesRead;
+        pendingLine += decoder.write(buffer.subarray(0, bytesRead));
+        const lines = pendingLine.split(/\r?\n/);
+        pendingLine = lines.pop() ?? "";
+        activity = extractCodexRolloutActivity(lines, activity);
+      }
+      pendingLine += decoder.end();
+    } finally {
+      await handle.close();
+    }
+    this.rolloutActivityCache.set(path, {
+      size: offset,
+      pendingLine,
+      activity,
+    });
+    return activity;
   }
 
   private request(method: string, params: unknown): Promise<unknown> {
@@ -421,6 +1134,18 @@ export class CodexAppServerClient extends EventEmitter {
       return;
     }
     if (message.method) {
+      if (
+        message.method === "turn/completed" &&
+        message.params &&
+        typeof message.params === "object" &&
+        "turn" in message.params &&
+        message.params.turn &&
+        typeof message.params.turn === "object" &&
+        "id" in message.params.turn &&
+        typeof message.params.turn.id === "string"
+      ) {
+        void this.cleanupStagedAttachments(message.params.turn.id);
+      }
       this.emit("notification", message);
     }
   }

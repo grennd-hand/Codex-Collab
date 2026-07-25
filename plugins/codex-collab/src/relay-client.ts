@@ -1,12 +1,17 @@
 import type {
   ClaimHostPairingResponse,
+  CodexPromptOptions,
   CodexRecordEntry,
+  CodexRuntimeStatus,
   CodexThreadCatalogEntry,
   CreateInviteResponse,
   CreateSessionResponse,
   JoinInviteResponse,
   Member,
   Message,
+  MessageAttachment,
+  MessageAttachmentInput,
+  MessageDeliveryStatus,
   MessageKind,
   WorkspaceFileContent,
   WorkspaceSummary,
@@ -110,13 +115,68 @@ export class RelayClient {
     memberToken: string,
     kind: MessageKind,
     body: string,
+    input: {
+      attachments?: MessageAttachmentInput[];
+      codexOptions?: CodexPromptOptions | null;
+    } = {},
   ): Promise<Message> {
     const result = await this.request<{ message: Message }>(
       `/v1/sessions/${encodeURIComponent(sessionId)}/messages`,
       {
         method: "POST",
         headers: { authorization: `Bearer ${memberToken}` },
-        body: JSON.stringify({ kind, body }),
+        body: JSON.stringify({ kind, body, ...input }),
+      },
+    );
+    return result.message;
+  }
+
+  async readMessageAttachment(
+    sessionId: string,
+    memberToken: string,
+    messageId: string,
+    attachment: MessageAttachment,
+  ): Promise<Uint8Array> {
+    const response = await fetch(
+      new URL(
+        `/v1/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(
+          messageId,
+        )}/attachments/${encodeURIComponent(attachment.id)}`,
+        this.baseUrl,
+      ),
+      {
+        headers: { authorization: `Bearer ${memberToken}` },
+        signal: AbortSignal.timeout(15_000),
+      },
+    );
+    if (!response.ok) {
+      const body = (await response.json()) as RelayErrorBody;
+      throw new Error(
+        body.error?.message ?? `Relay attachment request failed with ${response.status}`,
+      );
+    }
+    const content = new Uint8Array(await response.arrayBuffer());
+    if (content.length !== attachment.size) {
+      throw new Error(`Relay attachment size mismatch for ${attachment.name}`);
+    }
+    return content;
+  }
+
+  async updateMessageDeliveryStatus(
+    sessionId: string,
+    memberToken: string,
+    messageId: string,
+    status: MessageDeliveryStatus,
+    codexTurnId?: string | null,
+  ): Promise<Message> {
+    const result = await this.request<{ message: Message }>(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(
+        messageId,
+      )}/status`,
+      {
+        method: "PATCH",
+        headers: { authorization: `Bearer ${memberToken}` },
+        body: JSON.stringify({ status, codexTurnId }),
       },
     );
     return result.message;
@@ -178,6 +238,22 @@ export class RelayClient {
         method: "PUT",
         headers: { authorization: `Bearer ${memberToken}` },
         body: JSON.stringify(input),
+      },
+    );
+    return result.workspace;
+  }
+
+  async publishCodexRuntimeStatus(
+    sessionId: string,
+    memberToken: string,
+    status: CodexRuntimeStatus,
+  ): Promise<WorkspaceSummary> {
+    const result = await this.request<{ workspace: WorkspaceSummary }>(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/workspace/runtime`,
+      {
+        method: "PUT",
+        headers: { authorization: `Bearer ${memberToken}` },
+        body: JSON.stringify({ status }),
       },
     );
     return result.workspace;

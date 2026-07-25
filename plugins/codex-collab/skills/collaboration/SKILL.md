@@ -13,12 +13,15 @@ Use the `collab_*` MCP tools for shared sessions. Keep the owner as the security
 2. If the owner already created the room in the web dashboard, call `collab_pair_host` with the
    dashboard's short-lived pairing code and one explicit absolute project root.
 3. If there is no web room, call `collab_create_session` with one explicit absolute project root.
-4. After web pairing, tell the owner to select a task in **Codex 与文件**. Keep the MCP host running
-   while visible messages, reasoning summaries, command output and the read-only file snapshot are
-   imported.
+4. After web pairing, tell the owner to select a task in **Codex 与文件**. The single-instance
+   background worker imports visible messages, reasoning summaries, command output and the
+   read-only file snapshot. Relay events wake it immediately, and it forwards approved members'
+   web prompts to the current Desktop conversation through the same-user local IPC router without
+   opening or focusing Desktop, then republishes when the selected task changes.
 5. Share `.codex` configuration only when the owner separately supplies its absolute path as
    `codexConfigRoot`; project-root permission never implies `.codex` permission.
-6. Use `collab_refresh_workspace` when the owner asks to refresh the task catalog or snapshot.
+6. Use `collab_refresh_workspace` when the owner asks to refresh the task catalog or force an
+   immediate snapshot; selected-task record changes otherwise sync automatically.
 7. Use `collab_create_invite` to create a short-lived, low-use invite.
 8. For an invited device, call `collab_join_session`.
 9. Never call `collab_approve_member` until the owner explicitly accepts the displayed member.
@@ -28,8 +31,9 @@ Use the `collab_*` MCP tools for shared sessions. Keep the owner as the security
 1. Call `collab_list_codex_threads`, preferably filtered by the project cwd.
 2. Show the owner the candidate thread ID and title.
 3. Call `collab_bind_thread` only after the intended task and root are unambiguous.
-4. Use `collab_forward_prompt` only for a relay-backed `codex_prompt` message. Do not recreate the
-   text with a claimed identity.
+4. Approved members' web prompts are consumed by the background worker. Use
+   `collab_forward_prompt` only for a relay-backed `codex_prompt` message. Do not recreate the text
+   with a claimed identity.
 5. Preserve the current Codex approval policy. Never downgrade approvals on behalf of a peer.
 
 ## Files

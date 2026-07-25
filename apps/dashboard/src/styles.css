@@ -30,6 +30,17 @@ textarea {
   font: inherit;
 }
 
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
 .app-provider {
   min-height: 100dvh;
   padding: 16px 0;
@@ -108,8 +119,69 @@ textarea {
 }
 
 .topbar-actions {
+  flex: 0 0 auto;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.room-switch {
+  min-width: 124px;
+  flex: 0 0 auto;
+}
+
+.stable-icon-button {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  flex: 0 0 32px;
+  padding: 0;
+  transition: none;
+}
+
+.stable-icon-button::after {
+  transition: none;
+}
+
+.topbar-thread-control {
+  min-width: 240px;
+  max-width: 460px;
+  flex: 1 1 360px;
+  margin-left: auto;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.topbar-thread-control > svg {
+  color: var(--colorBrandForeground1);
+  font-size: 20px;
+}
+
+.topbar-thread-control > div {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.topbar-thread-control label {
+  color: var(--colorNeutralForeground3);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.topbar-thread-control .fui-Select,
+.topbar-thread-control select {
+  min-width: 0;
+  width: 100%;
+}
+
+.connection-badge {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .error-region {
@@ -339,6 +411,66 @@ textarea {
   line-height: 1.55;
 }
 
+.conversation-loading {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 40px 20px;
+  color: var(--colorNeutralForeground3);
+  text-align: center;
+}
+
+.conversation-loading .fui-Spinner {
+  min-width: 180px;
+}
+
+.codex-execution-status {
+  position: sticky;
+  bottom: 0;
+  width: min(100%, 700px);
+  min-height: 52px;
+  margin: 4px auto 0;
+  padding: 9px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--colorBrandStroke2);
+  border-radius: 6px;
+  background: color-mix(
+    in srgb,
+    var(--colorBrandBackground2) 88%,
+    var(--colorNeutralBackground1)
+  );
+  box-shadow: var(--shadow4);
+  color: var(--colorNeutralForeground1);
+  z-index: 1;
+}
+
+.codex-execution-status > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.codex-execution-status strong,
+.codex-execution-status span {
+  display: block;
+}
+
+.codex-execution-status strong {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.codex-execution-status span {
+  color: var(--colorNeutralForeground2);
+  font-size: 12px;
+}
+
+.codex-execution-status.stopping {
+  border-color: var(--colorPaletteMarigoldBorder2);
+}
+
 .message {
   width: min(78%, 700px);
   margin: 0 0 18px;
@@ -397,6 +529,91 @@ textarea {
   background: var(--colorBrandBackground2);
 }
 
+.imported-message.assistant .message-bubble {
+  border-left: 3px solid var(--colorBrandBackground);
+  background: var(--colorBrandBackground2);
+}
+
+.execution-disclosure {
+  width: min(92%, 740px);
+  margin: 0 auto 18px;
+  border: 1px solid var(--colorNeutralStroke2);
+  border-radius: 6px;
+  background: var(--colorNeutralBackground2);
+}
+
+.execution-disclosure .fui-AccordionHeader__button {
+  min-height: 42px;
+  padding: 8px 10px;
+}
+
+.execution-summary {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  text-align: left;
+}
+
+.execution-summary strong {
+  color: var(--colorNeutralForeground2);
+  font-size: 12px;
+}
+
+.execution-summary span {
+  color: var(--colorNeutralForeground3);
+  font-size: 11px;
+}
+
+.execution-record-list {
+  max-height: 360px;
+  padding: 2px 2px 10px;
+  overflow: auto;
+  border-top: 1px solid var(--colorNeutralStroke2);
+}
+
+.execution-record {
+  padding: 10px 4px 4px;
+}
+
+.execution-record-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--colorNeutralForeground3);
+}
+
+.execution-record-meta svg {
+  flex: 0 0 auto;
+  font-size: 14px;
+}
+
+.execution-record-meta strong,
+.execution-record-meta time {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.execution-record-meta time {
+  margin-left: auto;
+  font-weight: 400;
+}
+
+.execution-record p,
+.execution-record pre {
+  margin: 6px 0 0 20px;
+  overflow-wrap: anywhere;
+  color: var(--colorNeutralForeground2);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.execution-record pre {
+  overflow-x: auto;
+  font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+}
+
 .message-bubble > svg {
   flex: 0 0 auto;
   margin-top: 3px;
@@ -410,20 +627,202 @@ textarea {
   white-space: pre-wrap;
 }
 
+.message-content {
+  min-width: 0;
+  flex: 1;
+}
+
+.message-attachments {
+  margin-top: 9px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.message-attachments > span {
+  min-width: 0;
+  max-width: 100%;
+  padding: 5px 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.message-attachments > span > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-attachments svg {
+  flex: 0 0 auto;
+}
+
+.message-attachments small {
+  flex: 0 0 auto;
+  opacity: 0.72;
+}
+
+.delivery-status {
+  font-weight: 600;
+}
+
+.delivery-status.queued {
+  color: var(--colorPaletteMarigoldForeground2);
+}
+
+.delivery-status.submitted {
+  color: var(--colorPaletteMarigoldForeground2);
+}
+
+.delivery-status.completed {
+  color: var(--colorPaletteGreenForeground2);
+}
+
+.delivery-status.failed {
+  color: var(--colorPaletteRedForeground1);
+}
+
 .composer {
+  position: relative;
   padding: 16px 22px 18px;
   border-top: 1px solid var(--colorNeutralStroke2);
   background: var(--colorNeutralBackground1);
 }
 
+.composer-surface {
+  padding: 8px;
+  border: 1px solid var(--colorNeutralStroke1);
+  border-radius: 8px;
+  background: var(--colorNeutralBackground1);
+  box-shadow: var(--shadow4);
+}
+
+.composer.dragging .composer-surface {
+  border-color: var(--colorBrandStroke1);
+  outline: 2px solid var(--colorBrandStroke2);
+  outline-offset: 2px;
+}
+
+.composer .fui-Textarea {
+  width: 100%;
+  min-height: 68px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.composer .fui-Textarea::after {
+  display: none;
+}
+
 .composer textarea {
-  min-height: 78px;
+  min-height: 64px;
+  padding: 4px 6px 8px;
+}
+
+.pending-attachments {
+  padding: 2px 4px 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pending-attachments > span {
+  min-width: 0;
+  max-width: min(100%, 320px);
+  height: 34px;
+  padding: 0 3px 0 8px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto 24px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--colorNeutralStroke2);
+  border-radius: 6px;
+  background: var(--colorNeutralBackground2);
+  font-size: 12px;
+}
+
+.pending-attachments > span > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pending-attachments small {
+  color: var(--colorNeutralForeground3);
+}
+
+.pending-attachments button {
+  min-width: 24px;
+  width: 24px;
+  height: 24px;
+}
+
+.composer-toolbar {
+  min-width: 0;
+  padding-top: 7px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 8px;
+  border-top: 1px solid var(--colorNeutralStroke3);
+}
+
+.composer-tools {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.composer-tools > button,
+.composer-actions > button {
+  flex: 0 0 auto;
+}
+
+.composer-tools select {
+  width: auto;
+  max-width: 150px;
+  min-height: 30px;
+  font-size: 12px;
+}
+
+.composer-tools .fui-Checkbox {
+  min-height: 30px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.composer-mode-switch {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid var(--colorNeutralStroke1);
+  border-radius: 6px;
+}
+
+.composer-mode-switch button {
+  min-width: 72px;
+  min-height: 28px;
+  border-radius: 0;
+  transition: none;
 }
 
 .composer-actions {
+  flex: 0 0 auto;
   justify-content: flex-end;
-  gap: 8px;
-  margin-top: 10px;
+  gap: 4px;
+  margin: 0;
+}
+
+.composer-actions button {
+  transition: none;
 }
 
 .activity-list {
@@ -884,8 +1283,7 @@ textarea {
   border-bottom: 1px solid var(--colorNeutralStroke3);
 }
 
-.member-skeleton > div,
-.message-skeleton {
+.member-skeleton > div {
   display: grid;
   gap: 8px;
 }
@@ -898,20 +1296,11 @@ textarea {
   width: 56px;
 }
 
-.message-skeleton {
-  width: min(72%, 620px);
-  margin-bottom: 18px;
-}
-
-.message-skeleton.right {
-  margin-left: auto;
-}
-
-.message-skeleton > span:first-child {
-  width: 110px;
-}
-
 @media (max-width: 1120px) {
+  .topbar-thread-control {
+    max-width: 340px;
+  }
+
   .workspace {
     grid-template-columns: 250px minmax(420px, 1fr);
   }
@@ -937,10 +1326,27 @@ textarea {
   .topbar {
     min-height: 64px;
     padding: 10px 12px;
+    flex-wrap: wrap;
+  }
+
+  .topbar-thread-control {
+    order: 3;
+    min-width: 0;
+    max-width: none;
+    flex: 1 0 100%;
+    margin-left: 0;
   }
 
   .product-context,
   .invite-button {
+    display: none;
+  }
+
+  .room-switch {
+    min-width: auto;
+  }
+
+  .room-switch .fui-Switch__label {
     display: none;
   }
 
@@ -1037,13 +1443,24 @@ textarea {
     padding: 12px 14px 14px;
   }
 
+  .composer-toolbar {
+    align-items: flex-end;
+  }
+
+  .composer-tools {
+    flex: 1;
+  }
+
+  .composer-tools select {
+    max-width: 128px;
+  }
+
   .composer-actions {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
+    display: flex;
   }
 
   .composer-actions button {
-    width: 100%;
+    width: 32px;
   }
 }
 
@@ -1052,11 +1469,15 @@ textarea {
     gap: 2px;
   }
 
-  .topbar-actions > span {
-    max-width: 92px;
+  .connection-badge {
+    width: 12px !important;
+    min-width: 12px !important;
+    height: 12px !important;
+    padding: 0 !important;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    border-radius: 50%;
+    font-size: 0 !important;
+    line-height: 0 !important;
   }
 
   .message-meta span:nth-child(2) {

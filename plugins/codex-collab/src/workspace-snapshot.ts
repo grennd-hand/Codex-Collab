@@ -73,7 +73,12 @@ export function isPublishableWorkspacePath(path: string): boolean {
   const normalized = path.replaceAll("\\", "/").toLowerCase();
   const segments = normalized.split("/");
   const name = basename(normalized);
-  if (segments.includes(".codex") || name === ".env" || name.startsWith(".env.")) {
+  if (
+    segments.includes(".codex") ||
+    segments.includes(".codex-collab") ||
+    name === ".env" ||
+    name.startsWith(".env.")
+  ) {
     return false;
   }
   if (SENSITIVE_NAMES.has(name) || name.startsWith("service-account")) {

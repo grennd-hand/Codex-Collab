@@ -2,13 +2,22 @@
 	auto_https disable_redirects
 }
 
-https://{$CODEX_COLLAB_DOMAIN} {
+(collab_site) {
 	encode zstd gzip
-	reverse_proxy relay:4177
 
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "no-referrer"
 	}
+}
+
+https://{$CODEX_COLLAB_DOMAIN} {
+	import collab_site
+	reverse_proxy relay:4177
+}
+
+https://{$CODEX_COLLAB_SECONDARY_DOMAIN} {
+	import collab_site
+	reverse_proxy secondary-relay:4177
 }

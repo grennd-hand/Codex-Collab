@@ -2,13 +2,60 @@ export const PROTOCOL_VERSION = "v1" as const;
 
 export type MemberRole = "owner" | "editor";
 export type MemberStatus = "pending" | "approved" | "rejected" | "revoked";
-export type MessageKind = "chat" | "codex_prompt" | "system";
+export type RoomStatus = "open" | "closed";
+export type MessageKind = "chat" | "codex_prompt" | "codex_stop" | "system";
+export type MessageDeliveryStatus = "queued" | "submitted" | "completed" | "failed";
+export type CodexAccessMode =
+  | "follow-desktop"
+  | "request-approval"
+  | "auto"
+  | "full-access"
+  | "custom";
+export type CodexReasoningEffort =
+  | "follow-desktop"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh";
+export type CodexSpeed = "follow-desktop" | "standard" | "fast";
+export type CodexRuntimeStatus = "unavailable" | "idle" | "running";
+
+export interface CodexPromptOptions {
+  accessMode: CodexAccessMode;
+  model: string | null;
+  reasoningEffort: CodexReasoningEffort;
+  speed: CodexSpeed;
+  planMode: boolean;
+}
+
+export interface MessageAttachment {
+  id: string;
+  name: string;
+  mediaType: string;
+  size: number;
+}
+
+export interface MessageAttachmentInput {
+  name: string;
+  mediaType: string;
+  size: number;
+  dataBase64: string;
+}
 
 export interface Session {
   id: string;
   name: string;
   ownerMemberId: string;
+  roomStatus: RoomStatus;
   createdAt: string;
+}
+
+export interface UpdateRoomStatusRequest {
+  roomStatus: RoomStatus;
+}
+
+export interface UpdateRoomStatusResponse {
+  session: Session;
 }
 
 export interface Member {
@@ -29,6 +76,11 @@ export interface Message {
   senderDisplayName: string;
   kind: MessageKind;
   body: string;
+  attachments: MessageAttachment[];
+  codexOptions: CodexPromptOptions | null;
+  deliveryStatus: MessageDeliveryStatus | null;
+  codexTurnId: string | null;
+  completedAt: string | null;
   createdAt: string;
 }
 
@@ -102,6 +154,7 @@ export interface WorkspaceSummary {
   selectedThread: CodexThreadCatalogEntry | null;
   history: CodexRecordEntry[];
   files: WorkspaceFile[];
+  codexRuntimeStatus: CodexRuntimeStatus;
   syncedAt: string | null;
 }
 
@@ -118,7 +171,12 @@ export interface ClaimHostPairingResponse {
 }
 
 export interface RealtimeEnvelope {
-  type: "ready" | "member.updated" | "message.created" | "workspace.updated";
+  type:
+    | "ready"
+    | "session.updated"
+    | "member.updated"
+    | "message.created"
+    | "workspace.updated";
   sessionId: string;
   payload: unknown;
   sentAt: string;

@@ -11,10 +11,10 @@ services:
       CODEX_COLLAB_DATA_DIR: /data
       CODEX_COLLAB_PUBLIC_URL: https://${CODEX_COLLAB_DOMAIN}
       CODEX_COLLAB_TRUST_PROXY: "1"
+    ports:
+      - "127.0.0.1:${CODEX_COLLAB_HOST_PORT:-4178}:4177"
     volumes:
       - relay-data:/data
-    expose:
-      - "4177"
     healthcheck:
       test:
         [
@@ -28,31 +28,14 @@ services:
       retries: 5
       start_period: 15s
     networks:
-      - collab
-
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    depends_on:
-      relay:
-        condition: service_healthy
-    environment:
-      CODEX_COLLAB_DOMAIN: ${CODEX_COLLAB_DOMAIN}
-      CODEX_COLLAB_SECONDARY_DOMAIN: ${CODEX_COLLAB_SECONDARY_DOMAIN}
-    ports:
-      - "443:443"
-      - "443:443/udp"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
-    networks:
-      - collab
+      proxy:
+        aliases:
+          - secondary-relay
 
 networks:
-  collab:
+  proxy:
+    external: true
+    name: ${CODEX_COLLAB_PROXY_NETWORK:-codex-collab_collab}
 
 volumes:
   relay-data:
-  caddy-data:
-  caddy-config:

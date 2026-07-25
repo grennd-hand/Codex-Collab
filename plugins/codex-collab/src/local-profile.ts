@@ -16,7 +16,7 @@ export interface LocalProfile {
   forwardedMessageIds?: string[];
 }
 
-function profilePath(): string {
+export function localProfilePath(): string {
   return (
     process.env.CODEX_COLLAB_STATE_FILE ??
     join(homedir(), ".codex-collab", "state.json")
@@ -26,7 +26,7 @@ function profilePath(): string {
 export class LocalProfileStore {
   async read(): Promise<LocalProfile | null> {
     try {
-      const data = await readFile(profilePath(), "utf8");
+      const data = await readFile(localProfilePath(), "utf8");
       return JSON.parse(data) as LocalProfile;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -37,7 +37,7 @@ export class LocalProfileStore {
   }
 
   async write(profile: LocalProfile): Promise<void> {
-    const target = profilePath();
+    const target = localProfilePath();
     await mkdir(dirname(target), { recursive: true, mode: 0o700 });
     const temporary = `${target}.${process.pid}.tmp`;
     await writeFile(temporary, `${JSON.stringify(profile, null, 2)}\n`, {

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -41,5 +41,23 @@ describe("FileSandbox", () => {
       FileConflictError,
     );
     expect(await readFile(path, "utf8")).toBe("changed elsewhere");
+  });
+
+  it("does not expose internal prompt attachment staging", async () => {
+    const root = await tempRoot();
+    await writeFile(join(root, "visible.txt"), "visible", "utf8");
+    await mkdir(join(root, ".codex-collab", "attachments-1"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(root, ".codex-collab", "attachments-1", "private.txt"),
+      "private",
+      "utf8",
+    );
+    const sandbox = await FileSandbox.create(root);
+
+    await expect(sandbox.list()).resolves.toEqual([
+      expect.objectContaining({ path: "visible.txt" }),
+    ]);
   });
 });

@@ -2,14 +2,19 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import {
   type ClaimHostPairingResponse,
+  type CodexPromptOptions,
   type CodexRecordEntry,
+  type CodexRuntimeStatus,
   type CodexThreadCatalogEntry,
   type CreateSessionResponse,
   type JoinInviteResponse,
   type Member,
   type MemberStatus,
   type Message,
+  type MessageAttachment,
+  type MessageDeliveryStatus,
   type MessageKind,
+  type RoomStatus,
   type Session,
   type WorkspaceFile,
   type WorkspaceFileContent,
@@ -33,6 +38,7 @@ interface SessionRow {
   id: string;
   name: string;
   owner_member_id: string;
+  room_status: RoomStatus;
   created_at: string;
 }
 
@@ -43,7 +49,20 @@ interface MessageRow {
   sender_display_name: string;
   kind: MessageKind;
   body: string;
+  codex_options_json: string | null;
+  delivery_status: MessageDeliveryStatus | null;
+  codex_turn_id: string | null;
+  completed_at: string | null;
   created_at: string;
+}
+
+interface MessageAttachmentRow {
+  id: string;
+  message_id: string;
+  name: string;
+  media_type: string;
+  size: number;
+  content: Uint8Array;
 }
 
 interface InviteRow {
@@ -52,6 +71,7 @@ interface InviteRow {
   expires_at: string;
   max_uses: number;
   uses: number;
+  room_status: RoomStatus;
 }
 
 interface HostPairingRow {
@@ -68,6 +88,7 @@ interface WorkspaceStateRow {
   catalog_json: string;
   selected_thread_id: string | null;
   history_json: string;
+  codex_runtime_status: CodexRuntimeStatus;
   synced_at: string | null;
 }
 
@@ -88,6 +109,7 @@ function toSession(row: SessionRow): Session {
     id: row.id,
     name: row.name,
     ownerMemberId: row.owner_member_id,
+    roomStatus: row.room_status,
     createdAt: row.created_at,
   };
 }
@@ -102,18 +124,6 @@ function toMember(row: MemberRow): Member {
     status: row.status,
     createdAt: row.created_at,
     approvedAt: row.approved_at,
-  };
-}
-
-function toMessage(row: MessageRow): Message {
-  return {
-    id: row.id,
-    sessionId: row.session_id,
-    senderMemberId: row.sender_member_id,
-    senderDisplayName: row.sender_display_name,
-    kind: row.kind,
-    body: row.body,
-    createdAt: row.created_at,
   };
 }
 
@@ -136,6 +146,8 @@ export class SessionStore {
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         owner_member_id TEXT NOT NULL,
+        room_status TEXT NOT NULL DEFAULT 'open'
+          CHECK (room_status IN ('open', 'closed')),
         created_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS members (
@@ -163,8 +175,13 @@ export class SessionStore {
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
         sender_member_id TEXT NOT NULL REFERENCES members(id),
-        kind TEXT NOT NULL CHECK (kind IN ('chat', 'codex_prompt', 'system')),
+        kind TEXT NOT NULL CHECK (kind IN ('chat', 'codex_prompt', 'codex_stop', 'system')),
         body TEXT NOT NULL,
+        codex_options_json TEXT,
+        delivery_status TEXT
+          CHECK (delivery_status IN ('queued', 'submitted', 'completed', 'failed')),
+        codex_turn_id TEXT,
+        completed_at TEXT,
         created_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS member_tokens (
@@ -191,6 +208,8 @@ export class SessionStore {
         catalog_json TEXT NOT NULL DEFAULT '[]',
         selected_thread_id TEXT,
         history_json TEXT NOT NULL DEFAULT '[]',
+        codex_runtime_status TEXT NOT NULL DEFAULT 'unavailable'
+          CHECK (codex_runtime_status IN ('unavailable', 'idle', 'running')),
         synced_at TEXT
       );
       CREATE TABLE IF NOT EXISTS workspace_files (
@@ -207,6 +226,139 @@ export class SessionStore {
       CREATE INDEX IF NOT EXISTS member_tokens_member_idx ON member_tokens(member_id);
       CREATE INDEX IF NOT EXISTS workspace_files_session_idx ON workspace_files(session_id);
     `);
+    this.ensureColumn(
+      "sessions",
+      "room_status",
+      "TEXT NOT NULL DEFAULT 'open' CHECK (room_status IN ('open', 'closed'))",
+    );
+    this.migrateMessagesTable();
+    this.ensureColumn(
+      "workspace_state",
+      "codex_runtime_status",
+      "TEXT NOT NULL DEFAULT 'unavailable'",
+    );
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS message_attachments (
+        id TEXT PRIMARY KEY,
+        message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        media_type TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        content BLOB NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS message_attachments_message_idx
+        ON message_attachments(message_id);
+    `);
+  }
+
+  private ensureColumn(table: string, column: string, definition: string): void {
+    const columns = this.db.prepare(`PRAGMA table_info(${table})`).all() as unknown as Array<{
+      name: string;
+    }>;
+    if (!columns.some((item) => item.name === column)) {
+      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
+  }
+
+  private migrateMessagesTable(): void {
+    const schema = this.db
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'messages'")
+      .get() as { sql?: string } | undefined;
+    const columns = this.db.prepare("PRAGMA table_info(messages)").all() as unknown as Array<{
+      name: string;
+    }>;
+    const hasOptions = columns.some((item) => item.name === "codex_options_json");
+    const hasDelivery = columns.some((item) => item.name === "delivery_status");
+    const hasTurnId = columns.some((item) => item.name === "codex_turn_id");
+    const hasCompletedAt = columns.some((item) => item.name === "completed_at");
+    const hasAttachmentsTable = Boolean(
+      this.db
+        .prepare(
+          "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'message_attachments'",
+        )
+        .get(),
+    );
+    if (
+      schema?.sql?.includes("'codex_stop'") &&
+      schema.sql.includes("'completed'") &&
+      hasOptions &&
+      hasDelivery &&
+      hasTurnId &&
+      hasCompletedAt
+    ) {
+      return;
+    }
+
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      if (hasAttachmentsTable) {
+        this.db.exec(
+          "ALTER TABLE message_attachments RENAME TO message_attachments_legacy",
+        );
+      }
+      this.db.exec("ALTER TABLE messages RENAME TO messages_legacy");
+      this.db.exec(`
+        CREATE TABLE messages (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+          sender_member_id TEXT NOT NULL REFERENCES members(id),
+          kind TEXT NOT NULL CHECK (kind IN ('chat', 'codex_prompt', 'codex_stop', 'system')),
+          body TEXT NOT NULL,
+          codex_options_json TEXT,
+          delivery_status TEXT
+            CHECK (delivery_status IN ('queued', 'submitted', 'completed', 'failed')),
+          codex_turn_id TEXT,
+          completed_at TEXT,
+          created_at TEXT NOT NULL
+        )
+      `);
+      this.db.exec(`
+        INSERT INTO messages
+          (id, session_id, sender_member_id, kind, body, codex_options_json,
+           delivery_status, codex_turn_id, completed_at, created_at)
+        SELECT id, session_id, sender_member_id, kind, body,
+               ${hasOptions ? "codex_options_json" : "NULL"},
+               ${hasDelivery ? "delivery_status" : "NULL"},
+               ${hasTurnId ? "codex_turn_id" : "NULL"},
+               ${hasCompletedAt ? "completed_at" : "NULL"},
+               created_at
+        FROM messages_legacy
+      `);
+      if (hasAttachmentsTable) {
+        this.db.exec(`
+          CREATE TABLE message_attachments (
+            id TEXT PRIMARY KEY,
+            message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            media_type TEXT NOT NULL,
+            size INTEGER NOT NULL,
+            content BLOB NOT NULL
+          )
+        `);
+        this.db.exec(`
+          INSERT INTO message_attachments
+            (id, message_id, name, media_type, size, content)
+          SELECT id, message_id, name, media_type, size, content
+          FROM message_attachments_legacy
+        `);
+        this.db.exec("DROP TABLE message_attachments_legacy");
+      }
+      this.db.exec("DROP TABLE messages_legacy");
+      this.db.exec(`
+        CREATE INDEX IF NOT EXISTS messages_session_created_idx
+          ON messages(session_id, created_at)
+      `);
+      if (hasAttachmentsTable) {
+        this.db.exec(`
+          CREATE INDEX IF NOT EXISTS message_attachments_message_idx
+            ON message_attachments(message_id)
+        `);
+      }
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   createSession(name: string, ownerDisplayName: string, deviceLabel?: string): CreateSessionResponse {
@@ -218,7 +370,9 @@ export class SessionStore {
     this.db.exec("BEGIN IMMEDIATE");
     try {
       this.db
-        .prepare("INSERT INTO sessions (id, name, owner_member_id, created_at) VALUES (?, ?, ?, ?)")
+        .prepare(
+          "INSERT INTO sessions (id, name, owner_member_id, room_status, created_at) VALUES (?, ?, ?, 'open', ?)",
+        )
         .run(sessionId, name, ownerId, createdAt);
       this.db
         .prepare(`
@@ -242,7 +396,13 @@ export class SessionStore {
     }
 
     return {
-      session: { id: sessionId, name, ownerMemberId: ownerId, createdAt },
+      session: {
+        id: sessionId,
+        name,
+        ownerMemberId: ownerId,
+        roomStatus: "open",
+        createdAt,
+      },
       owner: {
         id: ownerId,
         sessionId,
@@ -263,10 +423,8 @@ export class SessionStore {
     expiresInMinutes: number,
     maxUses: number,
   ): { inviteToken: string; expiresAt: string } {
-    const owner = this.requireMember(sessionId, memberToken, true);
-    if (owner.role !== "owner") {
-      throw new ProtocolError(403, "owner_required", "Only the owner can create invitations");
-    }
+    const owner = this.requireOwner(sessionId, memberToken);
+    this.requireRoomOpen(sessionId);
 
     const inviteToken = issueToken("cci");
     const expiresAt = new Date(Date.now() + expiresInMinutes * 60_000).toISOString();
@@ -291,13 +449,19 @@ export class SessionStore {
   joinInvite(inviteToken: string, displayName: string, deviceLabel?: string): JoinInviteResponse {
     const invite = this.db
       .prepare(`
-        SELECT id, session_id, expires_at, max_uses, uses
-        FROM invites WHERE token_hash = ?
+        SELECT i.id, i.session_id, i.expires_at, i.max_uses, i.uses,
+               s.room_status
+        FROM invites i
+        JOIN sessions s ON s.id = i.session_id
+        WHERE i.token_hash = ?
       `)
       .get(hashToken(inviteToken)) as InviteRow | undefined;
 
     if (!invite) {
       throw new ProtocolError(404, "invite_not_found", "Invitation is invalid");
+    }
+    if (invite.room_status === "closed") {
+      throw new ProtocolError(409, "room_closed", "This room is closed");
     }
     if (Date.parse(invite.expires_at) <= Date.now()) {
       throw new ProtocolError(410, "invite_expired", "Invitation has expired");
@@ -351,12 +515,26 @@ export class SessionStore {
 
   getSession(sessionId: string): Session {
     const row = this.db
-      .prepare("SELECT id, name, owner_member_id, created_at FROM sessions WHERE id = ?")
+      .prepare(
+        "SELECT id, name, owner_member_id, room_status, created_at FROM sessions WHERE id = ?",
+      )
       .get(sessionId) as SessionRow | undefined;
     if (!row) {
       throw new ProtocolError(404, "session_not_found", "Session was not found");
     }
     return toSession(row);
+  }
+
+  updateRoomStatus(
+    sessionId: string,
+    memberToken: string,
+    roomStatus: RoomStatus,
+  ): Session {
+    this.requireOwner(sessionId, memberToken);
+    this.db
+      .prepare("UPDATE sessions SET room_status = ? WHERE id = ?")
+      .run(roomStatus, sessionId);
+    return this.getSession(sessionId);
   }
 
   getCurrentMember(sessionId: string, memberToken: string): Member {
@@ -397,8 +575,32 @@ export class SessionStore {
     memberToken: string,
     kind: MessageKind,
     body: string,
+    input: {
+      attachments?: Array<{
+        name: string;
+        mediaType: string;
+        size: number;
+        content: Uint8Array;
+      }>;
+      codexOptions?: CodexPromptOptions | null;
+    } = {},
   ): Message {
     const sender = this.requireMember(sessionId, memberToken, true);
+    if (kind === "chat" || kind === "codex_prompt") {
+      this.requireRoomOpen(sessionId);
+    }
+    const attachments = input.attachments ?? [];
+    if (
+      sender.role !== "owner" &&
+      input.codexOptions?.accessMode &&
+      input.codexOptions.accessMode !== "follow-desktop"
+    ) {
+      throw new ProtocolError(
+        403,
+        "owner_required",
+        "Only the owner can change Codex approval permissions",
+      );
+    }
     const message: Message = {
       id: randomUUID(),
       sessionId,
@@ -406,22 +608,56 @@ export class SessionStore {
       senderDisplayName: sender.displayName,
       kind,
       body,
+      attachments: [],
+      codexOptions: input.codexOptions ?? null,
+      deliveryStatus:
+        kind === "codex_prompt" || kind === "codex_stop" ? "queued" : null,
+      codexTurnId: null,
+      completedAt: null,
       createdAt: now(),
     };
-    this.db
-      .prepare(`
-        INSERT INTO messages (id, session_id, sender_member_id, kind, body, created_at)
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db
+        .prepare(`
+          INSERT INTO messages
+            (id, session_id, sender_member_id, kind, body, codex_options_json,
+             delivery_status, codex_turn_id, completed_at, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `)
+        .run(
+          message.id,
+          message.sessionId,
+          message.senderMemberId,
+          message.kind,
+          message.body,
+          message.codexOptions ? JSON.stringify(message.codexOptions) : null,
+          message.deliveryStatus,
+          message.codexTurnId,
+          message.completedAt,
+          message.createdAt,
+        );
+      const insertAttachment = this.db.prepare(`
+        INSERT INTO message_attachments
+          (id, message_id, name, media_type, size, content)
         VALUES (?, ?, ?, ?, ?, ?)
-      `)
-      .run(
-        message.id,
-        message.sessionId,
-        message.senderMemberId,
-        message.kind,
-        message.body,
-        message.createdAt,
-      );
-    return message;
+      `);
+      for (const attachment of attachments) {
+        insertAttachment.run(
+          randomUUID(),
+          message.id,
+          attachment.name,
+          attachment.mediaType,
+          attachment.size,
+          attachment.content,
+        );
+      }
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+    return this.messageById(sessionId, message.id);
   }
 
   listMessages(sessionId: string, memberToken: string, after?: string): Message[] {
@@ -430,7 +666,8 @@ export class SessionStore {
       ? (this.db
           .prepare(`
             SELECT m.id, m.session_id, m.sender_member_id, mb.display_name AS sender_display_name,
-                   m.kind, m.body, m.created_at
+                   m.kind, m.body, m.codex_options_json, m.delivery_status,
+                   m.codex_turn_id, m.completed_at, m.created_at
             FROM messages m JOIN members mb ON mb.id = m.sender_member_id
             WHERE m.session_id = ? AND m.created_at > ?
             ORDER BY m.created_at ASC LIMIT 500
@@ -439,13 +676,59 @@ export class SessionStore {
       : (this.db
           .prepare(`
             SELECT m.id, m.session_id, m.sender_member_id, mb.display_name AS sender_display_name,
-                   m.kind, m.body, m.created_at
+                   m.kind, m.body, m.codex_options_json, m.delivery_status,
+                   m.codex_turn_id, m.completed_at, m.created_at
             FROM messages m JOIN members mb ON mb.id = m.sender_member_id
             WHERE m.session_id = ?
             ORDER BY m.created_at ASC LIMIT 500
           `)
           .all(sessionId) as unknown as MessageRow[]);
-    return rows.map(toMessage);
+    return rows.map((row) => this.toMessage(row));
+  }
+
+  getMessageAttachment(
+    sessionId: string,
+    memberToken: string,
+    messageId: string,
+    attachmentId: string,
+  ): MessageAttachmentRow {
+    this.requireMember(sessionId, memberToken, true);
+    const row = this.db
+      .prepare(`
+        SELECT a.id, a.message_id, a.name, a.media_type, a.size, a.content
+        FROM message_attachments a
+        JOIN messages m ON m.id = a.message_id
+        WHERE m.session_id = ? AND m.id = ? AND a.id = ?
+      `)
+      .get(sessionId, messageId, attachmentId) as MessageAttachmentRow | undefined;
+    if (!row) {
+      throw new ProtocolError(404, "attachment_not_found", "Attachment was not found");
+    }
+    return row;
+  }
+
+  updateMessageDeliveryStatus(
+    sessionId: string,
+    memberToken: string,
+    messageId: string,
+    status: MessageDeliveryStatus,
+    codexTurnId?: string | null,
+  ): Message {
+    this.requireOwner(sessionId, memberToken);
+    const completedAt = status === "completed" || status === "failed" ? now() : null;
+    const result = this.db
+      .prepare(`
+        UPDATE messages
+        SET delivery_status = ?,
+            codex_turn_id = COALESCE(?, codex_turn_id),
+            completed_at = ?
+        WHERE session_id = ? AND id = ? AND kind IN ('codex_prompt', 'codex_stop')
+      `)
+      .run(status, codexTurnId ?? null, completedAt, sessionId, messageId);
+    if (result.changes !== 1) {
+      throw new ProtocolError(404, "message_not_found", "Codex command was not found");
+    }
+    return this.messageById(sessionId, messageId);
   }
 
   createHostPairing(
@@ -528,14 +811,15 @@ export class SessionStore {
         .prepare(`
           INSERT INTO workspace_state
             (session_id, host_device_label, root_label, catalog_json, selected_thread_id,
-             history_json, synced_at)
-          VALUES (?, ?, ?, '[]', NULL, '[]', NULL)
+             history_json, codex_runtime_status, synced_at)
+          VALUES (?, ?, ?, '[]', NULL, '[]', 'unavailable', NULL)
           ON CONFLICT(session_id) DO UPDATE SET
             host_device_label = excluded.host_device_label,
             root_label = excluded.root_label,
             catalog_json = '[]',
             selected_thread_id = NULL,
             history_json = '[]',
+            codex_runtime_status = 'unavailable',
             synced_at = NULL
         `)
         .run(pairing.session_id, deviceLabel, rootLabel);
@@ -565,6 +849,9 @@ export class SessionStore {
       input.threads.some((thread) => thread.id === current.selected_thread_id);
     const selectedThreadId = selectedStillExists ? current.selected_thread_id : null;
     const historyJson = selectedStillExists ? current?.history_json ?? "[]" : "[]";
+    const codexRuntimeStatus = selectedStillExists
+      ? current?.codex_runtime_status ?? "unavailable"
+      : "unavailable";
     const syncedAt = selectedStillExists ? current?.synced_at ?? null : null;
 
     this.db.exec("BEGIN IMMEDIATE");
@@ -573,14 +860,15 @@ export class SessionStore {
         .prepare(`
           INSERT INTO workspace_state
             (session_id, host_device_label, root_label, catalog_json, selected_thread_id,
-             history_json, synced_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
+             history_json, codex_runtime_status, synced_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(session_id) DO UPDATE SET
             host_device_label = excluded.host_device_label,
             root_label = excluded.root_label,
             catalog_json = excluded.catalog_json,
             selected_thread_id = excluded.selected_thread_id,
             history_json = excluded.history_json,
+            codex_runtime_status = excluded.codex_runtime_status,
             synced_at = excluded.synced_at
         `)
         .run(
@@ -590,6 +878,7 @@ export class SessionStore {
           JSON.stringify(input.threads),
           selectedThreadId,
           historyJson,
+          codexRuntimeStatus,
           syncedAt,
         );
       if (!selectedStillExists) {
@@ -622,7 +911,8 @@ export class SessionStore {
       this.db
         .prepare(`
           UPDATE workspace_state
-          SET selected_thread_id = ?, history_json = '[]', synced_at = NULL
+          SET selected_thread_id = ?, history_json = '[]',
+              codex_runtime_status = 'unavailable', synced_at = NULL
           WHERE session_id = ?
         `)
         .run(threadId, sessionId);
@@ -686,6 +976,31 @@ export class SessionStore {
     return this.getWorkspace(sessionId, memberToken);
   }
 
+  publishCodexRuntimeStatus(
+    sessionId: string,
+    memberToken: string,
+    status: CodexRuntimeStatus,
+  ): { workspace: WorkspaceSummary; changed: boolean } {
+    this.requireOwner(sessionId, memberToken);
+    const state = this.workspaceState(sessionId);
+    if (!state) {
+      throw new ProtocolError(409, "host_not_paired", "Pair the local Codex host first");
+    }
+    const changed = state.codex_runtime_status !== status;
+    if (changed) {
+      this.db
+        .prepare(`
+          UPDATE workspace_state SET codex_runtime_status = ?
+          WHERE session_id = ?
+        `)
+        .run(status, sessionId);
+    }
+    return {
+      workspace: this.getWorkspace(sessionId, memberToken),
+      changed,
+    };
+  }
+
   getWorkspace(sessionId: string, memberToken: string): WorkspaceSummary {
     const member = this.requireMember(sessionId, memberToken, true);
     const state = this.workspaceState(sessionId);
@@ -699,6 +1014,7 @@ export class SessionStore {
         selectedThread: null,
         history: [],
         files: [],
+        codexRuntimeStatus: "unavailable",
         syncedAt: null,
       };
     }
@@ -720,6 +1036,7 @@ export class SessionStore {
       selectedThread,
       history: this.parseHistory(state.history_json),
       files: rows.map((row) => this.toWorkspaceFile(row)),
+      codexRuntimeStatus: state.codex_runtime_status,
       syncedAt: state.synced_at,
     };
   }
@@ -744,6 +1061,53 @@ export class SessionStore {
 
   authenticateRealtime(sessionId: string, memberToken: string): Member {
     return this.requireMember(sessionId, memberToken, true);
+  }
+
+  private messageById(sessionId: string, messageId: string): Message {
+    const row = this.db
+      .prepare(`
+        SELECT m.id, m.session_id, m.sender_member_id, mb.display_name AS sender_display_name,
+               m.kind, m.body, m.codex_options_json, m.delivery_status,
+               m.codex_turn_id, m.completed_at, m.created_at
+        FROM messages m JOIN members mb ON mb.id = m.sender_member_id
+        WHERE m.session_id = ? AND m.id = ?
+      `)
+      .get(sessionId, messageId) as MessageRow | undefined;
+    if (!row) {
+      throw new ProtocolError(404, "message_not_found", "Message was not found");
+    }
+    return this.toMessage(row);
+  }
+
+  private toMessage(row: MessageRow): Message {
+    const attachmentRows = this.db
+      .prepare(`
+        SELECT id, message_id, name, media_type, size, content
+        FROM message_attachments WHERE message_id = ? ORDER BY rowid ASC
+      `)
+      .all(row.id) as unknown as MessageAttachmentRow[];
+    const attachments: MessageAttachment[] = attachmentRows.map((attachment) => ({
+      id: attachment.id,
+      name: attachment.name,
+      mediaType: attachment.media_type,
+      size: attachment.size,
+    }));
+    return {
+      id: row.id,
+      sessionId: row.session_id,
+      senderMemberId: row.sender_member_id,
+      senderDisplayName: row.sender_display_name,
+      kind: row.kind,
+      body: row.body,
+      attachments,
+      codexOptions: row.codex_options_json
+        ? (JSON.parse(row.codex_options_json) as CodexPromptOptions)
+        : null,
+      deliveryStatus: row.delivery_status,
+      codexTurnId: row.codex_turn_id,
+      completedAt: row.completed_at,
+      createdAt: row.created_at,
+    };
   }
 
   private memberById(sessionId: string, memberId: string): Member {
@@ -798,11 +1162,23 @@ export class SessionStore {
     return member;
   }
 
+  private requireRoomOpen(sessionId: string): void {
+    const row = this.db
+      .prepare("SELECT room_status FROM sessions WHERE id = ?")
+      .get(sessionId) as { room_status: RoomStatus } | undefined;
+    if (!row) {
+      throw new ProtocolError(404, "session_not_found", "Session was not found");
+    }
+    if (row.room_status === "closed") {
+      throw new ProtocolError(409, "room_closed", "This room is closed");
+    }
+  }
+
   private workspaceState(sessionId: string): WorkspaceStateRow | undefined {
     return this.db
       .prepare(`
         SELECT session_id, host_device_label, root_label, catalog_json, selected_thread_id,
-               history_json, synced_at
+               history_json, codex_runtime_status, synced_at
         FROM workspace_state WHERE session_id = ?
       `)
       .get(sessionId) as WorkspaceStateRow | undefined;

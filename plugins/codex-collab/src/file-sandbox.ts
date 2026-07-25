@@ -61,7 +61,12 @@ export class FileSandbox {
       const entries = await readdir(directory, { withFileTypes: true });
       for (const entry of entries) {
         if (files.length >= maxFiles) return;
-        if (entry.name === ".git" || entry.name === "node_modules" || entry.name === "dist") {
+        if (
+          entry.name === ".git" ||
+          entry.name === ".codex-collab" ||
+          entry.name === "node_modules" ||
+          entry.name === "dist"
+        ) {
           continue;
         }
         const absolute = resolve(directory, entry.name);

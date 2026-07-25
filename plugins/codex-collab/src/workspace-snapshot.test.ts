@@ -25,6 +25,9 @@ describe("workspace snapshot", () => {
     expect(isPublishableWorkspacePath("README.md")).toBe(true);
     expect(isPublishableWorkspacePath(".env.production")).toBe(false);
     expect(isPublishableWorkspacePath(".codex/auth.json")).toBe(false);
+    expect(
+      isPublishableWorkspacePath(".codex-collab/attachments-1/prompt.txt"),
+    ).toBe(false);
     expect(isPublishableWorkspacePath("keys/server.pem")).toBe(false);
     expect(isPublishableCodexConfigPath("config.toml")).toBe(true);
     expect(isPublishableCodexConfigPath("rules/default.rules")).toBe(true);
@@ -51,6 +54,14 @@ describe("workspace snapshot", () => {
       "utf8",
     );
     await writeFile(join(root, ".env"), "PASSWORD=not-for-sharing\n", "utf8");
+    await mkdir(join(root, ".codex-collab", "attachments-1"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(root, ".codex-collab", "attachments-1", "prompt.txt"),
+      "private prompt attachment\n",
+      "utf8",
+    );
 
     const sandbox = await FileSandbox.create(root);
     const files = await buildWorkspaceSnapshot(sandbox);

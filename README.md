@@ -7,12 +7,16 @@ The first working slice includes:
 
 - identity-labelled shared chat;
 - one-time invitation tokens and explicit owner approval;
+- an owner-controlled room switch that pauses new invites, joins, messages, prompts and uploads
+  while preserving history and stop control;
 - real-time WebSocket updates;
 - a Codex plugin exposed through MCP tools;
 - one-time web-to-local host pairing and existing Codex task selection;
 - importing visible Codex conversation records into the room;
 - approved-member read-only browsing of a filtered project-file snapshot;
-- forwarding a relay-backed peer prompt through Codex `app-server`;
+- forwarding approved members' queued prompts into the selected live Codex Desktop conversation
+  through the same-user local IPC router without opening, focusing or switching the window;
+- remote composer support for file/image attachments, model/reasoning/speed, plan mode and stop;
 - explicit project-root file access with symlink escape protection;
 - optimistic SHA-256 conflict detection for concurrent writes.
 
@@ -60,6 +64,10 @@ Open `http://127.0.0.1:4177`.
 3. Send the complete link to the tester. Opening it pre-fills the invite token.
 4. After the tester submits a display name, approve the pending member in the dashboard.
 
+The owner can close the room from the top bar. Closing it keeps the existing conversation and
+member list readable, but rejects new invitations, joins, chat messages, Codex prompts and
+attachments until the owner reopens it.
+
 ## Import Codex records and project files
 
 1. Create a room in the dashboard and open **Codex 与文件**.
@@ -67,15 +75,19 @@ Open `http://127.0.0.1:4177`.
 3. In the owner's local Codex, ask it to run `collab_pair_host` with that code, the public Relay
    URL, and the explicitly approved absolute project root.
 4. Return to **Codex 与文件** and select one of the Codex tasks discovered under that root.
-5. Keep the local Codex host running briefly. It imports visible user/assistant messages,
-   app-server reasoning summaries, command output and a view-only text snapshot.
+5. The local background sync worker imports visible user/assistant messages, app-server reasoning
+   summaries, command output and a view-only text snapshot. Relay WebSocket events wake it
+   immediately for new web prompts, which it forwards through Codex Desktop's same-user local IPC
+   router so the currently open task receives the native message and continues in place. It
+   republishes when the selected task changes and never opens or focuses the Desktop window.
 6. Approved members can inspect the selected task record and shared files; pending members cannot.
 
 To share non-credential Codex configuration, pass `codexConfigRoot` as a second explicit absolute
 root when calling `collab_pair_host` or `collab_refresh_workspace`. It includes text configuration,
 rules and documentation under `.codex/`, while excluding `auth.json`, session/history databases,
 environment files, private keys and likely embedded credentials. Project permission never implies
-`.codex` permission. Use `collab_refresh_workspace` to refresh the task catalog and snapshot.
+`.codex` permission. Use `collab_refresh_workspace` to refresh the task catalog or force an
+immediate snapshot; selected-task record changes otherwise sync automatically.
 
 If the browser blocks automatic clipboard access, the dashboard falls back to synchronous copy.
 When both browser copy mechanisms are unavailable, it selects the complete link and prompts the
@@ -93,12 +105,18 @@ npm run dev
 Then open `http://<owner-lan-ip>:4177` and create the invite from that page. Do not expose this
 plain-HTTP development listener directly to the public internet.
 
-## Install the repo-local plugin
+## Install the plugin
 
-The marketplace lives in this repository, so register it once:
+Requirements: Git, Node.js 24+, npm 11+, and Codex CLI 0.144.4 or newer.
+
+Clone and build the public repository, then register its repo-local marketplace:
 
 ```powershell
-codex plugin marketplace add E:\Codex-Collab
+git clone https://github.com/grennd-hand/Codex-Collab.git
+Set-Location Codex-Collab
+npm ci
+npm run build
+codex plugin marketplace add (Get-Location).Path
 codex plugin add codex-collab@codex-collab-local
 ```
 
@@ -111,7 +129,9 @@ stores member bearer tokens only in the local profile file and the relay stores 
 
 The owner chooses one absolute shared root. Project access does not imply access to `~/.codex`;
 sharing Codex configuration requires the owner to explicitly bind that directory as a separate root.
-Peer prompts preserve the owner task's existing approval policy.
+Web prompts from approved members are consumed automatically by the local owner host. Only the
+owner can change the access mode, and peer prompts preserve the selected task's existing approval
+policy.
 
 ## Server deployment
 

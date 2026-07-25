@@ -7,10 +7,18 @@ import {
   optionalInteger,
   ProtocolError,
   requiredString,
+  type CodexAccessMode,
+  type CodexPromptOptions,
   type CodexRecordEntry,
+  type CodexReasoningEffort,
+  type CodexRuntimeStatus,
+  type CodexSpeed,
   type CodexThreadCatalogEntry,
+  type MessageAttachmentInput,
+  type MessageDeliveryStatus,
   type MessageKind,
   type RealtimeEnvelope,
+  type RoomStatus,
   type WorkspaceFileContent,
 } from "@codex-collab/protocol";
 import { buildInviteLink, resolveInviteOrigin } from "./invite-link.js";
@@ -52,6 +60,24 @@ function sendError(response: ServerResponse, error: unknown): void {
   sendJson(response, 500, {
     error: { code: "internal_error", message: "The relay could not complete the request" },
   });
+}
+
+function sendAttachment(
+  response: ServerResponse,
+  attachment: {
+    name: string;
+    media_type: string;
+    size: number;
+    content: Uint8Array;
+  },
+): void {
+  response.writeHead(200, {
+    "content-type": attachment.media_type,
+    "content-length": attachment.size,
+    "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(attachment.name)}`,
+    "cache-control": "private, no-store",
+  });
+  response.end(Buffer.from(attachment.content));
 }
 
 async function readJson(request: IncomingMessage): Promise<Record<string, unknown>> {
@@ -190,6 +216,146 @@ function parseWorkspaceFiles(value: unknown): WorkspaceFileContent[] {
       size: size as number,
       sha256,
       modifiedAt: new Date(modifiedAt).toISOString(),
+    };
+  });
+}
+
+const allowedAccessModes = new Set<CodexAccessMode>([
+  "follow-desktop",
+  "request-approval",
+  "auto",
+  "full-access",
+  "custom",
+]);
+const allowedReasoningEfforts = new Set<CodexReasoningEffort>([
+  "follow-desktop",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+]);
+const allowedSpeeds = new Set<CodexSpeed>([
+  "follow-desktop",
+  "standard",
+  "fast",
+]);
+const allowedModels = new Set([
+  "5.6 Sol",
+  "5.6 Terra",
+  "5.6 Luna",
+  "5.5",
+  "5.4",
+  "5.4 Mini",
+  "5.3 Codex Spark",
+]);
+
+function parseCodexOptions(value: unknown): CodexPromptOptions {
+  const record =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const accessMode =
+    typeof record.accessMode === "string" &&
+    allowedAccessModes.has(record.accessMode as CodexAccessMode)
+      ? (record.accessMode as CodexAccessMode)
+      : "follow-desktop";
+  const reasoningEffort =
+    typeof record.reasoningEffort === "string" &&
+    allowedReasoningEfforts.has(record.reasoningEffort as CodexReasoningEffort)
+      ? (record.reasoningEffort as CodexReasoningEffort)
+      : "follow-desktop";
+  const speed =
+    typeof record.speed === "string" && allowedSpeeds.has(record.speed as CodexSpeed)
+      ? (record.speed as CodexSpeed)
+      : "follow-desktop";
+  const model =
+    record.model === null || record.model === undefined || record.model === ""
+      ? null
+      : typeof record.model === "string" && allowedModels.has(record.model)
+        ? record.model
+        : (() => {
+            throw new ProtocolError(400, "invalid_request", "model is not supported");
+          })();
+  return {
+    accessMode,
+    model,
+    reasoningEffort,
+    speed,
+    planMode: record.planMode === true,
+  };
+}
+
+function parseMessageAttachments(value: unknown): Array<{
+  name: string;
+  mediaType: string;
+  size: number;
+  content: Uint8Array;
+}> {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 8) {
+    throw new ProtocolError(400, "invalid_request", "attachments must contain at most 8 files");
+  }
+  let totalSize = 0;
+  return value.map((item, index) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new ProtocolError(400, "invalid_request", `attachments[${index}] must be an object`);
+    }
+    const record = item as Partial<MessageAttachmentInput> & Record<string, unknown>;
+    const name = requiredString(record.name, `attachments[${index}].name`, 180);
+    if (
+      name === "." ||
+      name === ".." ||
+      name.includes("/") ||
+      name.includes("\\") ||
+      /[<>:"|?*]/.test(name) ||
+      /[. ]$/.test(name) ||
+      /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name) ||
+      /[\u0000-\u001f]/.test(name)
+    ) {
+      throw new ProtocolError(400, "invalid_request", `attachments[${index}].name is unsafe`);
+    }
+    const mediaType =
+      typeof record.mediaType === "string" &&
+      /^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*$/.test(
+        record.mediaType,
+      )
+        ? record.mediaType
+        : "application/octet-stream";
+    if (
+      !Number.isInteger(record.size) ||
+      (record.size as number) < 0 ||
+      (record.size as number) > 4_000_000
+    ) {
+      throw new ProtocolError(400, "invalid_request", `attachments[${index}].size is invalid`);
+    }
+    if (
+      typeof record.dataBase64 !== "string" ||
+      record.dataBase64.length === 0 ||
+      !/^[A-Za-z0-9+/]*={0,2}$/.test(record.dataBase64)
+    ) {
+      throw new ProtocolError(
+        400,
+        "invalid_request",
+        `attachments[${index}].dataBase64 is invalid`,
+      );
+    }
+    const content = Buffer.from(record.dataBase64, "base64");
+    if (content.length !== record.size) {
+      throw new ProtocolError(
+        400,
+        "invalid_request",
+        `attachments[${index}].size does not match its content`,
+      );
+    }
+    totalSize += content.length;
+    if (totalSize > 6_000_000) {
+      throw new ProtocolError(413, "attachments_too_large", "Attachments exceed the 6 MB limit");
+    }
+    return {
+      name,
+      mediaType,
+      size: content.length,
+      content,
     };
   });
 }
@@ -372,10 +538,33 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    const roomStatusMatch = url.pathname.match(
+      /^\/v1\/sessions\/([^/]+)\/room-status$/,
+    );
+    if (method === "PUT" && roomStatusMatch?.[1]) {
+      const body = await readJson(request);
+      if (body.roomStatus !== "open" && body.roomStatus !== "closed") {
+        throw new ProtocolError(
+          400,
+          "invalid_request",
+          "roomStatus must be open or closed",
+        );
+      }
+      const session = store.updateRoomStatus(
+        roomStatusMatch[1],
+        bearerToken(request),
+        body.roomStatus as RoomStatus,
+      );
+      broadcast(roomStatusMatch[1], "session.updated", session);
+      sendJson(response, 200, { session });
+      return;
+    }
+
     const meMatch = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/me$/);
     if (method === "GET" && meMatch?.[1]) {
       sendJson(response, 200, {
         member: store.getCurrentMember(meMatch[1], bearerToken(request)),
+        session: store.getSession(meMatch[1]),
       });
       return;
     }
@@ -413,17 +602,83 @@ const server = createServer(async (request, response) => {
     if (messagesMatch?.[1] && method === "POST") {
       const body = await readJson(request);
       const kind = body.kind ?? "chat";
-      if (kind !== "chat" && kind !== "codex_prompt") {
-        throw new ProtocolError(400, "invalid_request", "kind must be chat or codex_prompt");
+      if (kind !== "chat" && kind !== "codex_prompt" && kind !== "codex_stop") {
+        throw new ProtocolError(
+          400,
+          "invalid_request",
+          "kind must be chat, codex_prompt or codex_stop",
+        );
+      }
+      const attachments = parseMessageAttachments(body.attachments);
+      if (kind !== "codex_prompt" && attachments.length > 0) {
+        throw new ProtocolError(
+          400,
+          "invalid_request",
+          "attachments are supported only for Codex prompts",
+        );
       }
       const message = store.addMessage(
         messagesMatch[1],
         bearerToken(request),
         kind as MessageKind,
         requiredString(body.body, "body", 50_000),
+        {
+          attachments,
+          codexOptions: kind === "codex_prompt" ? parseCodexOptions(body.codexOptions) : null,
+        },
       );
       broadcast(messagesMatch[1], "message.created", message);
       sendJson(response, 201, { message });
+      return;
+    }
+
+    const attachmentMatch = url.pathname.match(
+      /^\/v1\/sessions\/([^/]+)\/messages\/([^/]+)\/attachments\/([^/]+)$/,
+    );
+    if (
+      method === "GET" &&
+      attachmentMatch?.[1] &&
+      attachmentMatch[2] &&
+      attachmentMatch[3]
+    ) {
+      sendAttachment(
+        response,
+        store.getMessageAttachment(
+          attachmentMatch[1],
+          bearerToken(request),
+          attachmentMatch[2],
+          attachmentMatch[3],
+        ),
+      );
+      return;
+    }
+
+    const messageStatusMatch = url.pathname.match(
+      /^\/v1\/sessions\/([^/]+)\/messages\/([^/]+)\/status$/,
+    );
+    if (method === "PATCH" && messageStatusMatch?.[1] && messageStatusMatch[2]) {
+      const body = await readJson(request);
+      if (
+        body.status !== "queued" &&
+        body.status !== "submitted" &&
+        body.status !== "completed" &&
+        body.status !== "failed"
+      ) {
+        throw new ProtocolError(400, "invalid_request", "status is invalid");
+      }
+      const codexTurnId =
+        body.codexTurnId === undefined || body.codexTurnId === null
+          ? null
+          : requiredString(body.codexTurnId, "codexTurnId", 160);
+      const message = store.updateMessageDeliveryStatus(
+        messageStatusMatch[1],
+        bearerToken(request),
+        messageStatusMatch[2],
+        body.status as MessageDeliveryStatus,
+        codexTurnId,
+      );
+      broadcast(messageStatusMatch[1], "message.created", message);
+      sendJson(response, 200, { message });
       return;
     }
 
@@ -432,6 +687,32 @@ const server = createServer(async (request, response) => {
       sendJson(response, 200, {
         workspace: store.getWorkspace(workspaceMatch[1], bearerToken(request)),
       });
+      return;
+    }
+
+    const workspaceRuntimeMatch = url.pathname.match(
+      /^\/v1\/sessions\/([^/]+)\/workspace\/runtime$/,
+    );
+    if (method === "PUT" && workspaceRuntimeMatch?.[1]) {
+      const body = await readJson(request);
+      if (
+        body.status !== "unavailable" &&
+        body.status !== "idle" &&
+        body.status !== "running"
+      ) {
+        throw new ProtocolError(400, "invalid_request", "Codex runtime status is invalid");
+      }
+      const result = store.publishCodexRuntimeStatus(
+        workspaceRuntimeMatch[1],
+        bearerToken(request),
+        body.status as CodexRuntimeStatus,
+      );
+      if (result.changed) {
+        broadcast(workspaceRuntimeMatch[1], "workspace.updated", {
+          codexRuntimeStatus: result.workspace.codexRuntimeStatus,
+        });
+      }
+      sendJson(response, 200, { workspace: result.workspace });
       return;
     }
 
@@ -534,6 +815,7 @@ server.on("upgrade", (request, socket, head) => {
       return;
     }
     const member = store.authenticateRealtime(sessionId, token);
+    const session = store.getSession(sessionId);
     webSockets.handleUpgrade(request, socket, head, (webSocket) => {
       const set = socketsBySession.get(sessionId) ?? new Set<WebSocket>();
       set.add(webSocket);
@@ -542,7 +824,7 @@ server.on("upgrade", (request, socket, head) => {
         JSON.stringify({
           type: "ready",
           sessionId,
-          payload: { member },
+          payload: { member, session },
           sentAt: new Date().toISOString(),
         } satisfies RealtimeEnvelope),
       );
