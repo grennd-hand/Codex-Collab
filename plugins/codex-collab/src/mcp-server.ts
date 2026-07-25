@@ -570,6 +570,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           ),
           codexOptions: message.codexOptions ?? {
             accessMode: "follow-desktop",
+            customPermissions: null,
             model: null,
             reasoningEffort: "follow-desktop",
             speed: "follow-desktop",

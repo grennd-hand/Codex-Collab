@@ -11,23 +11,82 @@ export type CodexAccessMode =
   | "auto"
   | "full-access"
   | "custom";
-export type CodexReasoningEffort =
-  | "follow-desktop"
+export type CodexCustomFileAccess =
+  | "read-only"
+  | "workspace-write"
+  | "full-access";
+export type CodexCustomApprovalPolicy = "on-request" | "never";
+export interface CodexCustomPermissions {
+  fileAccess: CodexCustomFileAccess;
+  approvalPolicy: CodexCustomApprovalPolicy;
+}
+export const DEFAULT_CODEX_CUSTOM_PERMISSIONS: CodexCustomPermissions = {
+  fileAccess: "workspace-write",
+  approvalPolicy: "on-request",
+};
+export type CodexModelReasoningEffort =
   | "low"
   | "medium"
   | "high"
-  | "xhigh";
+  | "xhigh"
+  | "max"
+  | "ultra";
+export type CodexReasoningEffort =
+  | "follow-desktop"
+  | CodexModelReasoningEffort;
 export type CodexSpeed = "follow-desktop" | "standard" | "fast";
 export type CodexRuntimeStatus = "unavailable" | "idle" | "running";
 
 export const CODEX_MODEL_OPTIONS = [
-  { id: "gpt-5.6-sol", label: "5.6 Sol" },
-  { id: "gpt-5.6-terra", label: "5.6 Terra" },
-  { id: "gpt-5.6-luna", label: "5.6 Luna" },
-  { id: "gpt-5.5", label: "5.5" },
-  { id: "gpt-5.4", label: "5.4" },
-  { id: "gpt-5.4-mini", label: "5.4 Mini" },
-  { id: "gpt-5.3-codex-spark", label: "5.3 Codex Spark" },
+  {
+    id: "gpt-5.6-sol",
+    label: "5.6 Sol",
+    reasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+    supportsFast: true,
+    inputModalities: ["text", "image"],
+  },
+  {
+    id: "gpt-5.6-terra",
+    label: "5.6 Terra",
+    reasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+    supportsFast: true,
+    inputModalities: ["text", "image"],
+  },
+  {
+    id: "gpt-5.6-luna",
+    label: "5.6 Luna",
+    reasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
+    supportsFast: true,
+    inputModalities: ["text", "image"],
+  },
+  {
+    id: "gpt-5.5",
+    label: "5.5",
+    reasoningEfforts: ["low", "medium", "high", "xhigh"],
+    supportsFast: true,
+    inputModalities: ["text", "image"],
+  },
+  {
+    id: "gpt-5.4",
+    label: "5.4",
+    reasoningEfforts: ["low", "medium", "high", "xhigh"],
+    supportsFast: true,
+    inputModalities: ["text", "image"],
+  },
+  {
+    id: "gpt-5.4-mini",
+    label: "5.4 Mini",
+    reasoningEfforts: ["low", "medium", "high", "xhigh"],
+    supportsFast: false,
+    inputModalities: ["text", "image"],
+  },
+  {
+    id: "gpt-5.3-codex-spark",
+    label: "5.3 Codex Spark",
+    reasoningEfforts: ["low", "medium", "high", "xhigh"],
+    supportsFast: false,
+    inputModalities: ["text"],
+  },
 ] as const;
 
 export type CodexModelId = (typeof CODEX_MODEL_OPTIONS)[number]["id"];
@@ -39,8 +98,40 @@ export function normalizeCodexModelId(value: string): CodexModelId | null {
   return option?.id ?? null;
 }
 
+export function getCodexModelOption(model: CodexModelId | null | undefined) {
+  if (!model) return null;
+  return CODEX_MODEL_OPTIONS.find((candidate) => candidate.id === model) ?? null;
+}
+
+export function codexModelSupportsReasoningEffort(
+  model: CodexModelId | null | undefined,
+  effort: CodexReasoningEffort,
+): boolean {
+  if (!model || effort === "follow-desktop") return true;
+  const option = getCodexModelOption(model);
+  return Boolean(
+    option?.reasoningEfforts.some(
+      (candidate) => candidate === (effort as CodexModelReasoningEffort),
+    ),
+  );
+}
+
+export function codexModelSupportsFast(
+  model: CodexModelId | null | undefined,
+): boolean {
+  return getCodexModelOption(model)?.supportsFast ?? true;
+}
+
+export function codexModelSupportsImages(
+  model: CodexModelId | null | undefined,
+): boolean {
+  const option = getCodexModelOption(model);
+  return option ? option.inputModalities.some((modality) => modality === "image") : true;
+}
+
 export interface CodexPromptOptions {
   accessMode: CodexAccessMode;
+  customPermissions: CodexCustomPermissions | null;
   model: CodexModelId | null;
   reasoningEffort: CodexReasoningEffort;
   speed: CodexSpeed;

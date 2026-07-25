@@ -1,9 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Member, Message } from "@codex-collab/protocol";
 import {
   canMemberStopCodex,
+  chatMessageBody,
   codexExecutionPhase,
   composerPrimaryAction,
+  filterUnsupportedImageAttachments,
+  normalizeCodexOptionsForUi,
+  restoreComposerControlFocus,
   workspaceNeedsConversationLoad,
 } from "./App.js";
 
@@ -97,5 +101,105 @@ describe("Codex execution controls", () => {
         "running",
       ),
     ).toBe("idle");
+  });
+});
+
+describe("Codex composer capability controls", () => {
+  it("steps unsupported reasoning down and disables unsupported fast mode", () => {
+    expect(
+      normalizeCodexOptionsForUi({
+        model: "gpt-5.6-luna",
+        reasoningEffort: "ultra",
+        speed: "fast",
+      }),
+    ).toMatchObject({ reasoningEffort: "max", speed: "fast" });
+    expect(
+      normalizeCodexOptionsForUi({
+        model: "gpt-5.4-mini",
+        reasoningEffort: "max",
+        speed: "fast",
+      }),
+    ).toMatchObject({ reasoningEffort: "xhigh", speed: "standard" });
+  });
+
+  it("restores custom permissions safely and hides them in other modes", () => {
+    expect(normalizeCodexOptionsForUi({ accessMode: "custom" })).toMatchObject({
+      accessMode: "custom",
+      customPermissions: {
+        fileAccess: "workspace-write",
+        approvalPolicy: "on-request",
+      },
+    });
+    expect(
+      normalizeCodexOptionsForUi({
+        accessMode: "follow-desktop",
+        customPermissions: {
+          fileAccess: "full-access",
+          approvalPolicy: "never",
+        },
+      }).customPermissions,
+    ).toBeNull();
+  });
+
+  it("removes only image attachments for the text-only model", () => {
+    const text = { file: { type: "text/plain" }, id: "text" };
+    const image = { file: { type: "image/png" }, id: "image" };
+    expect(
+      filterUnsupportedImageAttachments("gpt-5.3-codex-spark", [text, image]),
+    ).toEqual([text]);
+    expect(filterUnsupportedImageAttachments("gpt-5.6-sol", [text, image])).toEqual([
+      text,
+      image,
+    ]);
+  });
+});
+
+describe("member chat attachments", () => {
+  it("allows an attachment-only chat message while preserving typed text", () => {
+    expect(chatMessageBody("", 2)).toBe("发送了 2 个附件");
+    expect(chatMessageBody("  请看图片  ", 1)).toBe("请看图片");
+    expect(chatMessageBody("", 0)).toBe("");
+  });
+});
+
+describe("composer focus", () => {
+  it("returns focus to the sent composer and places the cursor at the end", () => {
+    const focus = vi.fn();
+    const setSelectionRange = vi.fn();
+    const schedule = vi.fn((callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+
+    restoreComposerControlFocus(
+      {
+        disabled: false,
+        focus,
+        setSelectionRange,
+        value: "next message",
+      },
+      schedule,
+    );
+
+    expect(schedule).toHaveBeenCalledOnce();
+    expect(focus).toHaveBeenCalledOnce();
+    expect(setSelectionRange).toHaveBeenCalledWith(12, 12);
+  });
+
+  it("does not focus a composer that remains disabled", () => {
+    const focus = vi.fn();
+    restoreComposerControlFocus(
+      {
+        disabled: true,
+        focus,
+        setSelectionRange: vi.fn(),
+        value: "",
+      },
+      (callback) => {
+        callback(0);
+        return 1;
+      },
+    );
+    expect(focus).not.toHaveBeenCalled();
   });
 });

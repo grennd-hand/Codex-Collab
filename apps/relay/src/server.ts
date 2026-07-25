@@ -26,7 +26,10 @@ import {
   type RoomStatus,
   type WorkspaceFileContent,
 } from "@codex-collab/protocol";
-import { parseCodexOptions } from "./codex-options.js";
+import {
+  parseCodexOptions,
+  validateCodexPromptCapabilities,
+} from "./codex-options.js";
 import { buildInviteLink, resolveInviteOrigin } from "./invite-link.js";
 import {
   AccountAuthService,
@@ -100,6 +103,7 @@ function sendAttachment(
     "content-length": attachment.size,
     "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(attachment.name)}`,
     "cache-control": "private, no-store",
+    "x-content-type-options": "nosniff",
   });
   response.end(Buffer.from(attachment.content));
 }
@@ -935,12 +939,17 @@ const server = createServer(async (request, response) => {
         );
       }
       const attachments = parseMessageAttachments(body.attachments);
-      if (kind !== "codex_prompt" && attachments.length > 0) {
+      if (kind === "codex_stop" && attachments.length > 0) {
         throw new ProtocolError(
           400,
           "invalid_request",
-          "attachments are supported only for Codex prompts",
+          "attachments are supported only for chat and Codex prompts",
         );
+      }
+      const codexOptions =
+        kind === "codex_prompt" ? parseCodexOptions(body.codexOptions) : null;
+      if (codexOptions) {
+        validateCodexPromptCapabilities(codexOptions, attachments);
       }
       const message = store.addMessage(
         messagesMatch[1],
@@ -949,7 +958,7 @@ const server = createServer(async (request, response) => {
         requiredString(body.body, "body", 50_000),
         {
           attachments,
-          codexOptions: kind === "codex_prompt" ? parseCodexOptions(body.codexOptions) : null,
+          codexOptions,
         },
       );
       broadcast(messagesMatch[1], "message.created", message);
@@ -1076,6 +1085,28 @@ const server = createServer(async (request, response) => {
       broadcast(workspaceSelectionMatch[1], "workspace.updated", {
         selectedThreadId: workspace.selectedThreadId,
         syncedAt: null,
+      });
+      sendJson(response, 200, { workspace });
+      return;
+    }
+
+    const workspaceHistoryMatch = url.pathname.match(
+      /^\/v1\/sessions\/([^/]+)\/workspace\/history$/,
+    );
+    if (method === "PUT" && workspaceHistoryMatch?.[1]) {
+      const body = await readJson(request);
+      const workspace = store.publishWorkspaceHistory(
+        workspaceHistoryMatch[1],
+        bearerToken(request),
+        {
+          threadId: requiredString(body.threadId, "threadId", 120),
+          history: parseHistory(body.history),
+        },
+      );
+      broadcast(workspaceHistoryMatch[1], "workspace.updated", {
+        selectedThreadId: workspace.selectedThreadId,
+        syncedAt: workspace.syncedAt,
+        historyCount: workspace.history.length,
       });
       sendJson(response, 200, { workspace });
       return;

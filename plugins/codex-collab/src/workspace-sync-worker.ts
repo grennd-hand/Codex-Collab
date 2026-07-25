@@ -5,7 +5,7 @@ import { CodexAppServerClient } from "./app-server-client.js";
 import { localProfilePath, LocalProfileStore } from "./local-profile.js";
 import { WorkspaceSyncService } from "./workspace-sync-service.js";
 
-const intervalMs = 2_500;
+const intervalMs = 1_000;
 const lockPath = join(dirname(localProfilePath()), "sync-worker.json");
 
 function processIsRunning(pid: number): boolean {

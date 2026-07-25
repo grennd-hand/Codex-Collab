@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { appendFile, mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -50,6 +50,7 @@ describe("Codex record import", () => {
         ],
         options: {
           accessMode: "full-access",
+          customPermissions: null,
           model: "gpt-5.6-sol",
           reasoningEffort: "high",
           speed: "fast",
@@ -96,6 +97,100 @@ describe("Codex record import", () => {
     });
   });
 
+  it("maps each custom file scope and approval policy exactly", () => {
+    const profiles = [
+      ["read-only", ":read-only"],
+      ["workspace-write", ":workspace"],
+      ["full-access", ":danger-full-access"],
+    ] as const;
+    for (const [fileAccess, permissions] of profiles) {
+      expect(
+        buildCodexTurnStartParams({
+          threadId: "thread-custom",
+          userInput: [{ type: "text", text: "Inspect", text_elements: [] }],
+          options: {
+            accessMode: "custom",
+            customPermissions: { fileAccess, approvalPolicy: "on-request" },
+            model: null,
+            reasoningEffort: "follow-desktop",
+            speed: "follow-desktop",
+            planMode: false,
+          },
+          currentModel: "gpt-5.6-sol",
+          currentReasoningEffort: "high",
+          peerDisplayName: "Owner",
+        }),
+      ).toMatchObject({ permissions, approvalPolicy: "on-request" });
+    }
+    expect(() =>
+      buildCodexTurnStartParams({
+        threadId: "thread-custom",
+        userInput: [{ type: "text", text: "Inspect", text_elements: [] }],
+        options: {
+          accessMode: "custom",
+          customPermissions: null,
+          model: null,
+          reasoningEffort: "follow-desktop",
+          speed: "follow-desktop",
+          planMode: false,
+        },
+        currentModel: "gpt-5.6-sol",
+        peerDisplayName: "Owner",
+      }),
+    ).toThrow(/missing/i);
+  });
+
+  it("blocks invalid capabilities after resolving the current task model", () => {
+    const base = {
+      threadId: "thread-capabilities",
+      userInput: [{ type: "text" as const, text: "Run", text_elements: [] as [] }],
+      peerDisplayName: "Owner",
+    };
+    expect(() =>
+      buildCodexTurnStartParams({
+        ...base,
+        options: {
+          accessMode: "follow-desktop",
+          customPermissions: null,
+          model: null,
+          reasoningEffort: "follow-desktop",
+          speed: "fast",
+          planMode: false,
+        },
+        currentModel: "gpt-5.3-codex-spark",
+      }),
+    ).toThrow(/fast/i);
+    expect(() =>
+      buildCodexTurnStartParams({
+        ...base,
+        options: {
+          accessMode: "follow-desktop",
+          customPermissions: null,
+          model: "gpt-5.6-luna",
+          reasoningEffort: "ultra",
+          speed: "standard",
+          planMode: false,
+        },
+        currentModel: "gpt-5.6-sol",
+      }),
+    ).toThrow(/ultra/i);
+    expect(() =>
+      buildCodexTurnStartParams({
+        ...base,
+        attachmentMediaTypes: ["image/png"],
+        options: {
+          accessMode: "follow-desktop",
+          customPermissions: null,
+          model: null,
+          reasoningEffort: "follow-desktop",
+          speed: "standard",
+          planMode: false,
+        },
+        currentModel: "gpt-5.3-codex-spark",
+      }),
+    ).toThrow(/image/i);
+  });
+
   it("omits sticky overrides when the composer follows the selected task", () => {
     expect(
       buildCodexTurnStartParams({
@@ -103,6 +198,7 @@ describe("Codex record import", () => {
         userInput: [{ type: "text", text: "Continue", text_elements: [] }],
         options: {
           accessMode: "follow-desktop",
+          customPermissions: null,
           model: null,
           reasoningEffort: "follow-desktop",
           speed: "follow-desktop",
@@ -120,6 +216,167 @@ describe("Codex record import", () => {
         collab_member: "Peer",
       },
     });
+  });
+
+  it("aligns the default collaboration mode with web model overrides", () => {
+    expect(
+      buildCodexTurnStartParams({
+        threadId: "thread-1",
+        userInput: [{ type: "text", text: "Which model?", text_elements: [] }],
+        options: {
+          accessMode: "follow-desktop",
+          customPermissions: null,
+          model: "gpt-5.6-luna",
+          reasoningEffort: "low",
+          speed: "follow-desktop",
+          planMode: false,
+        },
+        currentModel: "gpt-5.6-sol",
+        currentReasoningEffort: "xhigh",
+        peerDisplayName: "Owner",
+        commandId: "prompt-luna",
+      }),
+    ).toMatchObject({
+      model: "gpt-5.6-luna",
+      effort: "low",
+      collaborationMode: {
+        mode: "default",
+        settings: {
+          model: "gpt-5.6-luna",
+          reasoning_effort: "low",
+          developer_instructions: null,
+        },
+      },
+    });
+  });
+
+  it("sends the resumed task settings and web overrides through Desktop IPC", async () => {
+    const startTurn = vi.fn().mockResolvedValue({
+      result: { turn: { id: "turn-luna" } },
+    });
+    const steerTurn = vi.fn();
+    const client = new CodexAppServerClient({
+      platform: "win32",
+      desktopIpc: {
+        startTurn,
+        steerTurn,
+        interruptTurn: vi.fn(),
+        close: vi.fn(),
+      },
+    });
+    Object.defineProperty(client, "start", {
+      value: async () => undefined,
+    });
+    Object.defineProperty(client, "getActiveTurnId", {
+      value: async () => null,
+    });
+    Object.defineProperty(client, "request", {
+      value: async (method: string) => {
+        if (method === "thread/resume") {
+          return {
+            thread: {},
+            model: "gpt-5.6-sol",
+            reasoningEffort: "xhigh",
+          };
+        }
+        throw new Error(`Unexpected request: ${method}`);
+      },
+    });
+
+    await expect(
+      client.submitPeerPrompt({
+        threadId: "thread-1",
+        projectRoot: "E:\\Codex-Collab",
+        commandId: "prompt-luna",
+        peerDisplayName: "Owner",
+        body: "Which model?",
+        attachments: [],
+        codexOptions: {
+          accessMode: "follow-desktop",
+          customPermissions: null,
+          model: "gpt-5.6-luna",
+          reasoningEffort: "low",
+          speed: "follow-desktop",
+          planMode: false,
+        },
+      }),
+    ).resolves.toEqual({
+      status: "submitted",
+      mode: "started",
+      turnId: "turn-luna",
+    });
+    expect(steerTurn).not.toHaveBeenCalled();
+    expect(startTurn).toHaveBeenCalledWith({
+      conversationId: "thread-1",
+      turnStartParams: {
+        input: [{ type: "text", text: "Which model?", text_elements: [] }],
+        model: "gpt-5.6-luna",
+        effort: "low",
+        collaborationMode: {
+          mode: "default",
+          settings: {
+            model: "gpt-5.6-luna",
+            reasoning_effort: "low",
+            developer_instructions: null,
+          },
+        },
+        responsesapiClientMetadata: {
+          source: "codex-collab",
+          collab_member: "Owner",
+          collab_command_id: "prompt-luna",
+        },
+        clientUserMessageId: "prompt-luna",
+        additionalContext: null,
+      },
+    });
+  });
+
+  it("keeps configured prompts queued while another turn is active", async () => {
+    const startTurn = vi.fn();
+    const steerTurn = vi.fn();
+    const request = vi.fn();
+    const client = new CodexAppServerClient({
+      platform: "win32",
+      desktopIpc: {
+        startTurn,
+        steerTurn,
+        interruptTurn: vi.fn(),
+        close: vi.fn(),
+      },
+    });
+    Object.defineProperty(client, "start", {
+      value: async () => undefined,
+    });
+    Object.defineProperty(client, "getActiveTurnId", {
+      value: async () => "turn-active",
+    });
+    Object.defineProperty(client, "request", { value: request });
+
+    await expect(
+      client.submitPeerPrompt({
+        threadId: "thread-1",
+        projectRoot: "E:\\Codex-Collab",
+        commandId: "prompt-queued",
+        peerDisplayName: "Owner",
+        body: "Run next",
+        attachments: [],
+        codexOptions: {
+          accessMode: "follow-desktop",
+          customPermissions: null,
+          model: "gpt-5.6-luna",
+          reasoningEffort: "low",
+          speed: "follow-desktop",
+          planMode: false,
+        },
+      }),
+    ).resolves.toEqual({
+      status: "deferred",
+      reason: "active-turn",
+      turnId: "turn-active",
+    });
+    expect(startTurn).not.toHaveBeenCalled();
+    expect(steerTurn).not.toHaveBeenCalled();
+    expect(request).not.toHaveBeenCalled();
   });
 
   it("imports visible messages, reasoning summaries and redacted command output", () => {
@@ -165,11 +422,35 @@ describe("Codex record import", () => {
     ]);
     expect(records[1]?.text).toBe("Checked the dependency graph");
     expect(records[2]?.text).toContain("$ npm test");
+    expect(records[2]?.text).toContain("status: completed");
     expect(records[2]?.text).toContain("AUTH_TOKEN=[REDACTED]");
     expect(records.some((record) => record.text.includes("private raw"))).toBe(false);
     expect(records.some((record) => record.text.includes("abcdefghijklmnopqrstuvwxyz"))).toBe(
       false,
     );
+  });
+
+  it("marks app-server command records as running before an exit code exists", () => {
+    const records = extractCodexRecordEntries([
+      {
+        id: "turn-running",
+        status: "inProgress",
+        items: [
+          {
+            type: "commandExecution",
+            id: "command-running",
+            command: "npm run build",
+            cwd: "E:/Project",
+            aggregatedOutput: "building...",
+            exitCode: null,
+            durationMs: null,
+          },
+        ],
+      },
+    ]);
+
+    expect(records[0]?.text).toContain("status: running");
+    expect(records[0]?.text).toContain("building...");
   });
 
   it("recovers selected-task command output from its rollout without raw reasoning", () => {
@@ -227,6 +508,39 @@ describe("Codex record import", () => {
     expect(records[2]?.text).toContain("21 tests passed");
     expect(records[2]?.text).toContain("API_KEY=[REDACTED]");
     expect(records.some((record) => record.text.includes("not-for-sharing"))).toBe(false);
+  });
+
+  it("includes unfinished tool calls as live running steps", () => {
+    const records = extractCodexRolloutEntries(
+      [
+        JSON.stringify({
+          timestamp: "2026-07-25T00:00:02.000Z",
+          type: "response_item",
+          payload: {
+            type: "function_call",
+            id: "call-item-running",
+            call_id: "call-running",
+            name: "exec_command",
+            arguments: JSON.stringify({ cmd: "npm run build" }),
+          },
+        }),
+      ],
+      "thread-1",
+    );
+
+    expect(records).toEqual([
+      {
+        id: "call-item-running",
+        role: "command",
+        text: [
+          "tool: exec_command",
+          "status: running",
+          "input:",
+          '{"cmd":"npm run build"}',
+        ].join("\n"),
+        createdAt: "2026-07-25T00:00:02.000Z",
+      },
+    ]);
   });
 
   it("detects changes to the selected task rollout", async () => {

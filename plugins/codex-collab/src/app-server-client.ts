@@ -17,9 +17,14 @@ import {
 } from "node:fs/promises";
 import { basename, extname, isAbsolute, join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
-import type {
-  CodexPromptOptions,
-  CodexRecordEntry,
+import {
+  codexModelSupportsFast,
+  codexModelSupportsImages,
+  codexModelSupportsReasoningEffort,
+  normalizeCodexModelId,
+  type CodexPromptOptions,
+  type CodexRecordEntry,
+  type CodexReasoningEffort,
 } from "@codex-collab/protocol";
 import { CodexDesktopIpcClient } from "./codex-desktop-ipc-client.js";
 
@@ -56,13 +61,10 @@ type CodexUserInput =
   | { type: "localImage"; path: string; detail: "auto" }
   | { type: "mention"; name: string; path: string };
 
-interface ResumedCodexThread {
+interface ThreadResumeResponse {
+  thread?: unknown;
   model?: string | null;
   reasoningEffort?: string | null;
-}
-
-interface ThreadResumeResponse {
-  thread?: ResumedCodexThread;
 }
 
 interface TurnStartResponse {
@@ -192,6 +194,7 @@ function nestedTurnId(value: unknown, depth = 0): string | null {
 export function buildCodexTurnStartParams(input: {
   threadId: string;
   userInput: CodexUserInput[];
+  attachmentMediaTypes?: readonly string[];
   options: CodexPromptOptions;
   currentModel?: string | null;
   currentReasoningEffort?: string | null;
@@ -200,10 +203,41 @@ export function buildCodexTurnStartParams(input: {
 }): Record<string, unknown> {
   const requestedModel = resolveModelId(input.options.model);
   const effectiveModel = requestedModel ?? input.currentModel ?? null;
+  const knownEffectiveModel = effectiveModel
+    ? normalizeCodexModelId(effectiveModel)
+    : null;
   const requestedEffort =
     input.options.reasoningEffort === "follow-desktop"
       ? null
       : input.options.reasoningEffort;
+  if (
+    knownEffectiveModel &&
+    !codexModelSupportsReasoningEffort(
+      knownEffectiveModel,
+      input.options.reasoningEffort,
+    )
+  ) {
+    throw new Error(
+      `${input.options.reasoningEffort} reasoning is not supported by ${knownEffectiveModel}`,
+    );
+  }
+  if (
+    knownEffectiveModel &&
+    input.options.speed === "fast" &&
+    !codexModelSupportsFast(knownEffectiveModel)
+  ) {
+    throw new Error(`Fast speed is not supported by ${knownEffectiveModel}`);
+  }
+  if (
+    knownEffectiveModel &&
+    !codexModelSupportsImages(knownEffectiveModel) &&
+    (input.userInput.some((item) => item.type === "localImage") ||
+      input.attachmentMediaTypes?.some((mediaType) =>
+        mediaType.startsWith("image/"),
+      ))
+  ) {
+    throw new Error(`Image attachments are not supported by ${knownEffectiveModel}`);
+  }
   const parameters: Record<string, unknown> = {
     threadId: input.threadId,
     input: input.userInput,
@@ -231,18 +265,49 @@ export function buildCodexTurnStartParams(input: {
   } else if (input.options.accessMode === "full-access") {
     parameters.permissions = ":danger-full-access";
     parameters.approvalPolicy = "never";
+  } else if (input.options.accessMode === "custom") {
+    const customPermissions = input.options.customPermissions;
+    if (!customPermissions) {
+      throw new Error("Custom Codex permissions are missing");
+    }
+    const permissionProfile = {
+      "read-only": ":read-only",
+      "workspace-write": ":workspace",
+      "full-access": ":danger-full-access",
+    }[customPermissions.fileAccess];
+    if (!permissionProfile) {
+      throw new Error("Custom Codex file access is invalid");
+    }
+    if (
+      customPermissions.approvalPolicy !== "on-request" &&
+      customPermissions.approvalPolicy !== "never"
+    ) {
+      throw new Error("Custom Codex approval policy is invalid");
+    }
+    parameters.permissions = permissionProfile;
+    parameters.approvalPolicy = customPermissions.approvalPolicy;
   }
 
-  if (input.options.planMode) {
+  if (input.options.planMode || requestedModel || requestedEffort) {
     if (!effectiveModel) {
-      throw new Error("Plan mode requires the selected task's current model");
+      throw new Error(
+        "Selected Codex options require the selected task's current model",
+      );
     }
     parameters.collaborationMode = {
-      mode: "plan",
+      mode: input.options.planMode ? "plan" : "default",
       settings: {
         model: effectiveModel,
         reasoning_effort:
-          requestedEffort ?? input.currentReasoningEffort ?? null,
+          requestedEffort ??
+          (knownEffectiveModel && input.currentReasoningEffort
+            ? codexModelSupportsReasoningEffort(
+                knownEffectiveModel,
+                input.currentReasoningEffort as CodexReasoningEffort,
+              )
+              ? input.currentReasoningEffort
+              : null
+            : input.currentReasoningEffort ?? null),
         developer_instructions: null,
       },
     };
@@ -451,9 +516,24 @@ export function extractCodexRecordEntries(turns: CodexTurn[]): CodexRecordEntry[
         value = item.summary.join("\n");
       } else if (item.type === "commandExecution" && typeof item.command === "string") {
         role = "command";
+        const commandStatus =
+          item.exitCode === null || item.exitCode === undefined
+            ? turn.status === "inProgress"
+              ? "running"
+              : "completed"
+            : item.exitCode === 0
+              ? "completed"
+              : "failed";
         value = [
+          "tool: exec_command",
+          `status: ${commandStatus}`,
+          "input:",
           `$ ${item.command}`,
-          item.cwd ? `cwd: ${item.cwd}` : "",
+          item.cwd ? `目录：${item.cwd}` : "",
+          item.aggregatedOutput ||
+          (item.exitCode !== null && item.exitCode !== undefined)
+            ? "output:"
+            : "",
           item.aggregatedOutput ?? "",
           item.exitCode === null || item.exitCode === undefined
             ? ""
@@ -501,6 +581,22 @@ function rolloutText(value: unknown): string {
     return JSON.stringify(value, null, 2);
   }
   return "";
+}
+
+function rolloutCommandText(
+  name: string,
+  status: "running" | "completed",
+  input: string,
+  output?: string,
+): string {
+  return [
+    `tool: ${name}`,
+    `status: ${status}`,
+    input.trim() ? `input:\n${input.trim()}` : "",
+    output?.trim() ? `output:\n${output.trim()}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function extractCodexRolloutEntries(
@@ -578,7 +674,7 @@ export function extractCodexRolloutEntries(
       if (!call) continue;
       const output = rolloutText(payload.output);
       const text = redactSensitiveText(
-        [`tool: ${call.name}`, call.input, output].filter(Boolean).join("\n").trim(),
+        rolloutCommandText(call.name, "completed", call.input, output),
       );
       if (text) {
         entries.push({
@@ -590,6 +686,19 @@ export function extractCodexRolloutEntries(
       }
       commandCalls.delete(callId);
     }
+  }
+
+  for (const call of commandCalls.values()) {
+    const text = redactSensitiveText(
+      rolloutCommandText(call.name, "running", call.input),
+    );
+    if (!text) continue;
+    entries.push({
+      id: call.id,
+      role: "command",
+      text: text.slice(0, 50_000),
+      createdAt: call.createdAt,
+    });
   }
   return limitRecordEntries(entries);
 }
@@ -811,40 +920,9 @@ export class CodexAppServerClient extends EventEmitter {
 
       const activeTurnId = await this.getActiveTurnId(input.threadId);
       if (activeTurnId) {
-        if (this.platform === "win32") {
-          await this.desktopIpc.steerTurn({
-            conversationId: input.threadId,
-            input: userInput,
-            restoreMessage: null,
-            serviceTier:
-              input.codexOptions.speed === "fast"
-                ? "priority"
-                : input.codexOptions.speed === "standard"
-                  ? null
-                  : undefined,
-            attachments: [],
-            clientUserMessageId: input.commandId,
-            additionalContext: null,
-          });
-        } else {
-          await this.request("turn/steer", {
-            threadId: input.threadId,
-            expectedTurnId: activeTurnId,
-            input: userInput,
-            responsesapiClientMetadata: {
-              source: "codex-collab",
-              collab_member: input.peerDisplayName,
-              collab_command_id: input.commandId,
-            },
-          });
-        }
-        if (stagingDirectory) {
-          this.registerStagingDirectory(activeTurnId, stagingDirectory);
-          stagingRegistered = true;
-        }
         return {
-          status: "submitted",
-          mode: "steered",
+          status: "deferred",
+          reason: "active-turn",
           turnId: activeTurnId,
         };
       }
@@ -861,9 +939,12 @@ export class CodexAppServerClient extends EventEmitter {
       const startParameters = buildCodexTurnStartParams({
         threadId: input.threadId,
         userInput,
+        attachmentMediaTypes: input.attachments.map(
+          (attachment) => attachment.mediaType,
+        ),
         options: input.codexOptions,
-        currentModel: resumed.thread?.model ?? null,
-        currentReasoningEffort: resumed.thread?.reasoningEffort ?? null,
+        currentModel: resumed.model ?? null,
+        currentReasoningEffort: resumed.reasoningEffort ?? null,
         peerDisplayName: input.peerDisplayName,
         commandId: input.commandId,
       });

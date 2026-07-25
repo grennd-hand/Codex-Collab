@@ -243,6 +243,25 @@ export class RelayClient {
     return result.workspace;
   }
 
+  async publishWorkspaceHistory(
+    sessionId: string,
+    memberToken: string,
+    input: {
+      threadId: string;
+      history: CodexRecordEntry[];
+    },
+  ): Promise<WorkspaceSummary> {
+    const result = await this.request<{ workspace: WorkspaceSummary }>(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/workspace/history`,
+      {
+        method: "PUT",
+        headers: { authorization: `Bearer ${memberToken}` },
+        body: JSON.stringify(input),
+      },
+    );
+    return result.workspace;
+  }
+
   async publishCodexRuntimeStatus(
     sessionId: string,
     memberToken: string,

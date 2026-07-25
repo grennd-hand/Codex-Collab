@@ -1307,6 +1307,17 @@ export class SessionStore {
     }
     const attachments = input.attachments ?? [];
     if (
+      attachments.length > 0 &&
+      kind !== "chat" &&
+      kind !== "codex_prompt"
+    ) {
+      throw new ProtocolError(
+        400,
+        "invalid_request",
+        "Attachments are supported only for chat and Codex prompts",
+      );
+    }
+    if (
       sender.role !== "owner" &&
       input.codexOptions?.accessMode &&
       input.codexOptions.accessMode !== "follow-desktop"
@@ -1689,6 +1700,33 @@ export class SessionStore {
       this.db.exec("ROLLBACK");
       throw error;
     }
+    return this.getWorkspace(sessionId, memberToken);
+  }
+
+  publishWorkspaceHistory(
+    sessionId: string,
+    memberToken: string,
+    input: {
+      threadId: string;
+      history: CodexRecordEntry[];
+    },
+  ): WorkspaceSummary {
+    this.requireOwner(sessionId, memberToken);
+    const state = this.workspaceState(sessionId);
+    if (!state?.selected_thread_id || state.selected_thread_id !== input.threadId) {
+      throw new ProtocolError(
+        409,
+        "thread_not_selected",
+        "The owner must select this Codex task before its history can be imported",
+      );
+    }
+    const syncedAt = now();
+    this.db
+      .prepare(`
+        UPDATE workspace_state SET history_json = ?, synced_at = ?
+        WHERE session_id = ?
+      `)
+      .run(JSON.stringify(input.history), syncedAt, sessionId);
     return this.getWorkspace(sessionId, memberToken);
   }
 

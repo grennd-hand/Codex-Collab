@@ -172,6 +172,45 @@ try {
       ],
     }),
   });
+  await request(`/v1/sessions/${created.session.id}/workspace/history`, {
+    method: "PUT",
+    headers: hostHeaders,
+    body: JSON.stringify({
+      threadId: "thread-code-flow",
+      history: [
+        {
+          id: "visible-user-message",
+          role: "user",
+          text: "Run the code-only loop",
+          createdAt: "2026-07-25T00:00:00.000Z",
+        },
+        {
+          id: "visible-assistant-message",
+          role: "assistant",
+          text: "The loop passed.",
+          createdAt: "2026-07-25T00:00:01.000Z",
+        },
+        {
+          id: "visible-reasoning-summary",
+          role: "reasoning",
+          text: "Checked the workspace contract.",
+          createdAt: "2026-07-25T00:00:01.500Z",
+        },
+        {
+          id: "visible-command-output",
+          role: "command",
+          text: "$ npm test\n21 tests passed\nexit code: 0",
+          createdAt: "2026-07-25T00:00:02.000Z",
+        },
+        {
+          id: "visible-running-command",
+          role: "command",
+          text: "tool: exec_command\nstatus: running\ninput:\nnpm run build",
+          createdAt: "2026-07-25T00:00:03.000Z",
+        },
+      ],
+    }),
+  });
 
   const guestHeaders = { authorization: `Bearer ${guest.memberToken}` };
   const workspace = await request(`/v1/sessions/${created.session.id}/workspace`, {
@@ -183,7 +222,7 @@ try {
   );
   if (
     workspace.workspace.selectedThreadId !== "thread-code-flow" ||
-    workspace.workspace.history.length !== 4 ||
+    workspace.workspace.history.length !== 5 ||
     workspace.workspace.files.length !== 2 ||
     workspace.workspace.threads.length !== 0 ||
     file.file.content !== "# Code-only loop\n"
@@ -202,6 +241,7 @@ try {
         "owner approval",
         "task selection",
         "history import",
+        "live history update without file replacement",
         "approved-member file read",
       ],
     }),

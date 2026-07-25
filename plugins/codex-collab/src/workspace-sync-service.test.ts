@@ -1,8 +1,13 @@
-import { describe, expect, it, vi } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { LocalProfile } from "./local-profile.js";
+import { RelayClient } from "./relay-client.js";
 import {
   forwardNextCodexPrompt,
   reconcileCodexCommandStatuses,
+  WorkspaceSyncService,
 } from "./workspace-sync-service.js";
 
 const profile: LocalProfile = {
@@ -62,6 +67,7 @@ describe("Codex prompt forwarding", () => {
       attachments: [],
       codexOptions: {
         accessMode: "follow-desktop",
+        customPermissions: null,
         model: null,
         reasoningEffort: "follow-desktop",
         speed: "follow-desktop",
@@ -128,13 +134,13 @@ describe("Codex prompt forwarding", () => {
     expect(update).not.toHaveBeenCalled();
   });
 
-  it("records the submission mode returned by the desktop bridge", async () => {
+  it("records a newly started Desktop turn", async () => {
     const listMessages = vi.fn().mockResolvedValue([ownerPrompt]);
     const readMessageAttachment = vi.fn();
     const updateMessageDeliveryStatus = vi.fn();
     const submitPeerPrompt = vi.fn().mockResolvedValue({
       status: "submitted",
-      mode: "steered",
+      mode: "started",
       turnId: "turn-1",
     });
     const stopPeerPrompt = vi.fn();
@@ -383,6 +389,7 @@ describe("Codex prompt forwarding", () => {
       ],
       codexOptions: {
         accessMode: "full-access" as const,
+        customPermissions: null,
         model: "gpt-5.6-sol",
         reasoningEffort: "high" as const,
         speed: "standard" as const,
@@ -457,6 +464,134 @@ describe("Codex prompt forwarding", () => {
       threadId: "thread-1",
     });
     expect(submitPeerPrompt).not.toHaveBeenCalled();
+  });
+});
+
+describe("workspace live history sync", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("publishes running history without rebuilding the file snapshot", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codex-collab-live-sync-"));
+    const rolloutPath = join(directory, "rollout-thread-1.jsonl");
+    await writeFile(rolloutPath, "{}\n", "utf8");
+    const liveHistory = [
+      {
+        id: "call-1",
+        role: "command" as const,
+        text: "tool: exec_command\nstatus: running\ninput:\nnpm test",
+        createdAt: "2026-07-25T00:00:01.000Z",
+      },
+    ];
+    const workspace = {
+      hostConnected: true,
+      hostDeviceLabel: "Owner PC",
+      rootLabel: "Project",
+      threads: [],
+      selectedThreadId: "thread-1",
+      selectedThread: {
+        id: "thread-1",
+        name: "Live task",
+        preview: "",
+        updatedAt: 1,
+      },
+      history: [],
+      files: [
+        {
+          path: "README.md",
+          size: 7,
+          modifiedAt: "2026-07-25T00:00:00.000Z",
+          sha256: "a".repeat(64),
+        },
+      ],
+      codexRuntimeStatus: "running" as const,
+      syncedAt: "2026-07-25T00:00:00.000Z",
+    };
+    const listMessages = vi
+      .spyOn(RelayClient.prototype, "listMessages")
+      .mockResolvedValue([]);
+    vi.spyOn(RelayClient.prototype, "getWorkspace")
+      .mockResolvedValueOnce(workspace)
+      .mockResolvedValue({
+        ...workspace,
+        history: liveHistory,
+        syncedAt: "2026-07-25T00:00:02.000Z",
+      });
+    vi.spyOn(RelayClient.prototype, "publishCodexRuntimeStatus").mockResolvedValue(
+      workspace,
+    );
+    const publishHistory = vi
+      .spyOn(RelayClient.prototype, "publishWorkspaceHistory")
+      .mockResolvedValue({
+        ...workspace,
+        history: liveHistory,
+        syncedAt: "2026-07-25T00:00:02.000Z",
+      });
+    const publishSnapshot = vi
+      .spyOn(RelayClient.prototype, "publishWorkspaceSnapshot")
+      .mockResolvedValue({
+        ...workspace,
+        history: liveHistory,
+        syncedAt: "2026-07-25T00:00:03.000Z",
+      });
+    const profiles = {
+      read: vi.fn().mockResolvedValue({ ...profile, projectRoot: directory }),
+      update: vi.fn().mockResolvedValue(profile),
+    };
+    const codex = {
+      listThreads: vi.fn().mockResolvedValue([
+        {
+          id: "thread-1",
+          name: "Live task",
+          preview: "",
+          updatedAt: 1,
+          path: rolloutPath,
+        },
+      ]),
+      isThreadBusyForPrompt: vi
+        .fn()
+        .mockResolvedValueOnce(true)
+        .mockResolvedValue(false),
+      readThreadHistory: vi.fn().mockResolvedValue(liveHistory),
+      getTurnStatus: vi.fn(),
+      submitPeerPrompt: vi.fn(),
+      stopPeerPrompt: vi.fn(),
+    };
+
+    try {
+      const service = new WorkspaceSyncService(profiles as never, codex as never);
+      await expect(service.sync()).resolves.toMatchObject({
+        selectedThreadId: "thread-1",
+        historyCount: 1,
+        fileCount: 1,
+      });
+
+      expect(listMessages).toHaveBeenCalledTimes(2);
+      expect(publishHistory).toHaveBeenCalledWith(
+        "session-1",
+        "member-token",
+        {
+          threadId: "thread-1",
+          history: liveHistory,
+        },
+      );
+      expect(publishSnapshot).not.toHaveBeenCalled();
+
+      await service.sync();
+
+      expect(publishSnapshot).toHaveBeenCalledOnce();
+      expect(publishSnapshot).toHaveBeenCalledWith(
+        "session-1",
+        "member-token",
+        expect.objectContaining({
+          threadId: "thread-1",
+          history: liveHistory,
+        }),
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });
 

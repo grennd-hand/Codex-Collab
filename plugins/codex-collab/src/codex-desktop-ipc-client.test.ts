@@ -83,6 +83,17 @@ describe("Codex Desktop IPC client", () => {
         conversationId: "thread-1",
         turnStartParams: {
           input: [{ type: "text", text: "Continue", text_elements: [] }],
+          model: "gpt-5.6-luna",
+          effort: "low",
+          collaborationMode: {
+            mode: "default",
+            settings: {
+              model: "gpt-5.6-luna",
+              reasoning_effort: "low",
+              developer_instructions: null,
+            },
+          },
+          clientUserMessageId: "prompt-luna",
         },
       }),
     ).resolves.toEqual({ result: { turn: { id: "turn-1" } } });
@@ -101,6 +112,20 @@ describe("Codex Desktop IPC client", () => {
       method: "thread-follower-start-turn",
       params: {
         conversationId: "thread-1",
+        turnStartParams: {
+          input: [{ type: "text", text: "Continue", text_elements: [] }],
+          model: "gpt-5.6-luna",
+          effort: "low",
+          collaborationMode: {
+            mode: "default",
+            settings: {
+              model: "gpt-5.6-luna",
+              reasoning_effort: "low",
+              developer_instructions: null,
+            },
+          },
+          clientUserMessageId: "prompt-luna",
+        },
       },
     });
   });

@@ -89,6 +89,7 @@ export async function forwardNextCodexPrompt(
           ),
           codexOptions: pendingPrompt.codexOptions ?? {
             accessMode: "follow-desktop",
+            customPermissions: null,
             model: null,
             reasoningEffort: "follow-desktop",
             speed: "follow-desktop",
@@ -201,6 +202,7 @@ export class WorkspaceSyncService {
   private active = false;
   private forwarding: Promise<string | null> | null = null;
   private marker: WorkspaceSyncMarker | null = null;
+  private filesDirty = false;
 
   constructor(
     private readonly profiles: LocalProfileStore,
@@ -251,6 +253,8 @@ export class WorkspaceSyncService {
       const relay = new RelayClient(profile.relayUrl);
       const workspace = await relay.getWorkspace(profile.sessionId, profile.memberToken);
       if (!workspace.selectedThreadId) {
+        this.marker = null;
+        this.filesDirty = false;
         return {
           selectedThreadId: workspace.selectedThreadId,
           syncedAt: workspace.syncedAt,
@@ -290,6 +294,7 @@ export class WorkspaceSyncService {
         profile.memberToken,
         runtimeBusy || Boolean(forwardedCommandId) ? "running" : "idle",
       );
+      const runtimeRunning = runtimeBusy || Boolean(forwardedCommandId);
 
       const revision = await readCodexThreadRevision(selectedLocalThread);
       const syncState = {
@@ -300,7 +305,9 @@ export class WorkspaceSyncService {
         revision,
         marker: this.marker,
       };
-      if (!shouldReadWorkspaceHistory(syncState)) {
+      const historyChanged = shouldReadWorkspaceHistory(syncState);
+      const shouldFinalizeFiles = !runtimeRunning && this.filesDirty;
+      if (!historyChanged && !shouldFinalizeFiles) {
         return {
           selectedThreadId: workspace.selectedThreadId,
           syncedAt: workspace.syncedAt,
@@ -309,12 +316,17 @@ export class WorkspaceSyncService {
         };
       }
 
-      const history = await this.codex.readThreadHistory(
-        workspace.selectedThreadId,
-        selectedLocalThread.path,
-      );
+      const history = historyChanged
+        ? await this.codex.readThreadHistory(
+            workspace.selectedThreadId,
+            selectedLocalThread.path,
+          )
+        : workspace.history;
       const historyDigest = workspaceHistoryDigest(history);
-      if (!shouldPublishWorkspaceSnapshot(syncState, historyDigest)) {
+      const historyNeedsPublish =
+        historyChanged &&
+        shouldPublishWorkspaceSnapshot(syncState, historyDigest);
+      if (!historyNeedsPublish && !shouldFinalizeFiles) {
         this.marker = {
           sessionId: profile.sessionId,
           threadId: workspace.selectedThreadId,
@@ -326,6 +338,31 @@ export class WorkspaceSyncService {
           syncedAt: workspace.syncedAt,
           historyCount: workspace.history.length,
           fileCount: workspace.files.length,
+        };
+      }
+
+      if (runtimeRunning && workspace.syncedAt && !force) {
+        const imported = await relay.publishWorkspaceHistory(
+          profile.sessionId,
+          profile.memberToken,
+          {
+            threadId: workspace.selectedThreadId,
+            history,
+          },
+        );
+        this.marker = {
+          sessionId: profile.sessionId,
+          threadId: workspace.selectedThreadId,
+          revision,
+          historyDigest,
+        };
+        this.filesDirty = true;
+        await this.profiles.update({ threadId: workspace.selectedThreadId });
+        return {
+          selectedThreadId: imported.selectedThreadId,
+          syncedAt: imported.syncedAt,
+          historyCount: imported.history.length,
+          fileCount: imported.files.length,
         };
       }
 
@@ -353,6 +390,7 @@ export class WorkspaceSyncService {
         revision,
         historyDigest,
       };
+      this.filesDirty = runtimeRunning;
       await this.profiles.update({ threadId: workspace.selectedThreadId });
       return {
         selectedThreadId: imported.selectedThreadId,

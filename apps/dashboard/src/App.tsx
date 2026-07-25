@@ -1,8 +1,4 @@
 import {
-  Accordion,
-  AccordionHeader,
-  AccordionItem,
-  AccordionPanel,
   Avatar,
   Badge,
   Button,
@@ -30,6 +26,7 @@ import {
   type BrandVariants,
 } from "@fluentui/react-components";
 import {
+  ArrowDownloadRegular,
   ArrowSyncRegular,
   AttachRegular,
   BotRegular,
@@ -55,12 +52,22 @@ import {
   WeatherMoonRegular,
   WeatherSunnyRegular,
 } from "@fluentui/react-icons";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import type {
   AccountProfileResponse,
   AccountRoom,
-  CodexModelId,
   CodexAccessMode,
+  CodexRecordEntry,
+  CodexCustomApprovalPolicy,
+  CodexCustomFileAccess,
+  CodexModelId,
   CodexPromptOptions,
   CodexReasoningEffort,
   CodexRuntimeStatus,
@@ -71,6 +78,7 @@ import type {
   JoinInviteResponse,
   Member,
   Message,
+  MessageAttachment,
   MessageAttachmentInput,
   MessageKind,
   RealtimeEnvelope,
@@ -80,14 +88,23 @@ import type {
 } from "@codex-collab/protocol";
 import {
   CODEX_MODEL_OPTIONS,
+  DEFAULT_CODEX_CUSTOM_PERMISSIONS,
+  codexModelSupportsFast,
+  codexModelSupportsImages,
+  codexModelSupportsReasoningEffort,
+  getCodexModelOption,
   normalizeCodexModelId,
 } from "@codex-collab/protocol";
 import { copyText } from "./clipboard.js";
 import {
   buildUnifiedTimeline,
-  executionDetailLabel,
   splitConversationMessages,
 } from "./imported-timeline.js";
+import {
+  parseReadableBlocks,
+  presentExecutionEntry,
+  type ExecutionStatus,
+} from "./readable-output.js";
 import {
   setupSubmissionMode,
   shouldRestoreCredential,
@@ -255,16 +272,318 @@ type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
 
 const defaultCodexOptions: CodexPromptOptions = {
   accessMode: "follow-desktop",
+  customPermissions: null,
   model: null,
   reasoningEffort: "follow-desktop",
   speed: "follow-desktop",
   planMode: false,
 };
 
+const reasoningEffortOrder: Exclude<
+  CodexReasoningEffort,
+  "follow-desktop"
+>[] = ["low", "medium", "high", "xhigh", "max", "ultra"];
+const reasoningEffortLabels: Record<
+  Exclude<CodexReasoningEffort, "follow-desktop">,
+  string
+> = {
+  low: "轻度",
+  medium: "中",
+  high: "高",
+  xhigh: "极高",
+  max: "最大",
+  ultra: "超强",
+};
+const accessModes = new Set<CodexAccessMode>([
+  "follow-desktop",
+  "request-approval",
+  "auto",
+  "full-access",
+  "custom",
+]);
+const reasoningEfforts = new Set<CodexReasoningEffort>([
+  "follow-desktop",
+  ...reasoningEffortOrder,
+]);
+const speeds = new Set<CodexSpeed>(["follow-desktop", "standard", "fast"]);
+const customFileAccessModes = new Set<CodexCustomFileAccess>([
+  "read-only",
+  "workspace-write",
+  "full-access",
+]);
+const customApprovalPolicies = new Set<CodexCustomApprovalPolicy>([
+  "on-request",
+  "never",
+]);
+
+export function normalizeCodexOptionsForUi(value: unknown): CodexPromptOptions {
+  const record =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const accessMode =
+    typeof record.accessMode === "string" &&
+    accessModes.has(record.accessMode as CodexAccessMode)
+      ? (record.accessMode as CodexAccessMode)
+      : defaultCodexOptions.accessMode;
+  const model =
+    typeof record.model === "string" ? normalizeCodexModelId(record.model) : null;
+  let reasoningEffort =
+    typeof record.reasoningEffort === "string" &&
+    reasoningEfforts.has(record.reasoningEffort as CodexReasoningEffort)
+      ? (record.reasoningEffort as CodexReasoningEffort)
+      : defaultCodexOptions.reasoningEffort;
+  let speed =
+    typeof record.speed === "string" && speeds.has(record.speed as CodexSpeed)
+      ? (record.speed as CodexSpeed)
+      : defaultCodexOptions.speed;
+
+  if (!codexModelSupportsReasoningEffort(model, reasoningEffort)) {
+    const requestedIndex = reasoningEffortOrder.indexOf(
+      reasoningEffort as Exclude<CodexReasoningEffort, "follow-desktop">,
+    );
+    reasoningEffort =
+      reasoningEffortOrder
+        .slice(0, Math.max(requestedIndex, 0) + 1)
+        .reverse()
+        .find((candidate) => codexModelSupportsReasoningEffort(model, candidate)) ??
+      "medium";
+  }
+  if (speed === "fast" && !codexModelSupportsFast(model)) {
+    speed = "standard";
+  }
+
+  const customRecord =
+    record.customPermissions &&
+    typeof record.customPermissions === "object" &&
+    !Array.isArray(record.customPermissions)
+      ? (record.customPermissions as Record<string, unknown>)
+      : {};
+  const fileAccess =
+    typeof customRecord.fileAccess === "string" &&
+    customFileAccessModes.has(customRecord.fileAccess as CodexCustomFileAccess)
+      ? (customRecord.fileAccess as CodexCustomFileAccess)
+      : DEFAULT_CODEX_CUSTOM_PERMISSIONS.fileAccess;
+  const approvalPolicy =
+    typeof customRecord.approvalPolicy === "string" &&
+    customApprovalPolicies.has(
+      customRecord.approvalPolicy as CodexCustomApprovalPolicy,
+    )
+      ? (customRecord.approvalPolicy as CodexCustomApprovalPolicy)
+      : DEFAULT_CODEX_CUSTOM_PERMISSIONS.approvalPolicy;
+
+  return {
+    accessMode,
+    customPermissions:
+      accessMode === "custom" ? { fileAccess, approvalPolicy } : null,
+    model,
+    reasoningEffort,
+    speed,
+    planMode: record.planMode === true,
+  };
+}
+
+export function filterUnsupportedImageAttachments<
+  T extends { file: { type: string } },
+>(model: CodexModelId | null, attachments: readonly T[]): T[] {
+  return codexModelSupportsImages(model)
+    ? [...attachments]
+    : attachments.filter((attachment) => !attachment.file.type.startsWith("image/"));
+}
+
+export function chatMessageBody(draft: string, attachmentCount: number): string {
+  const body = draft.trim();
+  return body || (attachmentCount > 0 ? `发送了 ${attachmentCount} 个附件` : "");
+}
+
+type ComposerControl = Pick<
+  HTMLInputElement | HTMLTextAreaElement,
+  "disabled" | "focus" | "setSelectionRange" | "value"
+>;
+
+export function restoreComposerControlFocus(
+  control: ComposerControl | null,
+  schedule: (callback: FrameRequestCallback) => number = (callback) =>
+    window.requestAnimationFrame(callback),
+): void {
+  schedule(() => {
+    if (!control || control.disabled) return;
+    control.focus();
+    const cursorPosition = control.value.length;
+    control.setSelectionRange(cursorPosition, cursorPosition);
+  });
+}
+
 function formatFileSize(size: number): string {
   if (size < 1_000) return `${size} B`;
   if (size < 1_000_000) return `${Math.round(size / 1_000)} KB`;
   return `${(size / 1_000_000).toFixed(1)} MB`;
+}
+
+function renderInlineText(text: string): ReactNode[] {
+  const pattern =
+    /(`[^`\n]+`|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\(https?:\/\/[^\s)]+\))/g;
+  return text.split(pattern).filter(Boolean).map((part, index) => {
+    const link = part.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/);
+    if (link) {
+      return (
+        <a
+          href={link[2]}
+          key={`${index}-${part}`}
+          rel="noreferrer"
+          target="_blank"
+        >
+          {link[1]}
+        </a>
+      );
+    }
+    if (part.startsWith("`") && part.endsWith("`")) {
+      return <code key={`${index}-${part}`}>{part.slice(1, -1)}</code>;
+    }
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <strong key={`${index}-${part}`}>{part.slice(2, -2)}</strong>;
+    }
+    return part;
+  });
+}
+
+function ReadableOutput({ text }: { text: string }) {
+  const blocks = parseReadableBlocks(text);
+  return (
+    <div className="readable-output">
+      {blocks.map((block, index) => {
+        const key = `${block.kind}-${index}`;
+        if (block.kind === "heading") {
+          return block.level === 3 ? (
+            <h4 key={key}>{renderInlineText(block.text)}</h4>
+          ) : (
+            <h3 className={`level-${block.level}`} key={key}>
+              {renderInlineText(block.text)}
+            </h3>
+          );
+        }
+        if (block.kind === "unordered-list") {
+          return (
+            <ul key={key}>
+              {block.items.map((item, itemIndex) => (
+                <li key={`${itemIndex}-${item}`}>{renderInlineText(item)}</li>
+              ))}
+            </ul>
+          );
+        }
+        if (block.kind === "ordered-list") {
+          return (
+            <ol key={key}>
+              {block.items.map((item, itemIndex) => (
+                <li key={`${itemIndex}-${item}`}>{renderInlineText(item)}</li>
+              ))}
+            </ol>
+          );
+        }
+        if (block.kind === "quote") {
+          return <blockquote key={key}>{renderInlineText(block.text)}</blockquote>;
+        }
+        if (block.kind === "code") {
+          return (
+            <div className="readable-code" key={key}>
+              {block.language ? <span>{block.language}</span> : null}
+              <pre>{block.text}</pre>
+            </div>
+          );
+        }
+        return <p key={key}>{renderInlineText(block.text)}</p>;
+      })}
+    </div>
+  );
+}
+
+function executionStatusLabel(status: ExecutionStatus): string {
+  switch (status) {
+    case "running":
+      return "进行中";
+    case "completed":
+      return "已完成";
+    case "failed":
+      return "失败";
+    default:
+      return "已记录";
+  }
+}
+
+function ExecutionProcess({ entries }: { entries: CodexRecordEntry[] }) {
+  const records = entries.map(presentExecutionEntry);
+  const runningCount = records.filter((record) => record.status === "running").length;
+  return (
+    <section className="execution-process" aria-label="任务过程">
+      <header className="execution-process-heading">
+        <div>
+          <HistoryRegular aria-hidden="true" />
+          <strong>任务过程</strong>
+        </div>
+        <span>
+          {runningCount > 0 ? `${runningCount} 个步骤进行中` : `${records.length} 个步骤`}
+        </span>
+      </header>
+      <div className="execution-step-list">
+        {records.map((record) => (
+          <article
+            className={`execution-step ${record.role} ${record.status}`}
+            key={`codex-${record.id}`}
+          >
+            <div className="execution-step-marker" aria-hidden="true">
+              {record.role === "command" ? (
+                <DocumentRegular />
+              ) : (
+                <HistoryRegular />
+              )}
+            </div>
+            <div className="execution-step-content">
+              <header>
+                <div>
+                  <strong>{record.title}</strong>
+                  <span className={`execution-state ${record.status}`}>
+                    {executionStatusLabel(record.status)}
+                  </span>
+                </div>
+                {record.createdAt ? (
+                  <time dateTime={record.createdAt}>
+                    {timeLabel(record.createdAt)}
+                  </time>
+                ) : null}
+              </header>
+              <p className="execution-step-summary">{record.summary}</p>
+              {record.input ? (
+                record.role === "reasoning" ? (
+                  <ReadableOutput text={record.input} />
+                ) : (
+                  <div className="execution-input">
+                    <span>执行内容</span>
+                    <pre>{record.input}</pre>
+                  </div>
+                )
+              ) : null}
+              {record.output ? (
+                record.outputLineCount > 8 ? (
+                  <details
+                    className="execution-output"
+                    open={record.status === "failed" ? true : undefined}
+                  >
+                    <summary>查看完整输出（{record.outputLineCount} 行）</summary>
+                    <pre>{record.output}</pre>
+                  </details>
+                ) : (
+                  <div className="execution-output visible">
+                    <span>输出结果</span>
+                    <pre>{record.output}</pre>
+                  </div>
+                )
+              ) : null}
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 function fileToBase64(file: File): Promise<string> {
@@ -292,6 +611,127 @@ async function serializeAttachment(
     size: attachment.file.size,
     dataBase64: await fileToBase64(attachment.file),
   };
+}
+
+async function fetchMessageAttachment(
+  sessionId: string,
+  messageId: string,
+  attachmentId: string,
+  token: string,
+  signal?: AbortSignal,
+): Promise<Blob> {
+  const response = await fetch(
+    `/v1/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(
+      messageId,
+    )}/attachments/${encodeURIComponent(attachmentId)}`,
+    {
+      headers: { authorization: `Bearer ${token}` },
+      signal,
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`附件读取失败（HTTP ${response.status}）`);
+  }
+  return response.blob();
+}
+
+function PeerChatAttachment(props: {
+  sessionId: string;
+  messageId: string;
+  attachment: MessageAttachment;
+  token: string;
+  onError(error: unknown): void;
+}) {
+  const { sessionId, messageId, attachment, token, onError } = props;
+  const isImage = attachment.mediaType.startsWith("image/");
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewFailed, setPreviewFailed] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+
+  useEffect(() => {
+    if (!isImage) return;
+    const controller = new AbortController();
+    let objectUrl: string | null = null;
+    void fetchMessageAttachment(
+      sessionId,
+      messageId,
+      attachment.id,
+      token,
+      controller.signal,
+    )
+      .then((blob) => {
+        objectUrl = URL.createObjectURL(blob);
+        setPreviewUrl(objectUrl);
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        setPreviewFailed(true);
+        onError(error);
+      });
+    return () => {
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [attachment.id, isImage, messageId, onError, sessionId, token]);
+
+  const download = async () => {
+    setDownloading(true);
+    try {
+      const blob = await fetchMessageAttachment(
+        sessionId,
+        messageId,
+        attachment.id,
+        token,
+      );
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = attachment.name;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+    } catch (error) {
+      onError(error);
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  return (
+    <div className={`peer-chat-attachment ${isImage ? "image" : "file"}`}>
+      {isImage ? (
+        <div className="peer-chat-image-preview">
+          {previewUrl ? (
+            <img src={previewUrl} alt={attachment.name} />
+          ) : previewFailed ? (
+            <span>图片预览不可用</span>
+          ) : (
+            <Skeleton aria-label="正在加载图片预览">
+              <SkeletonItem />
+            </Skeleton>
+          )}
+        </div>
+      ) : null}
+      <div className="peer-chat-attachment-row">
+        <AttachRegular aria-hidden="true" />
+        <div>
+          <strong title={attachment.name}>{attachment.name}</strong>
+          <small>{formatFileSize(attachment.size)}</small>
+        </div>
+        <Button
+          type="button"
+          appearance="subtle"
+          size="small"
+          icon={<ArrowDownloadRegular />}
+          disabled={downloading}
+          title={`下载 ${attachment.name}`}
+          aria-label={`下载 ${attachment.name}`}
+          onClick={() => void download()}
+        />
+      </div>
+    </div>
+  );
 }
 
 function deliveryStatusLabel(message: Message): string | null {
@@ -416,25 +856,35 @@ export function App() {
   const [joinToken, setJoinToken] = useState(initialInviteToken);
   const [draft, setDraft] = useState("");
   const [chatDraft, setChatDraft] = useState("");
+  const [pendingChatAttachments, setPendingChatAttachments] = useState<
+    PendingAttachment[]
+  >([]);
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [codexOptions, setCodexOptions] =
     useState<CodexPromptOptions>(defaultCodexOptions);
   const [membersExpanded, setMembersExpanded] = useState(true);
   const [dictating, setDictating] = useState(false);
+  const [draggingChatFiles, setDraggingChatFiles] = useState(false);
   const [draggingFiles, setDraggingFiles] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [messageStreamPinned, setMessageStreamPinned] = useState(true);
   const [roomStatusUpdating, setRoomStatusUpdating] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() =>
     window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light",
   );
   const messageStreamRef = useRef<HTMLElement>(null);
+  const messageStreamPinnedRef = useRef(true);
   const chatStreamRef = useRef<HTMLDivElement>(null);
   const inviteLinkRef = useRef<HTMLInputElement>(null);
   const pairingTokenRef = useRef<HTMLInputElement>(null);
+  const chatInputRef = useRef<HTMLInputElement>(null);
+  const codexTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const chatAttachmentInputRef = useRef<HTMLInputElement>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const speechRecognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const loadedComposerKeyRef = useRef<string | null>(null);
   const linkedRoomKeyRef = useRef<string | null>(null);
+  const workspaceRefreshSequenceRef = useRef(0);
 
   const session = credential?.session ?? null;
   const member = credential?.member ?? null;
@@ -474,6 +924,7 @@ export function App() {
       setMembers([]);
       setMessages([]);
       setWorkspaceSummary(null);
+      workspaceRefreshSequenceRef.current += 1;
       setConversationLoading(false);
       setLoading(false);
       setWorkspaceLoading(false);
@@ -488,7 +939,10 @@ export function App() {
       setCopyFailed(false);
       setDraft("");
       setChatDraft("");
+      setPendingChatAttachments([]);
       setPendingAttachments([]);
+      setMessageStreamPinned(true);
+      messageStreamPinnedRef.current = true;
       setJoinToken("");
       setError(null);
       setConnection("ready");
@@ -517,6 +971,15 @@ export function App() {
       pushActivity("操作未完成", message, "danger");
     },
     [clearSessionState, pushActivity],
+  );
+
+  const showAttachmentError = useCallback(
+    (caught: unknown) => {
+      const message = caught instanceof Error ? caught.message : "附件读取失败";
+      setError(message);
+      pushActivity("附件读取失败", message, "warning");
+    },
+    [pushActivity],
   );
 
   const saveCredential = useCallback((next: SavedCredential) => {
@@ -638,10 +1101,14 @@ export function App() {
     if (!session || !token || !approved) {
       return null;
     }
+    const requestSequence = ++workspaceRefreshSequenceRef.current;
     const result = await requestJson<{ workspace: WorkspaceSummary }>(
       `/v1/sessions/${session.id}/workspace`,
       { headers: authHeaders() },
     );
+    if (requestSequence !== workspaceRefreshSequenceRef.current) {
+      return result.workspace;
+    }
     setWorkspaceSummary(result.workspace);
     setConversationLoading(workspaceNeedsConversationLoad(result.workspace));
     setSelectedFile((current) =>
@@ -656,6 +1123,7 @@ export function App() {
     if (!session || !token || !approved) {
       return;
     }
+    const workspaceRequestSequence = ++workspaceRefreshSequenceRef.current;
     setLoading(true);
     try {
       const [messageResult, memberResult, meResult, workspaceResult] = await Promise.all([
@@ -680,8 +1148,10 @@ export function App() {
       ]);
       setMessages(messageResult.messages);
       setMembers(memberResult.members);
-      setWorkspaceSummary(workspaceResult.workspace);
-      setConversationLoading(workspaceNeedsConversationLoad(workspaceResult.workspace));
+      if (workspaceRequestSequence === workspaceRefreshSequenceRef.current) {
+        setWorkspaceSummary(workspaceResult.workspace);
+        setConversationLoading(workspaceNeedsConversationLoad(workspaceResult.workspace));
+      }
       if (
         meResult.member.status !== member.status ||
         meResult.session.roomStatus !== session.roomStatus
@@ -747,17 +1217,7 @@ export function App() {
           typeof saved.codexOptions === "object" &&
           !Array.isArray(saved.codexOptions)
         ) {
-          const restoredOptions = saved.codexOptions as Partial<CodexPromptOptions> & {
-            model?: unknown;
-          };
-          setCodexOptions({
-            ...defaultCodexOptions,
-            ...restoredOptions,
-            model:
-              typeof restoredOptions.model === "string"
-                ? normalizeCodexModelId(restoredOptions.model)
-                : null,
-          });
+          setCodexOptions(normalizeCodexOptionsForUi(saved.codexOptions));
         } else {
           setCodexOptions(defaultCodexOptions);
         }
@@ -766,6 +1226,7 @@ export function App() {
         setChatDraft("");
         setCodexOptions(defaultCodexOptions);
       }
+      setPendingChatAttachments([]);
       setPendingAttachments([]);
       return;
     }
@@ -784,7 +1245,7 @@ export function App() {
 
   useEffect(() => {
     const stream = messageStreamRef.current;
-    if (stream) {
+    if (stream && messageStreamPinnedRef.current) {
       stream.scrollTop = stream.scrollHeight;
     }
     const chatStream = chatStreamRef.current;
@@ -795,6 +1256,7 @@ export function App() {
     messages,
     workspaceSummary?.codexRuntimeStatus,
     workspaceSummary?.history.length,
+    workspaceSummary?.history.at(-1)?.text,
   ]);
 
   useEffect(() => {
@@ -1021,6 +1483,7 @@ export function App() {
       setWorkspaceSummary(null);
       setSelectedFile(null);
       setInviteLink("");
+      setPendingChatAttachments([]);
       setPendingAttachments([]);
       setCredentialValidated(true);
       setConversationLoading(result.member.status === "approved");
@@ -1148,12 +1611,60 @@ export function App() {
     void createSession();
   };
 
+  const addChatAttachments = (files: FileList | File[]) => {
+    if (!roomOpen) return;
+    const incoming = Array.from(files);
+    if (incoming.length === 0) return;
+    const next = [...pendingChatAttachments];
+    for (const file of incoming) {
+      if (file.size === 0) {
+        setError(`空文件无法发送：${file.name}`);
+        continue;
+      }
+      if (file.size > maxAttachmentSize) {
+        setError(`${file.name} 超过 4 MB 单文件限制`);
+        continue;
+      }
+      if (
+        next.some(
+          (item) =>
+            item.file.name === file.name &&
+            item.file.size === file.size &&
+            item.file.lastModified === file.lastModified,
+        )
+      ) {
+        continue;
+      }
+      if (next.length >= maxAttachmentCount) {
+        setError("一次最多发送 8 个附件");
+        break;
+      }
+      if (
+        next.reduce((sum, item) => sum + item.file.size, 0) + file.size >
+        maxAttachmentTotalSize
+      ) {
+        setError("附件总大小不能超过 6 MB");
+        break;
+      }
+      next.push({ id: crypto.randomUUID(), file });
+    }
+    setPendingChatAttachments(next);
+  };
+
   const addAttachments = (files: FileList | File[]) => {
     if (!roomOpen) return;
     const incoming = Array.from(files);
     if (incoming.length === 0) return;
     const next = [...pendingAttachments];
     for (const file of incoming) {
+      if (
+        file.type.startsWith("image/") &&
+        !codexModelSupportsImages(codexOptions.model)
+      ) {
+        const modelLabel = getCodexModelOption(codexOptions.model)?.label ?? "当前模型";
+        setError(`${modelLabel} 仅支持文本，不能添加图片：${file.name}`);
+        continue;
+      }
       if (file.size === 0) {
         setError(`空文件无法发送：${file.name}`);
         continue;
@@ -1231,11 +1742,18 @@ export function App() {
   };
 
   const sendMessage = async (kind: MessageKind) => {
+    const restoreComposerFocus = () => {
+      const control =
+        kind === "chat" ? chatInputRef.current : codexTextareaRef.current;
+      restoreComposerControlFocus(control);
+    };
     const trimmedDraft = kind === "chat" ? chatDraft.trim() : draft.trim();
     const body =
       kind === "codex_stop"
         ? "停止当前 Codex 任务"
-        : trimmedDraft ||
+        : kind === "chat"
+          ? chatMessageBody(chatDraft, pendingChatAttachments.length)
+          : trimmedDraft ||
           (kind === "codex_prompt" && pendingAttachments.length > 0
             ? "请处理所附文件。"
             : "");
@@ -1249,12 +1767,47 @@ export function App() {
     ) {
       return;
     }
+    if (kind === "codex_prompt") {
+      const modelLabel = getCodexModelOption(codexOptions.model)?.label ?? "当前模型";
+      if (
+        pendingAttachments.some((attachment) =>
+          attachment.file.type.startsWith("image/"),
+        ) &&
+        !codexModelSupportsImages(codexOptions.model)
+      ) {
+        setError(`${modelLabel} 仅支持文本，请移除图片后再发送`);
+        restoreComposerFocus();
+        return;
+      }
+      if (
+        !codexModelSupportsReasoningEffort(
+          codexOptions.model,
+          codexOptions.reasoningEffort,
+        )
+      ) {
+        setCodexOptions((current) => normalizeCodexOptionsForUi(current));
+        setError(`${modelLabel} 不支持当前推理强度，已自动调整`);
+        restoreComposerFocus();
+        return;
+      }
+      if (
+        codexOptions.speed === "fast" &&
+        !codexModelSupportsFast(codexOptions.model)
+      ) {
+        setCodexOptions((current) => normalizeCodexOptionsForUi(current));
+        setError(`${modelLabel} 不支持快速模式，已切换为标准速度`);
+        restoreComposerFocus();
+        return;
+      }
+    }
     setSubmitting(true);
     try {
       const attachments =
         kind === "codex_prompt"
           ? await Promise.all(pendingAttachments.map(serializeAttachment))
-          : [];
+          : kind === "chat"
+            ? await Promise.all(pendingChatAttachments.map(serializeAttachment))
+            : [];
       const result = await requestJson<{ message: Message }>(
         `/v1/sessions/${session.id}/messages`,
         {
@@ -1277,12 +1830,14 @@ export function App() {
         pushActivity("停止请求已排队", "Host 将在后台中断当前任务", "warning");
       } else {
         setChatDraft("");
+        setPendingChatAttachments([]);
       }
       setError(null);
     } catch (caught) {
       showError(caught);
     } finally {
       setSubmitting(false);
+      restoreComposerFocus();
     }
   };
 
@@ -1485,10 +2040,26 @@ export function App() {
     messages,
     workspaceSummary?.codexRuntimeStatus,
   );
+  const executionEntryCount = importedHistory.filter(
+    (entry) => entry.role === "reasoning" || entry.role === "command",
+  ).length;
   const canStopCodex = canMemberStopCodex(member, executionPhase);
   const primaryComposerAction = composerPrimaryAction(executionPhase, "codex");
   const primaryStopsCodex = primaryComposerAction === "stop_codex";
+  const canSendChat = Boolean(
+    chatDraft.trim() || pendingChatAttachments.length > 0,
+  );
   const canSendCodex = Boolean(draft.trim() || pendingAttachments.length > 0);
+  const selectedModelOption = getCodexModelOption(codexOptions.model);
+  const selectedModelSupportsFast = codexModelSupportsFast(codexOptions.model);
+  const selectedModelSupportsImages = codexModelSupportsImages(codexOptions.model);
+  const availableReasoningEfforts = selectedModelOption
+    ? reasoningEffortOrder.filter((effort) =>
+        codexModelSupportsReasoningEffort(selectedModelOption.id, effort),
+      )
+    : reasoningEffortOrder;
+  const customPermissions =
+    codexOptions.customPermissions ?? DEFAULT_CODEX_CUSTOM_PERMISSIONS;
 
   return (
     <FluentProvider
@@ -1768,6 +2339,20 @@ export function App() {
                         </div>
                         <div className="peer-chat-bubble">
                           <p>{item.body}</p>
+                          {item.attachments.length > 0 && session && token ? (
+                            <div className="peer-chat-attachments">
+                              {item.attachments.map((attachment) => (
+                                <PeerChatAttachment
+                                  sessionId={session.id}
+                                  messageId={item.id}
+                                  attachment={attachment}
+                                  token={token}
+                                  onError={showAttachmentError}
+                                  key={attachment.id}
+                                />
+                              ))}
+                            </div>
+                          ) : null}
                         </div>
                       </article>
                     );
@@ -1775,34 +2360,108 @@ export function App() {
                 )}
               </div>
               <form
-                className="peer-chat-composer"
+                className={`peer-chat-composer ${draggingChatFiles ? "dragging" : ""}`}
                 onSubmit={(event) => {
                   event.preventDefault();
                   void sendMessage("chat");
                 }}
+                onDragEnter={(event) => {
+                  event.preventDefault();
+                  if (approved && roomOpen) setDraggingChatFiles(true);
+                }}
+                onDragOver={(event) => event.preventDefault()}
+                onDragLeave={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                    setDraggingChatFiles(false);
+                  }
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  setDraggingChatFiles(false);
+                  if (approved && roomOpen) {
+                    addChatAttachments(event.dataTransfer.files);
+                  }
+                }}
               >
-                <Input
-                  value={chatDraft}
-                  aria-label="输入协作聊天消息"
-                  placeholder={
-                    !roomOpen
-                      ? "房间已关闭"
-                      : approved
-                        ? "给协作者发消息"
-                        : "等待批准"
-                  }
+                <input
+                  ref={chatAttachmentInputRef}
+                  className="visually-hidden"
+                  type="file"
+                  multiple
                   disabled={!approved || submitting || !roomOpen}
-                  onChange={(_, data) => setChatDraft(data.value)}
+                  tabIndex={-1}
+                  onChange={(event) => {
+                    if (event.currentTarget.files) {
+                      addChatAttachments(event.currentTarget.files);
+                    }
+                    event.currentTarget.value = "";
+                  }}
                 />
-                <Button
-                  type="submit"
-                  appearance="primary"
-                  icon={<SendRegular />}
-                  aria-label="发送协作聊天消息"
-                  disabled={
-                    !approved || submitting || !roomOpen || !chatDraft.trim()
-                  }
-                />
+                {pendingChatAttachments.length > 0 ? (
+                  <div
+                    className="pending-attachments peer-chat-pending-attachments"
+                    aria-label="待发送聊天附件"
+                  >
+                    {pendingChatAttachments.map((attachment) => (
+                      <span key={attachment.id}>
+                        <AttachRegular aria-hidden="true" />
+                        <span title={attachment.file.name}>{attachment.file.name}</span>
+                        <small>{formatFileSize(attachment.file.size)}</small>
+                        <Button
+                          type="button"
+                          appearance="subtle"
+                          size="small"
+                          icon={<DeleteRegular />}
+                          title={`移除 ${attachment.file.name}`}
+                          aria-label={`移除 ${attachment.file.name}`}
+                          onClick={() =>
+                            setPendingChatAttachments((current) =>
+                              current.filter((item) => item.id !== attachment.id),
+                            )
+                          }
+                        />
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+                <div className="peer-chat-composer-row">
+                  <Button
+                    type="button"
+                    appearance="subtle"
+                    icon={<AttachRegular />}
+                    title="发送文件或图片"
+                    aria-label="发送文件或图片"
+                    disabled={!approved || submitting || !roomOpen}
+                    onClick={() => chatAttachmentInputRef.current?.click()}
+                  />
+                  <Input
+                    ref={chatInputRef}
+                    value={chatDraft}
+                    aria-label="输入协作聊天消息"
+                    placeholder={
+                      !roomOpen
+                        ? "房间已关闭"
+                        : approved
+                          ? "给协作者发消息"
+                          : "等待批准"
+                    }
+                    disabled={!approved || submitting || !roomOpen}
+                    onChange={(_, data) => setChatDraft(data.value)}
+                    onPaste={(event) => {
+                      if (event.clipboardData.files.length > 0) {
+                        event.preventDefault();
+                        addChatAttachments(event.clipboardData.files);
+                      }
+                    }}
+                  />
+                  <Button
+                    type="submit"
+                    appearance="primary"
+                    icon={<SendRegular />}
+                    aria-label="发送协作聊天消息"
+                    disabled={!approved || submitting || !roomOpen || !canSendChat}
+                  />
+                </div>
               </form>
             </section>
           </aside>
@@ -1831,6 +2490,13 @@ export function App() {
               aria-label="Codex 对话"
               aria-busy={conversationLoading}
               ref={messageStreamRef}
+              onScroll={(event) => {
+                const stream = event.currentTarget;
+                const pinned =
+                  stream.scrollHeight - stream.scrollTop - stream.clientHeight < 96;
+                messageStreamPinnedRef.current = pinned;
+                setMessageStreamPinned(pinned);
+              }}
             >
               {conversationLoading ? (
                 <div className="conversation-loading" role="status" aria-live="polite">
@@ -1951,61 +2617,37 @@ export function App() {
                               <BotRegular aria-hidden="true" />
                             ) : null}
                             <div className="message-content">
-                              <p>{entry.text}</p>
+                              {entry.role === "assistant" ? (
+                                <ReadableOutput text={entry.text} />
+                              ) : (
+                                <p>{entry.text}</p>
+                              )}
                             </div>
                           </div>
                         </article>
                       );
                     }
 
-                    return (
-                      <Accordion
-                        className="execution-disclosure"
-                        collapsible
-                        key={item.id}
-                      >
-                        <AccordionItem value={item.id}>
-                          <AccordionHeader>
-                            <div className="execution-summary">
-                              <strong>执行详情</strong>
-                              <span>{executionDetailLabel(item.entries)}</span>
-                            </div>
-                          </AccordionHeader>
-                          <AccordionPanel>
-                            <div className="execution-record-list">
-                              {item.entries.map((entry) => (
-                                <article
-                                  className={`execution-record ${entry.role}`}
-                                  key={`codex-${entry.id}`}
-                                >
-                                  <div className="execution-record-meta">
-                                    {entry.role === "command" ? (
-                                      <DocumentRegular aria-hidden="true" />
-                                    ) : (
-                                      <HistoryRegular aria-hidden="true" />
-                                    )}
-                                    <strong>{recordRoleLabel(entry.role)}</strong>
-                                    {entry.createdAt ? (
-                                      <time dateTime={entry.createdAt}>
-                                        {timeLabel(entry.createdAt)}
-                                      </time>
-                                    ) : null}
-                                  </div>
-                                  {entry.role === "command" ? (
-                                    <pre>{entry.text}</pre>
-                                  ) : (
-                                    <p>{entry.text}</p>
-                                  )}
-                                </article>
-                              ))}
-                            </div>
-                          </AccordionPanel>
-                        </AccordionItem>
-                      </Accordion>
-                    );
+                    return <ExecutionProcess entries={item.entries} key={item.id} />;
                   })}
                 </>
               )}
+              {!messageStreamPinned && hasCodexContent ? (
+                <Button
+                  className="jump-to-latest"
+                  icon={<ChevronDownRegular />}
+                  onClick={() => {
+                    const stream = messageStreamRef.current;
+                    if (!stream) return;
+                    stream.scrollTop = stream.scrollHeight;
+                    messageStreamPinnedRef.current = true;
+                    setMessageStreamPinned(true);
+                  }}
+                  size="small"
+                >
+                  跳到最新
+                </Button>
+              ) : null}
               {!conversationLoading && executionPhase !== "idle" ? (
                 <div
                   className={`codex-execution-status ${executionPhase}`}
@@ -2019,14 +2661,14 @@ export function App() {
                         ? "Codex 指令已排队"
                         : executionPhase === "stopping"
                           ? "正在停止 Codex"
-                          : "Codex 正在执行"}
+                          : "正在实时同步任务过程"}
                     </strong>
                     <span>
                       {executionPhase === "queued"
                         ? "等待共享任务开始执行"
                         : executionPhase === "stopping"
                           ? "停止请求已发送，请稍候"
-                          : "输出会实时同步到当前对话"}
+                          : `已显示 ${executionEntryCount} 条过程记录，新步骤约 1 秒内出现`}
                     </span>
                   </div>
                 </div>
@@ -2075,6 +2717,7 @@ export function App() {
               />
               <div className="composer-surface">
                 <Textarea
+                  ref={codexTextareaRef}
                   value={draft}
                   resize="none"
                   disabled={!approved || submitting || !roomOpen}
@@ -2132,6 +2775,17 @@ export function App() {
                     ))}
                   </div>
                 ) : null}
+                {selectedModelOption &&
+                (!selectedModelSupportsFast || !selectedModelSupportsImages) ? (
+                  <div className="composer-capability-note" role="status">
+                    <strong>{selectedModelOption.label}</strong>
+                    <span>
+                      {!selectedModelSupportsImages
+                        ? "仅支持文本输入，图片会被拦截"
+                        : "不支持快速模式，发送时使用标准速度"}
+                    </span>
+                  </div>
+                ) : null}
 
                 <div className="composer-toolbar">
                   <div className="composer-tools">
@@ -2140,8 +2794,16 @@ export function App() {
                       appearance="subtle"
                       className="stable-icon-button"
                       icon={<AttachRegular />}
-                      title="添加文件或图片"
-                      aria-label="添加文件或图片"
+                      title={
+                        selectedModelSupportsImages
+                          ? "添加文件或图片"
+                          : "添加文本文件（当前模型不支持图片）"
+                      }
+                      aria-label={
+                        selectedModelSupportsImages
+                          ? "添加文件或图片"
+                          : "添加文本文件（当前模型不支持图片）"
+                      }
                       disabled={
                         !approved ||
                         submitting ||
@@ -2171,10 +2833,18 @@ export function App() {
                       }
                       onChange={(_, data) => {
                         const accessMode = data.value as CodexAccessMode;
-                        setCodexOptions((current) => ({
-                          ...current,
-                          accessMode,
-                        }));
+                        setCodexOptions((current) =>
+                          normalizeCodexOptionsForUi({
+                            ...current,
+                            accessMode,
+                            customPermissions:
+                              accessMode === "custom"
+                                ? current.customPermissions ?? {
+                                    ...DEFAULT_CODEX_CUSTOM_PERMISSIONS,
+                                  }
+                                : null,
+                          }),
+                        );
                       }}
                     >
                       <option value="follow-desktop">跟随当前任务权限</option>
@@ -2194,10 +2864,18 @@ export function App() {
                       }
                       onChange={(_, data) => {
                         const model = (data.value || null) as CodexModelId | null;
-                        setCodexOptions((current) => ({
-                          ...current,
+                        setCodexOptions((current) =>
+                          normalizeCodexOptionsForUi({ ...current, model }),
+                        );
+                        const retainedAttachments = filterUnsupportedImageAttachments(
                           model,
-                        }));
+                          pendingAttachments,
+                        );
+                        if (retainedAttachments.length !== pendingAttachments.length) {
+                          setPendingAttachments(retainedAttachments);
+                          const modelLabel = getCodexModelOption(model)?.label ?? "当前模型";
+                          setError(`${modelLabel} 仅支持文本，已移除待发送的图片`);
+                        }
                       }}
                     >
                       <option value="">跟随当前任务模型</option>
@@ -2225,14 +2903,19 @@ export function App() {
                       }}
                     >
                       <option value="follow-desktop">跟随推理强度</option>
-                      <option value="low">轻度</option>
-                      <option value="medium">中</option>
-                      <option value="high">高</option>
-                      <option value="xhigh">极高</option>
+                      {availableReasoningEfforts.map((effort) => (
+                        <option value={effort} key={effort}>
+                          {reasoningEffortLabels[effort]}
+                        </option>
+                      ))}
                     </Select>
                     <Select
                       aria-label="响应速度"
-                      title="响应速度"
+                      title={
+                        selectedModelSupportsFast
+                          ? "响应速度"
+                          : `${selectedModelOption?.label ?? "当前模型"} 不支持快速模式`
+                      }
                       value={codexOptions.speed}
                       disabled={
                         !approved ||
@@ -2249,7 +2932,9 @@ export function App() {
                     >
                       <option value="follow-desktop">跟随速度</option>
                       <option value="standard">标准</option>
-                      <option value="fast">快速</option>
+                      <option value="fast" disabled={!selectedModelSupportsFast}>
+                        快速
+                      </option>
                     </Select>
                     <Checkbox
                       label="计划模式"
@@ -2297,6 +2982,71 @@ export function App() {
                     />
                   </div>
                 </div>
+                {codexOptions.accessMode === "custom" ? (
+                  <div className="custom-permission-panel" aria-label="自定义 Codex 权限">
+                    <Field label="文件访问">
+                      <Select
+                        size="small"
+                        aria-label="自定义文件访问"
+                        value={customPermissions.fileAccess}
+                        disabled={
+                          !approved ||
+                          submitting ||
+                          !roomOpen ||
+                          member?.role !== "owner"
+                        }
+                        onChange={(_, data) => {
+                          const fileAccess = data.value as CodexCustomFileAccess;
+                          setCodexOptions((current) => ({
+                            ...current,
+                            customPermissions: {
+                              ...(current.customPermissions ??
+                                DEFAULT_CODEX_CUSTOM_PERMISSIONS),
+                              fileAccess,
+                            },
+                          }));
+                        }}
+                      >
+                        <option value="read-only">默认只读</option>
+                        <option value="workspace-write">工作区可写</option>
+                        <option value="full-access">完全访问</option>
+                      </Select>
+                    </Field>
+                    <Field label="批准方式">
+                      <Select
+                        size="small"
+                        aria-label="自定义批准方式"
+                        value={customPermissions.approvalPolicy}
+                        disabled={
+                          !approved ||
+                          submitting ||
+                          !roomOpen ||
+                          member?.role !== "owner"
+                        }
+                        onChange={(_, data) => {
+                          const approvalPolicy =
+                            data.value as CodexCustomApprovalPolicy;
+                          setCodexOptions((current) => ({
+                            ...current,
+                            customPermissions: {
+                              ...(current.customPermissions ??
+                                DEFAULT_CODEX_CUSTOM_PERMISSIONS),
+                              approvalPolicy,
+                            },
+                          }));
+                        }}
+                      >
+                        <option value="on-request">需要时请求批准</option>
+                        <option value="never">不再请求批准</option>
+                      </Select>
+                    </Field>
+                    <p>
+                      {customPermissions.approvalPolicy === "on-request"
+                        ? "默认按所选文件范围执行，需要越权时仍会请求房主批准。"
+                        : "按所选文件范围自动执行，不会请求额外批准。"}
+                    </p>
+                  </div>
+                ) : null}
               </div>
             </form>
           </main>

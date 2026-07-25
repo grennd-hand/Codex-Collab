@@ -46,6 +46,28 @@ describe("SessionStore", () => {
         {
           codexOptions: {
             accessMode: "full-access",
+            customPermissions: null,
+            model: null,
+            reasoningEffort: "follow-desktop",
+            speed: "follow-desktop",
+            planMode: false,
+          },
+        },
+      ),
+    ).toThrowError(/owner/i);
+    expect(() =>
+      store.addMessage(
+        created.session.id,
+        joined.memberToken,
+        "codex_prompt",
+        "Try custom permissions",
+        {
+          codexOptions: {
+            accessMode: "custom",
+            customPermissions: {
+              fileAccess: "workspace-write",
+              approvalPolicy: "on-request",
+            },
             model: null,
             reasoningEffort: "follow-desktop",
             speed: "follow-desktop",
@@ -211,7 +233,11 @@ describe("SessionStore", () => {
           },
         ],
         codexOptions: {
-          accessMode: "full-access",
+          accessMode: "custom",
+          customPermissions: {
+            fileAccess: "workspace-write",
+            approvalPolicy: "on-request",
+          },
           model: "gpt-5.6-sol",
           reasoningEffort: "xhigh",
           speed: "fast",
@@ -223,6 +249,10 @@ describe("SessionStore", () => {
     expect(message.deliveryStatus).toBe("queued");
     expect(message.attachments).toHaveLength(1);
     expect(message.codexOptions?.model).toBe("gpt-5.6-sol");
+    expect(message.codexOptions?.customPermissions).toEqual({
+      fileAccess: "workspace-write",
+      approvalPolicy: "on-request",
+    });
     const attachment = message.attachments[0]!;
     expect(
       Buffer.from(
@@ -256,6 +286,60 @@ describe("SessionStore", () => {
     expect(completed.deliveryStatus).toBe("completed");
     expect(completed.codexTurnId).toBe("turn-1");
     expect(completed.completedAt).not.toBeNull();
+  });
+
+  it("stores member chat files and rejects attachments on stop commands", () => {
+    const store = createStore();
+    const created = store.createSession("Chat files", "Owner");
+    const content = new TextEncoder().encode("shared in chat");
+    const message = store.addMessage(
+      created.session.id,
+      created.memberToken,
+      "chat",
+      "请看这个文件",
+      {
+        attachments: [
+          {
+            name: "chat-note.txt",
+            mediaType: "text/plain",
+            size: content.length,
+            content,
+          },
+        ],
+      },
+    );
+
+    expect(message.attachments).toHaveLength(1);
+    expect(message.deliveryStatus).toBeNull();
+    expect(
+      new TextDecoder().decode(
+        store.getMessageAttachment(
+          created.session.id,
+          created.memberToken,
+          message.id,
+          message.attachments[0]!.id,
+        ).content,
+      ),
+    ).toBe("shared in chat");
+
+    expect(() =>
+      store.addMessage(
+        created.session.id,
+        created.memberToken,
+        "codex_stop",
+        "Stop",
+        {
+          attachments: [
+            {
+              name: "blocked.txt",
+              mediaType: "text/plain",
+              size: content.length,
+              content,
+            },
+          ],
+        },
+      ),
+    ).toThrowError(/attachments/i);
   });
 
   it("does not store bearer tokens in plaintext", () => {
@@ -482,6 +566,64 @@ describe("SessionStore", () => {
     expect(() =>
       store.selectWorkspaceThread(created.session.id, guest.memberToken, "thread-1"),
     ).toThrowError(/owner/i);
+  });
+
+  it("updates live task history without replacing the shared file snapshot", () => {
+    const store = createStore();
+    const created = store.createSession("Live room", "Owner");
+    const pairing = store.createHostPairing(created.session.id, created.memberToken, 10);
+    const host = store.claimHostPairing(pairing.pairingToken, "Owner PC", "Project");
+    store.publishWorkspaceCatalog(created.session.id, host.memberToken, {
+      deviceLabel: "Owner PC",
+      rootLabel: "Project",
+      threads: [{ id: "thread-1", name: "Live task", preview: "", updatedAt: 1 }],
+    });
+    store.selectWorkspaceThread(created.session.id, created.memberToken, "thread-1");
+    store.publishWorkspaceSnapshot(created.session.id, host.memberToken, {
+      threadId: "thread-1",
+      history: [],
+      files: [
+        {
+          path: "README.md",
+          content: "keep me",
+          size: 7,
+          modifiedAt: "2026-07-25T00:00:00.000Z",
+          sha256: "b".repeat(64),
+        },
+      ],
+    });
+
+    const workspace = store.publishWorkspaceHistory(
+      created.session.id,
+      host.memberToken,
+      {
+        threadId: "thread-1",
+        history: [
+          {
+            id: "call-1",
+            role: "command",
+            text: "tool: exec_command\nstatus: running\ninput:\nnpm test",
+            createdAt: "2026-07-25T00:00:01.000Z",
+          },
+        ],
+      },
+    );
+
+    expect(workspace.history[0]?.text).toContain("status: running");
+    expect(workspace.files).toHaveLength(1);
+    expect(
+      store.getWorkspaceFile(
+        created.session.id,
+        created.memberToken,
+        "README.md",
+      ).content,
+    ).toBe("keep me");
+    expect(() =>
+      store.publishWorkspaceHistory(created.session.id, created.memberToken, {
+        threadId: "another-thread",
+        history: [],
+      }),
+    ).toThrowError(/select/i);
   });
 
   it("clears stale imports when the owner selects another Codex task", () => {
