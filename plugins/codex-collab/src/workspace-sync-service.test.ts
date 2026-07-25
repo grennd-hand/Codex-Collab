@@ -383,7 +383,7 @@ describe("Codex prompt forwarding", () => {
       ],
       codexOptions: {
         accessMode: "full-access" as const,
-        model: "5.6 Sol",
+        model: "gpt-5.6-sol",
         reasoningEffort: "high" as const,
         speed: "standard" as const,
         planMode: true,

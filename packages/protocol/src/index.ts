@@ -20,9 +20,28 @@ export type CodexReasoningEffort =
 export type CodexSpeed = "follow-desktop" | "standard" | "fast";
 export type CodexRuntimeStatus = "unavailable" | "idle" | "running";
 
+export const CODEX_MODEL_OPTIONS = [
+  { id: "gpt-5.6-sol", label: "5.6 Sol" },
+  { id: "gpt-5.6-terra", label: "5.6 Terra" },
+  { id: "gpt-5.6-luna", label: "5.6 Luna" },
+  { id: "gpt-5.5", label: "5.5" },
+  { id: "gpt-5.4", label: "5.4" },
+  { id: "gpt-5.4-mini", label: "5.4 Mini" },
+  { id: "gpt-5.3-codex-spark", label: "5.3 Codex Spark" },
+] as const;
+
+export type CodexModelId = (typeof CODEX_MODEL_OPTIONS)[number]["id"];
+
+export function normalizeCodexModelId(value: string): CodexModelId | null {
+  const option = CODEX_MODEL_OPTIONS.find(
+    (candidate) => candidate.id === value || candidate.label === value,
+  );
+  return option?.id ?? null;
+}
+
 export interface CodexPromptOptions {
   accessMode: CodexAccessMode;
-  model: string | null;
+  model: CodexModelId | null;
   reasoningEffort: CodexReasoningEffort;
   speed: CodexSpeed;
   planMode: boolean;

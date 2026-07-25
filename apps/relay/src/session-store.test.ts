@@ -212,7 +212,7 @@ describe("SessionStore", () => {
         ],
         codexOptions: {
           accessMode: "full-access",
-          model: "5.6 Sol",
+          model: "gpt-5.6-sol",
           reasoningEffort: "xhigh",
           speed: "fast",
           planMode: true,
@@ -222,7 +222,7 @@ describe("SessionStore", () => {
 
     expect(message.deliveryStatus).toBe("queued");
     expect(message.attachments).toHaveLength(1);
-    expect(message.codexOptions?.model).toBe("5.6 Sol");
+    expect(message.codexOptions?.model).toBe("gpt-5.6-sol");
     const attachment = message.attachments[0]!;
     expect(
       Buffer.from(

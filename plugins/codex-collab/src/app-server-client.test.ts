@@ -50,7 +50,7 @@ describe("Codex record import", () => {
         ],
         options: {
           accessMode: "full-access",
-          model: "5.6 Sol",
+          model: "gpt-5.6-sol",
           reasoningEffort: "high",
           speed: "fast",
           planMode: true,

@@ -193,7 +193,7 @@ textarea {
   height: calc(100dvh - 106px);
   min-height: 520px;
   display: grid;
-  grid-template-columns: 286px minmax(460px, 1fr) 310px;
+  grid-template-columns: minmax(310px, 340px) minmax(520px, 1fr) 310px;
 }
 
 .people-panel,
@@ -210,6 +210,10 @@ textarea {
 }
 
 .people-panel {
+  padding: 0;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   border-right: 1px solid var(--colorNeutralStroke2);
 }
 
@@ -230,7 +234,8 @@ textarea {
   margin-bottom: 14px;
 }
 
-.panel-heading h2 {
+.panel-heading h2,
+.peer-chat-heading h2 {
   font-size: 15px;
   font-weight: 650;
 }
@@ -250,6 +255,49 @@ textarea {
 .panel-heading span {
   margin: 3px 0 0;
   font-size: 12px;
+}
+
+.member-section {
+  min-height: 0;
+  padding: 14px 20px 16px;
+  border-bottom: 1px solid var(--colorNeutralStroke2);
+  background: var(--colorNeutralBackground2);
+}
+
+.member-panel-heading {
+  margin-bottom: 0;
+}
+
+.member-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.member-heading-actions > span {
+  margin: 0;
+  white-space: nowrap;
+}
+
+.member-collapse-button {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+}
+
+.member-collapse-button svg {
+  transition: transform 120ms ease;
+}
+
+.member-collapse-button.expanded svg {
+  transform: rotate(180deg);
+}
+
+.member-section-body {
+  max-height: min(38dvh, 360px);
+  padding-top: 8px;
+  overflow-y: auto;
 }
 
 .member-list {
@@ -340,6 +388,161 @@ textarea {
   margin: 8px 0 0;
   font-size: 12px;
   line-height: 1.45;
+}
+
+.peer-chat-panel {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  background: var(--colorNeutralBackground1);
+}
+
+.peer-chat-heading {
+  min-height: 66px;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--colorNeutralStroke2);
+}
+
+.peer-chat-heading h2 {
+  margin: 0;
+}
+
+.peer-chat-heading p {
+  margin: 3px 0 0;
+  color: var(--colorNeutralForeground3);
+  font-size: 12px;
+}
+
+.peer-chat-stream {
+  min-height: 0;
+  padding: 14px 12px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--colorBrandBackground) 4%, transparent),
+      transparent 96px
+    ),
+    var(--colorNeutralBackground1);
+}
+
+.peer-chat-empty {
+  min-height: 100%;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  padding: 24px 14px;
+  color: var(--colorNeutralForeground3);
+  text-align: center;
+}
+
+.peer-chat-empty svg {
+  font-size: 24px;
+}
+
+.peer-chat-empty p {
+  max-width: 210px;
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.peer-chat-message {
+  width: 88%;
+  margin: 0 0 14px;
+}
+
+.peer-chat-message.mine {
+  margin-left: auto;
+}
+
+.peer-chat-meta {
+  margin: 0 3px 5px;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.peer-chat-message.mine .peer-chat-meta {
+  grid-template-columns: auto minmax(0, 1fr) 20px;
+}
+
+.peer-chat-message.mine .peer-chat-meta > span:first-child {
+  grid-column: 3;
+  grid-row: 1;
+}
+
+.peer-chat-message.mine .peer-chat-meta strong {
+  grid-column: 2;
+  grid-row: 1;
+  text-align: right;
+}
+
+.peer-chat-message.mine .peer-chat-meta time {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.peer-chat-meta strong {
+  overflow: hidden;
+  color: var(--colorNeutralForeground2);
+  font-size: 11px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.peer-chat-meta time {
+  color: var(--colorNeutralForeground3);
+  font-size: 10px;
+}
+
+.peer-chat-bubble {
+  padding: 9px 11px;
+  color: var(--member-bubble-fg);
+  border: 1px solid var(--member-bubble-border);
+  border-radius: 4px 12px 12px;
+  background: var(--member-bubble-bg);
+}
+
+.peer-chat-message.mine .peer-chat-bubble {
+  border-radius: 12px 4px 12px 12px;
+}
+
+.peer-chat-bubble p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.peer-chat-composer {
+  padding: 10px 12px 12px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  align-items: center;
+  gap: 6px;
+  border-top: 1px solid var(--colorNeutralStroke2);
+  background: var(--colorNeutralBackground1);
+}
+
+.peer-chat-composer .fui-Input {
+  min-width: 0;
+  width: 100%;
+}
+
+.peer-chat-composer button {
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  min-height: 34px;
 }
 
 .chat-panel {
@@ -532,6 +735,16 @@ textarea {
 .imported-message.assistant .message-bubble {
   border-left: 3px solid var(--colorBrandBackground);
   background: var(--colorBrandBackground2);
+}
+
+.message.identity-message .message-bubble {
+  color: var(--member-bubble-fg);
+  border-color: var(--member-bubble-border);
+  background: var(--member-bubble-bg);
+}
+
+.message.identity-message.codex-message .message-bubble {
+  border-left: 3px solid var(--member-bubble-border);
 }
 
 .execution-disclosure {
@@ -796,22 +1009,6 @@ textarea {
   min-height: 30px;
   font-size: 12px;
   white-space: nowrap;
-}
-
-.composer-mode-switch {
-  min-height: 30px;
-  display: inline-flex;
-  align-items: center;
-  overflow: hidden;
-  border: 1px solid var(--colorNeutralStroke1);
-  border-radius: 6px;
-}
-
-.composer-mode-switch button {
-  min-width: 72px;
-  min-height: 28px;
-  border-radius: 0;
-  transition: none;
 }
 
 .composer-actions {
@@ -1302,7 +1499,7 @@ textarea {
   }
 
   .workspace {
-    grid-template-columns: 250px minmax(420px, 1fr);
+    grid-template-columns: 290px minmax(420px, 1fr);
   }
 
   .activity-panel {
@@ -1388,19 +1585,24 @@ textarea {
   }
 
   .people-panel {
-    padding: 12px 14px;
+    height: min(54dvh, 520px);
+    max-height: none;
+    padding: 0;
     border-right: 0;
     border-bottom: 1px solid var(--colorNeutralStroke2);
   }
 
-  .people-panel .panel-heading,
-  .member-list {
-    display: none;
+  .member-section {
+    padding: 10px 14px 12px;
+  }
+
+  .member-section-body {
+    max-height: min(26dvh, 240px);
   }
 
   .handoff-rail {
     min-height: 50px;
-    margin: 0;
+    margin: 12px 0 0;
     padding: 9px 12px 9px 44px;
   }
 
@@ -1415,6 +1617,10 @@ textarea {
 
   .handoff-rail p {
     display: none;
+  }
+
+  .peer-chat-heading {
+    min-height: 58px;
   }
 
   .chat-panel {

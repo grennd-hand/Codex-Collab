@@ -7,12 +7,8 @@ import {
   optionalInteger,
   ProtocolError,
   requiredString,
-  type CodexAccessMode,
-  type CodexPromptOptions,
   type CodexRecordEntry,
-  type CodexReasoningEffort,
   type CodexRuntimeStatus,
-  type CodexSpeed,
   type CodexThreadCatalogEntry,
   type MessageAttachmentInput,
   type MessageDeliveryStatus,
@@ -21,6 +17,7 @@ import {
   type RoomStatus,
   type WorkspaceFileContent,
 } from "@codex-collab/protocol";
+import { parseCodexOptions } from "./codex-options.js";
 import { buildInviteLink, resolveInviteOrigin } from "./invite-link.js";
 import { SessionStore } from "./session-store.js";
 
@@ -218,71 +215,6 @@ function parseWorkspaceFiles(value: unknown): WorkspaceFileContent[] {
       modifiedAt: new Date(modifiedAt).toISOString(),
     };
   });
-}
-
-const allowedAccessModes = new Set<CodexAccessMode>([
-  "follow-desktop",
-  "request-approval",
-  "auto",
-  "full-access",
-  "custom",
-]);
-const allowedReasoningEfforts = new Set<CodexReasoningEffort>([
-  "follow-desktop",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-]);
-const allowedSpeeds = new Set<CodexSpeed>([
-  "follow-desktop",
-  "standard",
-  "fast",
-]);
-const allowedModels = new Set([
-  "5.6 Sol",
-  "5.6 Terra",
-  "5.6 Luna",
-  "5.5",
-  "5.4",
-  "5.4 Mini",
-  "5.3 Codex Spark",
-]);
-
-function parseCodexOptions(value: unknown): CodexPromptOptions {
-  const record =
-    value && typeof value === "object" && !Array.isArray(value)
-      ? (value as Record<string, unknown>)
-      : {};
-  const accessMode =
-    typeof record.accessMode === "string" &&
-    allowedAccessModes.has(record.accessMode as CodexAccessMode)
-      ? (record.accessMode as CodexAccessMode)
-      : "follow-desktop";
-  const reasoningEffort =
-    typeof record.reasoningEffort === "string" &&
-    allowedReasoningEfforts.has(record.reasoningEffort as CodexReasoningEffort)
-      ? (record.reasoningEffort as CodexReasoningEffort)
-      : "follow-desktop";
-  const speed =
-    typeof record.speed === "string" && allowedSpeeds.has(record.speed as CodexSpeed)
-      ? (record.speed as CodexSpeed)
-      : "follow-desktop";
-  const model =
-    record.model === null || record.model === undefined || record.model === ""
-      ? null
-      : typeof record.model === "string" && allowedModels.has(record.model)
-        ? record.model
-        : (() => {
-            throw new ProtocolError(400, "invalid_request", "model is not supported");
-          })();
-  return {
-    accessMode,
-    model,
-    reasoningEffort,
-    speed,
-    planMode: record.planMode === true,
-  };
 }
 
 function parseMessageAttachments(value: unknown): Array<{

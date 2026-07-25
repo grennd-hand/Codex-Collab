@@ -5,6 +5,7 @@ import {
   buildUnifiedTimeline,
   executionDetailLabel,
   sanitizeImportedUserText,
+  splitConversationMessages,
 } from "./imported-timeline.js";
 
 function record(
@@ -265,6 +266,29 @@ describe("buildUnifiedTimeline", () => {
     expect(buildUnifiedTimeline([entry], [command])).toContainEqual({
       kind: "imported",
       item: { kind: "message", entry },
+    });
+  });
+});
+
+describe("splitConversationMessages", () => {
+  it("keeps member chat independent from the Codex timeline", () => {
+    const chat = message("chat-1", "chat", "hello", "2026-07-25T00:00:00.000Z");
+    const prompt = message(
+      "prompt-1",
+      "codex_prompt",
+      "run checks",
+      "2026-07-25T00:00:01.000Z",
+    );
+    const stop = message(
+      "stop-1",
+      "codex_stop",
+      "stop",
+      "2026-07-25T00:00:02.000Z",
+    );
+
+    expect(splitConversationMessages([chat, prompt, stop])).toEqual({
+      chatMessages: [chat],
+      codexMessages: [prompt, stop],
     });
   });
 });

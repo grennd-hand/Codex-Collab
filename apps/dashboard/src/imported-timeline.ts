@@ -27,6 +27,18 @@ interface CollabCommandEnvelope {
   body: string;
 }
 
+export function splitConversationMessages(messages: readonly Message[]): {
+  chatMessages: Message[];
+  codexMessages: Message[];
+} {
+  const chatMessages: Message[] = [];
+  const codexMessages: Message[] = [];
+  for (const message of messages) {
+    (message.kind === "chat" ? chatMessages : codexMessages).push(message);
+  }
+  return { chatMessages, codexMessages };
+}
+
 const FILES_HEADER = "# Files mentioned by the user:";
 const REQUEST_HEADER = "## My request for Codex:";
 
