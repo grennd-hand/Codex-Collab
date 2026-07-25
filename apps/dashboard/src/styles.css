@@ -1004,6 +1004,19 @@ textarea {
   background: var(--colorNeutralBackground1);
 }
 
+.execution-step.compact {
+  padding: 0;
+}
+
+.execution-step.compact::before,
+.execution-step.compact .execution-step-marker {
+  display: none;
+}
+
+.execution-step.compact .execution-step-content {
+  background: var(--colorNeutralBackground2);
+}
+
 .execution-step-content > header,
 .execution-step-content > header > div {
   display: flex;
@@ -1059,6 +1072,44 @@ textarea {
 .execution-input,
 .execution-output {
   margin-top: 9px;
+  min-width: 0;
+}
+
+.execution-details {
+  margin-top: 8px;
+  min-width: 0;
+  border-top: 1px solid var(--colorNeutralStroke3);
+}
+
+.execution-details > summary {
+  min-height: 30px;
+  padding: 7px 1px 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  color: var(--colorNeutralForeground2);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.execution-details > summary:hover {
+  color: var(--colorBrandForeground1);
+}
+
+.execution-details > summary small {
+  flex: 0 0 auto;
+  color: var(--colorNeutralForeground3);
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.execution-details[open] > summary {
+  padding-bottom: 1px;
+}
+
+.execution-detail-body {
   min-width: 0;
 }
 
@@ -1917,6 +1968,12 @@ textarea {
   margin: 6px 0 0;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.record-entry > .readable-output {
+  margin-top: 6px;
   font-size: 12px;
   line-height: 1.5;
 }

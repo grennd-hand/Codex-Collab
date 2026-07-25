@@ -124,7 +124,29 @@ export function parseReadableBlocks(text: string): ReadableBlock[] {
   return blocks;
 }
 
-function commandTitle(tool: string): string {
+function commandTitle(tool: string, input: string | null): string {
+  const rawCommand = extractCommandTexts(tool, input)[0] ?? "";
+  const command = rawCommand.toLowerCase();
+  if (/^(?:get-content|type\s|cat\s)/.test(command)) {
+    const path = rawCommand.match(
+      /(?:-LiteralPath\s+)?["']([^"']+)["']/i,
+    )?.[1];
+    const fileName = path?.split(/[\\/]/).filter(Boolean).at(-1);
+    return fileName ? `读取 ${fileName}` : "读取文件";
+  }
+  if (/^(?:rg\s|select-string\s|findstr\s)/.test(command)) return "搜索内容";
+  if (/^(?:npm\s+(?:run\s+)?test|npx\s+vitest|vitest\s)/.test(command)) {
+    return "运行测试";
+  }
+  if (/^(?:npm\s+run\s+build|npx\s+vite\s+build|vite\s+build)/.test(command)) {
+    return "构建项目";
+  }
+  if (/^git\s+(?:status|diff|log|rev-parse|rev-list|fetch)\b/.test(command)) {
+    return "检查 Git 状态";
+  }
+  if (/^git\s+(?:add|commit|push)\b/.test(command)) return "提交代码";
+  if (/^scp\s/.test(command)) return "上传文件";
+  if (/^ssh\s/.test(command)) return "连接服务器";
   switch (tool) {
     case "exec":
     case "exec_command":
@@ -138,11 +160,83 @@ function commandTitle(tool: string): string {
   }
 }
 
+function readJavaScriptString(
+  source: string,
+  start: number,
+): { value: string; end: number } | null {
+  const quote = source[start];
+  if (quote !== '"' && quote !== "'" && quote !== "`") return null;
+  let escaped = false;
+  for (let index = start + 1; index < source.length; index += 1) {
+    const character = source[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (character === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (character !== quote) continue;
+    const literal = source.slice(start, index + 1);
+    if (quote === '"') {
+      try {
+        return { value: JSON.parse(literal) as string, end: index + 1 };
+      } catch {
+        return null;
+      }
+    }
+    const body = literal.slice(1, -1);
+    return {
+      value: body.replace(/\\([\\'`nrt])/g, (_match, escapedCharacter: string) => {
+        if (escapedCharacter === "n") return "\n";
+        if (escapedCharacter === "r") return "\r";
+        if (escapedCharacter === "t") return "\t";
+        return escapedCharacter;
+      }),
+      end: index + 1,
+    };
+  }
+  return null;
+}
+
+function extractExecCommands(source: string): string[] {
+  const commands: string[] = [];
+  const pattern =
+    /\b(?:tools\.)?exec_command\s*\(\s*\{[\s\S]{0,600}?(?:["']cmd["']|\bcmd)\s*:\s*/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(source)) !== null && commands.length < 8) {
+    const literal = readJavaScriptString(source, match.index + match[0].length);
+    if (!literal) continue;
+    commands.push(literal.value.trim());
+    pattern.lastIndex = literal.end;
+  }
+  return commands.filter(Boolean);
+}
+
+function extractCommandTexts(tool: string, input: string | null): string[] {
+  if (!input) return [];
+  try {
+    const parsed = JSON.parse(input) as Record<string, unknown>;
+    if (typeof parsed.cmd === "string") return [parsed.cmd.trim()].filter(Boolean);
+  } catch {
+    // Custom exec calls contain JavaScript source instead of JSON arguments.
+  }
+  if (tool === "exec") return extractExecCommands(input);
+  if (input.startsWith("$ ")) return [input.slice(2).split("\n")[0]!.trim()].filter(Boolean);
+  return [];
+}
+
 function extractExitCode(output: string): number | null {
   const match =
     output.match(/"exit_code"\s*:\s*(-?\d+)/i) ??
-    output.match(/\bexit[\s_-]*code\s*:\s*(-?\d+)/i);
+    output.match(/\bexit[\s_-]*code\s*:\s*(-?\d+)/i) ??
+    output.match(/\bprocess exited with code\s+(-?\d+)/i);
   return match?.[1] === undefined ? null : Number(match[1]);
+}
+
+function outputIndicatesRunning(output: string): boolean {
+  return /^Script running with cell ID\b/i.test(output.trim());
 }
 
 function friendlyCommandInput(tool: string, input: string | null): string | null {
@@ -162,33 +256,98 @@ function friendlyCommandInput(tool: string, input: string | null): string | null
     }
     return JSON.stringify(parsed, null, 2);
   } catch {
+    if (tool === "exec") {
+      const commands = extractExecCommands(input);
+      if (commands.length === 0) return null;
+      return commands.map((command) => `$ ${command}`).join("\n\n");
+    }
     return input;
   }
+}
+
+interface DecodedCommandOutput {
+  content: string;
+  exitCode: number | null;
+  durationSeconds: number | null;
+}
+
+function decodeCommandOutput(value: unknown, depth = 0): DecodedCommandOutput {
+  if (depth > 3) {
+    return {
+      content: typeof value === "string" ? value.trim() : JSON.stringify(value, null, 2),
+      exitCode: null,
+      durationSeconds: null,
+    };
+  }
+  if (typeof value === "string") {
+    const normalized = value.replace(/\r\n?/g, "\n").trim();
+    if (outputIndicatesRunning(normalized)) {
+      const duration = normalized.match(/\bWall time\s+([\d.]+)\s+seconds?/i)?.[1];
+      return {
+        content: "后台任务仍在运行，结果会继续同步",
+        exitCode: null,
+        durationSeconds: duration === undefined ? null : Number(duration),
+      };
+    }
+    const directResult = normalized.match(
+      /^(?:Chunk ID:\s*[^\n]+\n)?(?:Wall time:\s*([\d.]+)\s*seconds?\n)?Process exited with code\s+(-?\d+)\nFinal output:\s*\n?([\s\S]*)$/i,
+    );
+    if (directResult) {
+      return {
+        content: (directResult[3] ?? "").trim(),
+        exitCode: Number(directResult[2]),
+        durationSeconds:
+          directResult[1] === undefined ? null : Number(directResult[1]),
+      };
+    }
+    const outputMarker = normalized.match(
+      /^Script (?:completed|running[^\n]*)\n(?:Wall time [^\n]+\n)?Output:\s*\n/i,
+    );
+    const candidate = outputMarker ? normalized.slice(outputMarker[0].length).trim() : normalized;
+    if (/^[{[\"]/.test(candidate)) {
+      try {
+        return decodeCommandOutput(JSON.parse(candidate), depth + 1);
+      } catch {
+        // The command output is ordinary text that happens to start with a bracket.
+      }
+    }
+    return { content: candidate, exitCode: null, durationSeconds: null };
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { content: value == null ? "" : String(value), exitCode: null, durationSeconds: null };
+  }
+  const record = value as Record<string, unknown>;
+  const nested =
+    typeof record.output === "string"
+      ? decodeCommandOutput(record.output, depth + 1)
+      : { content: "", exitCode: null, durationSeconds: null };
+  const exitCode = typeof record.exit_code === "number" ? record.exit_code : nested.exitCode;
+  const durationSeconds =
+    typeof record.wall_time_seconds === "number"
+      ? record.wall_time_seconds
+      : nested.durationSeconds;
+  if (nested.content || exitCode !== null || durationSeconds !== null) {
+    return { content: nested.content, exitCode, durationSeconds };
+  }
+  return { content: JSON.stringify(record, null, 2), exitCode: null, durationSeconds: null };
 }
 
 function friendlyCommandOutput(output: string | null): string | null {
   if (!output) return null;
   try {
-    const parsed = JSON.parse(output) as Record<string, unknown>;
-    const content = typeof parsed.output === "string" ? parsed.output.trim() : "";
-    const exitCode =
-      typeof parsed.exit_code === "number" ? parsed.exit_code : null;
-    const duration =
-      typeof parsed.wall_time_seconds === "number"
-        ? `${parsed.wall_time_seconds.toFixed(1)} 秒`
-        : null;
-    if (!content && exitCode === null && duration === null) {
-      return JSON.stringify(parsed, null, 2);
-    }
+    const decoded = decodeCommandOutput(output);
+    const duration = decoded.durationSeconds === null
+      ? null
+      : `${decoded.durationSeconds.toFixed(1)} 秒`;
     return [
-      content,
-      exitCode === null ? "" : `退出码：${exitCode}`,
+      decoded.content,
+      decoded.exitCode === null ? "" : `退出码：${decoded.exitCode}`,
       duration ? `耗时：${duration}` : "",
     ]
       .filter(Boolean)
       .join("\n\n");
   } catch {
-    return output;
+    return output.replace(/\r\n?/g, "\n").trim();
   }
 }
 
@@ -238,7 +397,9 @@ function parseTaggedCommand(text: string): {
   return {
     tool: header[1]!.trim(),
     status:
-      exitCode !== null && exitCode !== 0
+      output && outputIndicatesRunning(output)
+        ? "running"
+        : exitCode !== null && exitCode !== 0
         ? "failed"
         : (header[2] as ExecutionStatus),
     input: input || null,
@@ -307,7 +468,7 @@ export function presentExecutionEntry(entry: CodexRecordEntry): ReadableExecutio
   return {
     id: entry.id,
     role: "command",
-    title: commandTitle(parsed.tool),
+    title: commandTitle(parsed.tool, parsed.input),
     status: parsed.status,
     summary: executionSummary(parsed.status, parsed.output),
     input: displayInput,

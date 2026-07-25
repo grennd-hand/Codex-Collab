@@ -104,6 +104,7 @@ import {
   parseReadableBlocks,
   presentExecutionEntry,
   type ExecutionStatus,
+  type ReadableExecution,
 } from "./readable-output.js";
 import {
   setupSubmissionMode,
@@ -510,6 +511,76 @@ function executionStatusLabel(status: ExecutionStatus): string {
   }
 }
 
+function ExecutionStepCard({
+  record,
+  compact = false,
+}: {
+  record: ReadableExecution;
+  compact?: boolean;
+}) {
+  return (
+    <article
+      className={`execution-step ${record.role} ${record.status}${compact ? " compact" : ""}`}
+    >
+      <div className="execution-step-marker" aria-hidden="true">
+        {record.role === "command" ? <DocumentRegular /> : <HistoryRegular />}
+      </div>
+      <div className="execution-step-content">
+        <header>
+          <div>
+            <strong>{record.title}</strong>
+            <span className={`execution-state ${record.status}`}>
+              {executionStatusLabel(record.status)}
+            </span>
+          </div>
+          {record.createdAt ? (
+            <time dateTime={record.createdAt}>{timeLabel(record.createdAt)}</time>
+          ) : null}
+        </header>
+        <p className="execution-step-summary">{record.summary}</p>
+        {record.role === "reasoning" && record.input ? (
+          <ReadableOutput text={record.input} />
+        ) : null}
+        {record.role === "command" && (record.input || record.output) ? (
+          <details
+            className="execution-details"
+            open={
+              record.status === "running" || record.status === "failed" ? true : undefined
+            }
+          >
+            <summary>
+              <span>
+                {record.status === "running"
+                  ? "查看正在执行的内容"
+                  : record.status === "failed"
+                    ? "查看失败详情"
+                    : "查看执行详情"}
+              </span>
+              {record.outputLineCount > 0 ? (
+                <small>{record.outputLineCount} 行输出</small>
+              ) : null}
+            </summary>
+            <div className="execution-detail-body">
+              {record.input ? (
+                <div className="execution-input">
+                  <span>命令</span>
+                  <pre>{record.input}</pre>
+                </div>
+              ) : null}
+              {record.output ? (
+                <div className="execution-output visible">
+                  <span>输出</span>
+                  <pre>{record.output}</pre>
+                </div>
+              ) : null}
+            </div>
+          </details>
+        ) : null}
+      </div>
+    </article>
+  );
+}
+
 function ExecutionProcess({ entries }: { entries: CodexRecordEntry[] }) {
   const records = entries.map(presentExecutionEntry);
   const runningCount = records.filter((record) => record.status === "running").length;
@@ -526,60 +597,7 @@ function ExecutionProcess({ entries }: { entries: CodexRecordEntry[] }) {
       </header>
       <div className="execution-step-list">
         {records.map((record) => (
-          <article
-            className={`execution-step ${record.role} ${record.status}`}
-            key={`codex-${record.id}`}
-          >
-            <div className="execution-step-marker" aria-hidden="true">
-              {record.role === "command" ? (
-                <DocumentRegular />
-              ) : (
-                <HistoryRegular />
-              )}
-            </div>
-            <div className="execution-step-content">
-              <header>
-                <div>
-                  <strong>{record.title}</strong>
-                  <span className={`execution-state ${record.status}`}>
-                    {executionStatusLabel(record.status)}
-                  </span>
-                </div>
-                {record.createdAt ? (
-                  <time dateTime={record.createdAt}>
-                    {timeLabel(record.createdAt)}
-                  </time>
-                ) : null}
-              </header>
-              <p className="execution-step-summary">{record.summary}</p>
-              {record.input ? (
-                record.role === "reasoning" ? (
-                  <ReadableOutput text={record.input} />
-                ) : (
-                  <div className="execution-input">
-                    <span>执行内容</span>
-                    <pre>{record.input}</pre>
-                  </div>
-                )
-              ) : null}
-              {record.output ? (
-                record.outputLineCount > 8 ? (
-                  <details
-                    className="execution-output"
-                    open={record.status === "failed" ? true : undefined}
-                  >
-                    <summary>查看完整输出（{record.outputLineCount} 行）</summary>
-                    <pre>{record.output}</pre>
-                  </details>
-                ) : (
-                  <div className="execution-output visible">
-                    <span>输出结果</span>
-                    <pre>{record.output}</pre>
-                  </div>
-                )
-              ) : null}
-            </div>
-          </article>
+          <ExecutionStepCard key={`codex-${record.id}`} record={record} />
         ))}
       </div>
     </section>
@@ -3223,19 +3241,31 @@ export function App() {
                         {workspaceSummary.history.length === 0 ? (
                           <div className="workspace-empty">选择任务并完成同步后显示记录</div>
                         ) : (
-                          workspaceSummary.history.map((entry) => (
-                            <article className={`record-entry ${entry.role}`} key={entry.id}>
-                              <div>
-                                <strong>{recordRoleLabel(entry.role)}</strong>
-                                {entry.createdAt ? (
-                                  <time dateTime={entry.createdAt}>
-                                    {timeLabel(entry.createdAt)}
-                                  </time>
-                                ) : null}
-                              </div>
-                              <p>{entry.text}</p>
-                            </article>
-                          ))
+                          workspaceSummary.history.map((entry) =>
+                            entry.role === "command" ? (
+                              <ExecutionStepCard
+                                compact
+                                key={entry.id}
+                                record={presentExecutionEntry(entry)}
+                              />
+                            ) : (
+                              <article className={`record-entry ${entry.role}`} key={entry.id}>
+                                <div>
+                                  <strong>{recordRoleLabel(entry.role)}</strong>
+                                  {entry.createdAt ? (
+                                    <time dateTime={entry.createdAt}>
+                                      {timeLabel(entry.createdAt)}
+                                    </time>
+                                  ) : null}
+                                </div>
+                                {entry.role === "assistant" || entry.role === "reasoning" ? (
+                                  <ReadableOutput text={entry.text} />
+                                ) : (
+                                  <p>{entry.text}</p>
+                                )}
+                              </article>
+                            ),
+                          )
                         )}
                       </div>
                     </section>

@@ -49,7 +49,7 @@ describe("presentExecutionEntry", () => {
         createdAt: null,
       }),
     ).toMatchObject({
-      title: "运行命令",
+      title: "运行测试",
       status: "running",
       input: "$ npm test",
       output: null,
@@ -76,6 +76,137 @@ describe("presentExecutionEntry", () => {
       summary: "执行失败，退出码 1",
       output: "failed\n\n退出码：1",
       outputLineCount: 3,
+    });
+  });
+
+  it("turns an orchestrated file read into a compact client-style step", () => {
+    const presented = presentExecutionEntry({
+      id: "call-3",
+      role: "command",
+      text: [
+        "tool: exec",
+        "status: completed",
+        "input:",
+        'const r = await tools.exec_command({"cmd":"Get-Content -LiteralPath \'C:\\\\Users\\\\21497\\\\.codex\\\\skills\\\\github\\\\SKILL.md\' -Raw","workdir":"E:\\\\Codex-Collab"}); text(r.output);',
+        "output:",
+        "Script completed",
+        "Wall time 0.8 seconds",
+        "Output:",
+        "",
+        JSON.stringify({
+          chunk_id: "chunk-1",
+          exit_code: 0,
+          wall_time_seconds: 0.8,
+          output: "---\nname: github-publish\n---\n",
+        }),
+      ].join("\n"),
+      createdAt: null,
+    });
+
+    expect(presented).toMatchObject({
+      title: "读取 SKILL.md",
+      status: "completed",
+      input:
+        "$ Get-Content -LiteralPath 'C:\\Users\\21497\\.codex\\skills\\github\\SKILL.md' -Raw",
+      output: "---\nname: github-publish\n---\n\n退出码：0\n\n耗时：0.8 秒",
+    });
+    expect(presented.output).not.toContain("chunk_id");
+    expect(presented.output).not.toContain("\\n");
+  });
+
+  it("does not expose unrecognized internal orchestration source", () => {
+    expect(
+      presentExecutionEntry({
+        id: "call-4",
+        role: "command",
+        text: [
+          "tool: exec",
+          "status: completed",
+          "input:",
+          "const internal = composePrivateToolProtocol();",
+        ].join("\n"),
+        createdAt: null,
+      }),
+    ).toMatchObject({
+      title: "运行命令",
+      input: null,
+    });
+  });
+
+  it("parses the direct command result format used by Codex", () => {
+    expect(
+      presentExecutionEntry({
+        id: "call-5",
+        role: "command",
+        text: [
+          "tool: exec_command",
+          "status: completed",
+          "input:",
+          '{"cmd":"npm test"}',
+          "output:",
+          "Chunk ID: test-1",
+          "Wall time: 1.4 seconds",
+          "Process exited with code 1",
+          "Final output:",
+          "1 test failed",
+        ].join("\n"),
+        createdAt: null,
+      }),
+    ).toMatchObject({
+      title: "运行测试",
+      status: "failed",
+      summary: "执行失败，退出码 1",
+      output: "1 test failed\n\n退出码：1\n\n耗时：1.4 秒",
+    });
+  });
+
+  it("shows a running cell without exposing its internal identifier", () => {
+    const presented = presentExecutionEntry({
+      id: "call-6",
+      role: "command",
+      text: [
+        "tool: exec",
+        "status: completed",
+        "input:",
+        'const tasks = await Promise.all([tools.exec_command({"cmd":"npm test"}), tools.exec_command({"cmd":"npm run build"})]);',
+        "output:",
+        "Script running with cell ID 657",
+        "Wall time 11.0 seconds",
+      ].join("\n"),
+      createdAt: null,
+    });
+
+    expect(presented).toMatchObject({
+      title: "运行测试",
+      status: "running",
+      input: "$ npm test\n\n$ npm run build",
+      output: "后台任务仍在运行，结果会继续同步\n\n耗时：11.0 秒",
+    });
+    expect(presented.output).not.toContain("657");
+  });
+
+  it("unwraps a double-encoded command result", () => {
+    const nested = JSON.stringify(
+      JSON.stringify({ output: "build complete", exit_code: 0 }),
+    );
+    expect(
+      presentExecutionEntry({
+        id: "call-7",
+        role: "command",
+        text: [
+          "tool: exec_command",
+          "status: completed",
+          "input:",
+          '{"cmd":"npm run build"}',
+          "output:",
+          nested,
+        ].join("\n"),
+        createdAt: null,
+      }),
+    ).toMatchObject({
+      title: "构建项目",
+      status: "completed",
+      output: "build complete\n\n退出码：0",
     });
   });
 });
