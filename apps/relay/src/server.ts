@@ -1,8 +1,17 @@
 import { createReadStream, existsSync, mkdirSync } from "node:fs";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import {
+  createServer,
+  type IncomingMessage,
+  type OutgoingHttpHeaders,
+  type ServerResponse,
+} from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocket, WebSocketServer } from "ws";
+import type {
+  AuthenticationResponseJSON,
+  RegistrationResponseJSON,
+} from "@simplewebauthn/server";
 import {
   optionalInteger,
   ProtocolError,
@@ -19,7 +28,12 @@ import {
 } from "@codex-collab/protocol";
 import { parseCodexOptions } from "./codex-options.js";
 import { buildInviteLink, resolveInviteOrigin } from "./invite-link.js";
-import { SessionStore } from "./session-store.js";
+import {
+  AccountAuthService,
+  resolvePasskeyConfig,
+  type PasskeyRequestConfig,
+} from "./account-auth.js";
+import { SessionStore, type AccountSessionIdentity } from "./session-store.js";
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 const relayRoot = join(moduleDir, "..");
@@ -29,19 +43,32 @@ const databasePath = process.env.CODEX_COLLAB_DATABASE ?? join(dataDir, "relay.s
 const port = Number.parseInt(process.env.PORT ?? "4177", 10);
 const host = process.env.HOST ?? "127.0.0.1";
 const configuredPublicUrl = process.env.CODEX_COLLAB_PUBLIC_URL;
+const configuredPasskeyOrigin =
+  process.env.CODEX_COLLAB_PASSKEY_ORIGIN ?? configuredPublicUrl;
+const configuredPasskeyRpId = process.env.CODEX_COLLAB_PASSKEY_RP_ID;
+const configuredPasskeyRpName = process.env.CODEX_COLLAB_PASSKEY_RP_NAME;
 const trustProxy = process.env.CODEX_COLLAB_TRUST_PROXY === "1";
 
 mkdirSync(dataDir, { recursive: true });
 const store = new SessionStore(databasePath);
+const accountAuth = new AccountAuthService(store);
 const socketsBySession = new Map<string, Set<WebSocket>>();
+const socketsByAccountSession = new Map<string, Set<WebSocket>>();
 const webSockets = new WebSocketServer({ noServer: true });
+const passkeyAttempts = new Map<string, { count: number; resetAt: number }>();
 
-function sendJson(response: ServerResponse, statusCode: number, body: unknown): void {
+function sendJson(
+  response: ServerResponse,
+  statusCode: number,
+  body: unknown,
+  headers: OutgoingHttpHeaders = {},
+): void {
   const payload = JSON.stringify(body);
   response.writeHead(statusCode, {
     "content-type": "application/json; charset=utf-8",
     "content-length": Buffer.byteLength(payload),
     "cache-control": "no-store",
+    ...headers,
   });
   response.end(payload);
 }
@@ -78,6 +105,14 @@ function sendAttachment(
 }
 
 async function readJson(request: IncomingMessage): Promise<Record<string, unknown>> {
+  const contentType = request.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase();
+  if (contentType !== "application/json") {
+    throw new ProtocolError(
+      415,
+      "unsupported_media_type",
+      "JSON requests require Content-Type: application/json",
+    );
+  }
   const chunks: Buffer[] = [];
   let length = 0;
   for await (const chunk of request) {
@@ -100,6 +135,13 @@ async function readJson(request: IncomingMessage): Promise<Record<string, unknow
   } catch {
     throw new ProtocolError(400, "invalid_json", "Request body must be a JSON object");
   }
+}
+
+function requiredObject(value: unknown, field: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ProtocolError(400, "invalid_request", `${field} must be an object`);
+  }
+  return value as Record<string, unknown>;
 }
 
 function parseThreadCatalog(value: unknown): CodexThreadCatalogEntry[] {
@@ -300,6 +342,159 @@ function bearerToken(request: IncomingMessage): string {
   return authorization.slice("Bearer ".length).trim();
 }
 
+function passkeyConfig(request: IncomingMessage): PasskeyRequestConfig {
+  return resolvePasskeyConfig({
+    ...(configuredPasskeyOrigin
+      ? { configuredOrigin: configuredPasskeyOrigin }
+      : {}),
+    ...(configuredPasskeyRpId ? { configuredRpId: configuredPasskeyRpId } : {}),
+    ...(configuredPasskeyRpName ? { rpName: configuredPasskeyRpName } : {}),
+    ...(request.headers.host ? { requestHost: request.headers.host } : {}),
+  });
+}
+
+function cookieName(kind: "account" | "ceremony", secure: boolean): string {
+  if (secure) {
+    return kind === "account"
+      ? "__Host-codex_collab_account"
+      : "__Host-codex_collab_passkey";
+  }
+  return kind === "account"
+    ? "codex_collab_account_local"
+    : "codex_collab_passkey_local";
+}
+
+function cookieValue(request: IncomingMessage, name: string): string | null {
+  const values = (request.headers.cookie ?? "")
+    .split(";")
+    .map((part) => part.trim())
+    .filter((part) => part.startsWith(`${name}=`))
+    .map((part) => part.slice(name.length + 1));
+  if (values.length > 1) {
+    throw new ProtocolError(400, "invalid_cookie", "Duplicate authentication cookie");
+  }
+  const value = values[0];
+  return value && /^[A-Za-z0-9_-]+$/.test(value) ? value : null;
+}
+
+function setCookie(
+  kind: "account" | "ceremony",
+  value: string,
+  config: PasskeyRequestConfig,
+  maxAgeSeconds: number,
+): string {
+  return [
+    `${cookieName(kind, config.secureCookies)}=${value}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Strict",
+    ...(config.secureCookies ? ["Secure"] : []),
+    `Max-Age=${maxAgeSeconds}`,
+  ].join("; ");
+}
+
+function clearCookie(
+  kind: "account" | "ceremony",
+  config: PasskeyRequestConfig,
+): string {
+  return setCookie(kind, "deleted", config, 0);
+}
+
+function assertAccountRequestOrigin(
+  request: IncomingMessage,
+  config: PasskeyRequestConfig,
+): void {
+  if (request.headers["sec-fetch-site"] === "cross-site") {
+    throw new ProtocolError(403, "cross_site_request", "Cross-site request was rejected");
+  }
+  if (request.headers.origin !== config.origin) {
+    throw new ProtocolError(403, "origin_mismatch", "Request origin was rejected");
+  }
+}
+
+function enforcePasskeyRateLimit(
+  request: IncomingMessage,
+  bucket: string,
+  limit = 20,
+): void {
+  const forwarded = request.headers["x-forwarded-for"];
+  const address =
+    trustProxy && typeof forwarded === "string"
+      ? forwarded.split(",", 1)[0]?.trim()
+      : request.socket.remoteAddress;
+  const key = `${bucket}:${address || "unknown"}`;
+  const currentTime = Date.now();
+  const existing = passkeyAttempts.get(key);
+  if (!existing || existing.resetAt <= currentTime) {
+    passkeyAttempts.set(key, { count: 1, resetAt: currentTime + 5 * 60_000 });
+    return;
+  }
+  if (existing.count >= limit) {
+    throw new ProtocolError(
+      429,
+      "rate_limited",
+      "Too many passkey attempts; try again later",
+    );
+  }
+  existing.count += 1;
+}
+
+function requireCsrfToken(request: IncomingMessage): string {
+  const value = request.headers["x-codex-csrf"];
+  if (typeof value !== "string" || !/^[A-Za-z0-9_-]{32,200}$/.test(value)) {
+    throw new ProtocolError(
+      403,
+      "account_csrf_invalid",
+      "Account request could not be verified",
+    );
+  }
+  return value;
+}
+
+function optionalAccountForWrite(
+  request: IncomingMessage,
+  config: PasskeyRequestConfig,
+): AccountSessionIdentity | null {
+  const token = cookieValue(request, cookieName("account", config.secureCookies));
+  if (!token) return null;
+  try {
+    store.accountFromSessionToken(token);
+  } catch (error) {
+    if (error instanceof ProtocolError && error.code === "account_required") {
+      return null;
+    }
+    throw error;
+  }
+  assertAccountRequestOrigin(request, config);
+  return store.validateAccountWriteSession(token, requireCsrfToken(request));
+}
+
+function requireAccountForWrite(
+  request: IncomingMessage,
+  config: PasskeyRequestConfig,
+): AccountSessionIdentity {
+  const token = cookieValue(request, cookieName("account", config.secureCookies));
+  if (!token) {
+    throw new ProtocolError(401, "account_required", "Account sign-in is required");
+  }
+  assertAccountRequestOrigin(request, config);
+  return store.validateAccountWriteSession(token, requireCsrfToken(request));
+}
+
+function optionalConfiguredAccountForWrite(
+  request: IncomingMessage,
+): AccountSessionIdentity | null {
+  try {
+    const config = passkeyConfig(request);
+    return optionalAccountForWrite(request, config);
+  } catch (error) {
+    if (error instanceof ProtocolError && error.code === "passkey_not_configured") {
+      return null;
+    }
+    throw error;
+  }
+}
+
 function broadcast(sessionId: string, type: RealtimeEnvelope["type"], payload: unknown): void {
   const envelope: RealtimeEnvelope = {
     type,
@@ -312,6 +507,12 @@ function broadcast(sessionId: string, type: RealtimeEnvelope["type"], payload: u
     if (socket.readyState === WebSocket.OPEN) {
       socket.send(data);
     }
+  }
+}
+
+function closeAccountSessionSockets(accountSessionId: string): void {
+  for (const socket of socketsByAccountSession.get(accountSessionId) ?? []) {
+    socket.close(4001, "Account signed out");
   }
 }
 
@@ -378,12 +579,202 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (
+      method === "POST" &&
+      url.pathname === "/v1/auth/passkey/registration/options"
+    ) {
+      const config = passkeyConfig(request);
+      assertAccountRequestOrigin(request, config);
+      enforcePasskeyRateLimit(request, "registration-options", 10);
+      const body = await readJson(request);
+      const result = await accountAuth.beginRegistration(
+        requiredString(body.displayName, "displayName", 80),
+        config,
+      );
+      sendJson(
+        response,
+        200,
+        { options: result.options },
+        {
+          "set-cookie": setCookie("ceremony", result.ceremonyToken, config, 300),
+        },
+      );
+      return;
+    }
+
+    if (
+      method === "POST" &&
+      url.pathname === "/v1/auth/passkey/registration/verify"
+    ) {
+      const config = passkeyConfig(request);
+      assertAccountRequestOrigin(request, config);
+      enforcePasskeyRateLimit(request, "registration-verify", 15);
+      const body = await readJson(request);
+      const ceremonyToken = cookieValue(
+        request,
+        cookieName("ceremony", config.secureCookies),
+      );
+      if (!ceremonyToken) {
+        throw new ProtocolError(
+          400,
+          "passkey_challenge_invalid",
+          "Start passkey registration again",
+        );
+      }
+      const result = await accountAuth.finishRegistration(
+        ceremonyToken,
+        requiredObject(body.response, "response") as unknown as RegistrationResponseJSON,
+      );
+      const profile = store.getAccountProfile(result.account.id);
+      sendJson(
+        response,
+        201,
+        { ...profile, csrfToken: result.csrfToken },
+        {
+          "set-cookie": [
+            setCookie("account", result.accountSessionToken, config, 30 * 24 * 60 * 60),
+            clearCookie("ceremony", config),
+          ],
+        },
+      );
+      return;
+    }
+
+    if (
+      method === "POST" &&
+      url.pathname === "/v1/auth/passkey/authentication/options"
+    ) {
+      const config = passkeyConfig(request);
+      assertAccountRequestOrigin(request, config);
+      enforcePasskeyRateLimit(request, "authentication-options", 20);
+      await readJson(request);
+      const result = await accountAuth.beginAuthentication(config);
+      sendJson(
+        response,
+        200,
+        { options: result.options },
+        {
+          "set-cookie": setCookie("ceremony", result.ceremonyToken, config, 300),
+        },
+      );
+      return;
+    }
+
+    if (
+      method === "POST" &&
+      url.pathname === "/v1/auth/passkey/authentication/verify"
+    ) {
+      const config = passkeyConfig(request);
+      assertAccountRequestOrigin(request, config);
+      enforcePasskeyRateLimit(request, "authentication-verify", 20);
+      const body = await readJson(request);
+      const ceremonyToken = cookieValue(
+        request,
+        cookieName("ceremony", config.secureCookies),
+      );
+      if (!ceremonyToken) {
+        throw new ProtocolError(
+          400,
+          "passkey_challenge_invalid",
+          "Start passkey sign-in again",
+        );
+      }
+      const result = await accountAuth.finishAuthentication(
+        ceremonyToken,
+        requiredObject(body.response, "response") as unknown as AuthenticationResponseJSON,
+      );
+      const profile = store.getAccountProfile(result.account.id);
+      sendJson(
+        response,
+        200,
+        { ...profile, csrfToken: result.csrfToken },
+        {
+          "set-cookie": [
+            setCookie("account", result.accountSessionToken, config, 30 * 24 * 60 * 60),
+            clearCookie("ceremony", config),
+          ],
+        },
+      );
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/v1/account") {
+      const config = passkeyConfig(request);
+      const accountSessionToken = cookieValue(
+        request,
+        cookieName("account", config.secureCookies),
+      );
+      if (!accountSessionToken) {
+        throw new ProtocolError(401, "account_required", "Account sign-in is required");
+      }
+      const refreshed = store.refreshAccountSession(accountSessionToken);
+      sendJson(response, 200, {
+        ...store.getAccountProfile(refreshed.account.id),
+        csrfToken: refreshed.csrfToken,
+      });
+      return;
+    }
+
+    if (method === "POST" && url.pathname === "/v1/account/logout") {
+      const config = passkeyConfig(request);
+      await readJson(request);
+      const identity = requireAccountForWrite(request, config);
+      const accountSessionToken = cookieValue(
+        request,
+        cookieName("account", config.secureCookies),
+      );
+      if (accountSessionToken) store.logoutAccount(accountSessionToken);
+      closeAccountSessionSockets(identity.accountSessionId);
+      sendJson(
+        response,
+        200,
+        { signedOut: true },
+        { "set-cookie": clearCookie("account", config) },
+      );
+      return;
+    }
+
+    if (method === "POST" && url.pathname === "/v1/account/rooms/link") {
+      const config = passkeyConfig(request);
+      const body = await readJson(request);
+      const identity = requireAccountForWrite(request, config);
+      const profile = store.bindAccountMembership(
+        identity.account.id,
+        requiredString(body.sessionId, "sessionId", 120),
+        bearerToken(request),
+      );
+      sendJson(response, 200, { ...profile, csrfToken: requireCsrfToken(request) });
+      return;
+    }
+
+    const restoreAccountRoomMatch = url.pathname.match(
+      /^\/v1\/account\/rooms\/([^/]+)\/restore$/,
+    );
+    if (method === "POST" && restoreAccountRoomMatch?.[1]) {
+      const config = passkeyConfig(request);
+      const body = await readJson(request);
+      const identity = requireAccountForWrite(request, config);
+      const result = store.restoreAccountRoom(
+        identity.account.id,
+        restoreAccountRoomMatch[1],
+        typeof body.deviceLabel === "string"
+          ? body.deviceLabel.trim().slice(0, 120) || "Web device"
+          : "Web device",
+        identity.accountSessionId,
+        identity.expiresAt,
+      );
+      sendJson(response, 200, result);
+      return;
+    }
+
     if (method === "POST" && url.pathname === "/v1/sessions") {
       const body = await readJson(request);
+      const account = optionalConfiguredAccountForWrite(request);
       const result = store.createSession(
         requiredString(body.name, "name", 120),
         requiredString(body.ownerDisplayName, "ownerDisplayName", 80),
         typeof body.deviceLabel === "string" ? body.deviceLabel.slice(0, 120) : undefined,
+        account ?? undefined,
       );
       sendJson(response, 201, result);
       return;
@@ -391,10 +782,12 @@ const server = createServer(async (request, response) => {
 
     if (method === "POST" && url.pathname === "/v1/invites/join") {
       const body = await readJson(request);
+      const account = optionalConfiguredAccountForWrite(request);
       const result = store.joinInvite(
         requiredString(body.inviteToken, "inviteToken", 200),
         requiredString(body.displayName, "displayName", 80),
         typeof body.deviceLabel === "string" ? body.deviceLabel.slice(0, 120) : undefined,
+        account ?? undefined,
       );
       broadcast(result.session.id, "member.updated", result.member);
       sendJson(response, 201, result);
@@ -740,6 +1133,15 @@ server.on("upgrade", (request, socket, head) => {
       socket.destroy();
       return;
     }
+    if (request.headers.origin) {
+      const expectedOrigin = configuredPasskeyOrigin
+        ? new URL(configuredPasskeyOrigin).origin
+        : `http://${request.headers.host ?? "localhost"}`;
+      if (request.headers.origin !== expectedOrigin) {
+        socket.destroy();
+        return;
+      }
+    }
     const sessionId = url.searchParams.get("sessionId");
     const token = url.searchParams.get("token");
     if (!sessionId || !token) {
@@ -747,11 +1149,18 @@ server.on("upgrade", (request, socket, head) => {
       return;
     }
     const member = store.authenticateRealtime(sessionId, token);
+    const accountSessionId = store.accountSessionForMemberToken(sessionId, token);
     const session = store.getSession(sessionId);
     webSockets.handleUpgrade(request, socket, head, (webSocket) => {
       const set = socketsBySession.get(sessionId) ?? new Set<WebSocket>();
       set.add(webSocket);
       socketsBySession.set(sessionId, set);
+      if (accountSessionId) {
+        const accountSockets =
+          socketsByAccountSession.get(accountSessionId) ?? new Set<WebSocket>();
+        accountSockets.add(webSocket);
+        socketsByAccountSession.set(accountSessionId, accountSockets);
+      }
       webSocket.send(
         JSON.stringify({
           type: "ready",
@@ -764,6 +1173,13 @@ server.on("upgrade", (request, socket, head) => {
         set.delete(webSocket);
         if (set.size === 0) {
           socketsBySession.delete(sessionId);
+        }
+        if (accountSessionId) {
+          const accountSockets = socketsByAccountSession.get(accountSessionId);
+          accountSockets?.delete(webSocket);
+          if (accountSockets?.size === 0) {
+            socketsByAccountSession.delete(accountSessionId);
+          }
         }
       });
     });

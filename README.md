@@ -127,6 +127,11 @@ Start a new Codex thread after installation so the new skill and MCP tools are l
 An invited member cannot send messages or access files until the owner approves them. The plugin
 stores member bearer tokens only in the local profile file and the relay stores only token hashes.
 
+Browser users can create a passwordless Passkey account. The account cookie is `HttpOnly`,
+`SameSite=Strict`, and `Secure` on HTTPS; the Relay stores only its hash. Accounts remember room
+membership, while each room keeps its separate member role and approval status. Re-entering a room
+issues a new device-scoped member token and never bypasses owner approval.
+
 The owner chooses one absolute shared root. Project access does not imply access to `~/.codex`;
 sharing Codex configuration requires the owner to explicitly bind that directory as a separate root.
 Web prompts from approved members are consumed automatically by the local owner host. Only the
@@ -144,7 +149,10 @@ docker compose up -d --build
 Put it behind an HTTPS reverse proxy before using it across the public internet. Configure
 `CODEX_COLLAB_RELAY_URL` in the plugin to the resulting HTTPS origin. Set
 `CODEX_COLLAB_PUBLIC_URL` to that same origin so invites created through MCP contain a usable web
-link. If the reverse proxy supplies `X-Forwarded-Proto`, set `CODEX_COLLAB_TRUST_PROXY=1`.
+link and Passkey verification is bound to the exact HTTPS origin. Keep that hostname stable after
+users register Passkeys. `CODEX_COLLAB_PASSKEY_RP_ID` can be set explicitly, but it must exactly
+match the public hostname. If the reverse proxy supplies `X-Forwarded-Proto`, set
+`CODEX_COLLAB_TRUST_PROXY=1`.
 
 ### VPS deployment
 

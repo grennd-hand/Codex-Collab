@@ -135,7 +135,10 @@ scripts/                    MCP 与 app-server 验证脚本
 
 - Relay SQLite：Docker `relay-data` 命名卷；
 - Caddy 证书与配置：独立命名卷；
-- 浏览器成员凭据：当前标签页的 `sessionStorage`；
+- 浏览器当前房间凭据：当前标签页的 `sessionStorage`；
+- 浏览器账号会话：`HttpOnly`、`SameSite=Strict` Cookie，HTTPS 环境同时启用 `Secure`；
+- Passkey 公钥、签名计数、账号会话 token 哈希与账号-房间归属保存在 Relay SQLite；
+- “我的房间”只保存账号与成员的归属关系，重新进入时签发新的设备成员 token，不返回旧 token；
 - URL 中存在一次性邀请时，邀请流程优先于当前标签页已有凭据；只有申请成功后才替换凭据；
 - 本地插件成员凭据：用户目录下 `.codex-collab/state.json`；
 - Relay 数据库只保存 token 哈希，不保存原始成员 token；
@@ -148,6 +151,7 @@ scripts/                    MCP 与 app-server 验证脚本
 - 已批准成员从网页发送的 Codex 指令会按顺序执行，关键操作仍沿用主人的 Codex 审批策略；
 - 附件单文件限制 4 MB、单条指令总计 6 MB、最多 8 个，Relay 需鉴权后才允许下载；
 - 尚未提供成员撤销、邀请撤销和细粒度根目录权限；
+- 账号恢复码、Passkey 管理和完整的设备会话管理尚未提供；
 - 尚未实现自动备份、速率限制、审计导出和集中监控；
 - 尚未进行正式并发压测和故障注入；
 - 当前公网使用 `sslip.io` 测试域名，正式发布建议换成自有域名；

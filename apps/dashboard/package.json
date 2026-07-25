@@ -13,6 +13,7 @@
     "@codex-collab/protocol": "0.1.0",
     "@fluentui/react-components": "^9.74.4",
     "@fluentui/react-icons": "^2.0.333",
+    "@simplewebauthn/browser": "^13.3.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },

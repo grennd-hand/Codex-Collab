@@ -26,6 +26,7 @@ Relay 不直接发布宿主机端口。Caddy 只发布 443，因而可以与已�
 - Docker 内网别名：`primary-relay`
 - 数据卷：`codex-collab_relay-data`
 - TLS：Caddy 自动管理的受信任证书
+- Passkey Origin：与控制台 HTTPS 地址完全一致，默认从 `CODEX_COLLAB_PUBLIC_URL` 读取
 
 独立的第二实例：
 
@@ -118,6 +119,14 @@ docker compose \
 CODEX_COLLAB_DOMAIN=codex-collab-guest.217.194.133.194.sslip.io
 CODEX_COLLAB_HOST_PORT=4178
 CODEX_COLLAB_PROXY_NETWORK=codex-collab_collab
+```
+
+Passkey 使用每个实例自己的完整主机名作为 RP ID。主实例与第二实例不得配置成共同的
+`sslip.io` 父域，也不得共享 Relay 数据卷。若需显式配置，可加入：
+
+```text
+CODEX_COLLAB_PASSKEY_ORIGIN=https://codex-collab-guest.217.194.133.194.sslip.io
+CODEX_COLLAB_PASSKEY_RP_ID=codex-collab-guest.217.194.133.194.sslip.io
 ```
 
 ## 7. 回滚

@@ -88,6 +88,30 @@ export interface Member {
   approvedAt: string | null;
 }
 
+export interface Account {
+  id: string;
+  displayName: string;
+  createdAt: string;
+}
+
+export interface AccountRoom {
+  session: Session;
+  member: Member;
+  lastUsedAt: string | null;
+}
+
+export interface AccountProfileResponse {
+  account: Account;
+  rooms: AccountRoom[];
+  csrfToken: string;
+}
+
+export interface RestoreAccountRoomResponse {
+  session: Session;
+  member: Member;
+  memberToken: string;
+}
+
 export interface Message {
   id: string;
   sessionId: string;

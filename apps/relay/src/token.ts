@@ -1,6 +1,8 @@
 import { createHash, randomBytes } from "node:crypto";
 
-export function issueToken(prefix: "ccm" | "cci" | "ccp" | "cch"): string {
+export function issueToken(
+  prefix: "ccm" | "cci" | "ccp" | "cch" | "cca" | "ccs",
+): string {
   return `${prefix}_${randomBytes(32).toString("base64url")}`;
 }
 

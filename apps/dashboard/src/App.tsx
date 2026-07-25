@@ -42,11 +42,13 @@ import {
   DismissRegular,
   DocumentRegular,
   FolderOpenRegular,
+  HomeRegular,
   HistoryRegular,
   KeyRegular,
   LockClosedRegular,
   MicRegular,
   PersonAddRegular,
+  PersonAccountsRegular,
   SendRegular,
   SignOutRegular,
   StopRegular,
@@ -55,6 +57,8 @@ import {
 } from "@fluentui/react-icons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
+  AccountProfileResponse,
+  AccountRoom,
   CodexModelId,
   CodexAccessMode,
   CodexPromptOptions,
@@ -93,6 +97,16 @@ import {
   fallbackMemberIdentity,
 } from "./member-identity.js";
 import { isCredentialRejected, requestJson } from "./api-client.js";
+import { ApiRequestError } from "./api-client.js";
+import {
+  linkAccountRoom,
+  loadAccountProfile,
+  logoutAccount,
+  passkeysAvailable,
+  registerPasskey,
+  restoreAccountRoom,
+  signInWithPasskey,
+} from "./account-client.js";
 
 const brand: BrandVariants = {
   10: "#02040C",
@@ -377,6 +391,14 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [credentialNotice, setCredentialNotice] = useState<string | null>(null);
   const [setupOpen, setSetupOpen] = useState(!initialCredential);
+  const [accountProfile, setAccountProfile] =
+    useState<AccountProfileResponse | null>(null);
+  const [accountChecking, setAccountChecking] = useState(true);
+  const [accountDialogOpen, setAccountDialogOpen] = useState(false);
+  const [accountDisplayName, setAccountDisplayName] = useState("Owner");
+  const [accountSubmitting, setAccountSubmitting] = useState(false);
+  const [accountError, setAccountError] = useState<string | null>(null);
+  const [restoringRoomId, setRestoringRoomId] = useState<string | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [workspaceSummary, setWorkspaceSummary] = useState<WorkspaceSummary | null>(null);
@@ -412,12 +434,14 @@ export function App() {
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const speechRecognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const loadedComposerKeyRef = useRef<string | null>(null);
+  const linkedRoomKeyRef = useRef<string | null>(null);
 
   const session = credential?.session ?? null;
   const member = credential?.member ?? null;
   const token = credential?.token ?? null;
   const approved = member?.status === "approved";
   const roomOpen = session?.roomStatus !== "closed";
+  const supportsPasskeys = useMemo(passkeysAvailable, []);
   const composerStorageKey = session ? `codexCollabComposer:${session.id}` : null;
 
   const pushActivity = useCallback(
@@ -500,6 +524,33 @@ export function App() {
     sessionStorage.setItem(storageKey, JSON.stringify(next));
   }, []);
 
+  const refreshAccount = useCallback(async () => {
+    try {
+      const profile = await loadAccountProfile();
+      setAccountProfile(profile);
+      setAccountDisplayName(profile.account.displayName);
+      setDisplayName((current) =>
+        current === "Owner" ? profile.account.displayName : current,
+      );
+      setAccountError(null);
+      return profile;
+    } catch (caught) {
+      if (
+        caught instanceof ApiRequestError &&
+        caught.status === 401 &&
+        caught.code === "account_required"
+      ) {
+        setAccountProfile(null);
+        return null;
+      }
+      const message = caught instanceof Error ? caught.message : "账号状态无法读取";
+      setAccountError(message);
+      return null;
+    } finally {
+      setAccountChecking(false);
+    }
+  }, []);
+
   const authHeaders = useCallback(
     (includeJson = false): HeadersInit => ({
       authorization: `Bearer ${token ?? ""}`,
@@ -517,6 +568,38 @@ export function App() {
       return updated;
     });
   }, []);
+
+  useEffect(() => {
+    void refreshAccount();
+  }, [refreshAccount]);
+
+  useEffect(() => {
+    if (!accountProfile || !credential || !credentialValidated) return;
+    if (
+      credential.member.status === "rejected" ||
+      credential.member.status === "revoked" ||
+      accountProfile.rooms.some((room) => room.session.id === credential.session.id)
+    ) {
+      return;
+    }
+    const key = `${accountProfile.account.id}:${credential.session.id}:${credential.member.id}`;
+    if (linkedRoomKeyRef.current === key) return;
+    linkedRoomKeyRef.current = key;
+    void linkAccountRoom(
+      accountProfile,
+      credential.session.id,
+      credential.token,
+    )
+      .then((profile) => {
+        setAccountProfile(profile);
+        setAccountError(null);
+        pushActivity("房间已保存", "下次登录后可从我的房间重新进入", "success");
+      })
+      .catch((caught: unknown) => {
+        linkedRoomKeyRef.current = null;
+        setAccountError(caught instanceof Error ? caught.message : "当前房间无法保存到账号");
+      });
+  }, [accountProfile, credential, credentialValidated, pushActivity]);
 
   useEffect(() => {
     if (!session || !token || credentialValidated) {
@@ -875,12 +958,123 @@ export function App() {
     token,
   ]);
 
+  const authenticateAccount = async (mode: "register" | "signin") => {
+    if (!supportsPasskeys) {
+      setAccountError("当前页面不支持通行密钥。请使用 HTTPS 地址或本机 localhost 打开。 ");
+      return;
+    }
+    if (mode === "register" && !accountDisplayName.trim()) {
+      setAccountError("请先填写显示名称");
+      return;
+    }
+    setAccountSubmitting(true);
+    setAccountError(null);
+    try {
+      let profile =
+        mode === "register"
+          ? await registerPasskey(accountDisplayName.trim())
+          : await signInWithPasskey();
+      if (
+        credential &&
+        credentialValidated &&
+        credential.member.status !== "rejected" &&
+        credential.member.status !== "revoked" &&
+        !profile.rooms.some((room) => room.session.id === credential.session.id)
+      ) {
+        profile = await linkAccountRoom(
+          profile,
+          credential.session.id,
+          credential.token,
+        );
+      }
+      setAccountProfile(profile);
+      setAccountDisplayName(profile.account.displayName);
+      setDisplayName(profile.account.displayName);
+      linkedRoomKeyRef.current = null;
+      setAccountDialogOpen(false);
+      setSetupOpen(!credential);
+      setCredentialNotice(null);
+      pushActivity(
+        mode === "register" ? "账号已创建" : "账号已登录",
+        profile.rooms.length > 0 ? `可恢复 ${profile.rooms.length} 个房间` : "可以创建第一个房间",
+        "success",
+      );
+    } catch (caught) {
+      setAccountError(caught instanceof Error ? caught.message : "通行密钥操作未完成");
+    } finally {
+      setAccountSubmitting(false);
+    }
+  };
+
+  const activateAccountRoom = async (room: AccountRoom) => {
+    if (!accountProfile) return;
+    setRestoringRoomId(room.session.id);
+    setAccountError(null);
+    try {
+      const result = await restoreAccountRoom(
+        accountProfile,
+        room.session.id,
+        deviceLabel(),
+      );
+      setMessages([]);
+      setMembers([result.member]);
+      setWorkspaceSummary(null);
+      setSelectedFile(null);
+      setInviteLink("");
+      setPendingAttachments([]);
+      setCredentialValidated(true);
+      setConversationLoading(result.member.status === "approved");
+      loadedComposerKeyRef.current = null;
+      saveCredential({
+        session: result.session,
+        member: result.member,
+        token: result.memberToken,
+      });
+      setConnection(result.member.status === "pending" ? "waiting" : "connecting");
+      setSetupOpen(false);
+      setAccountDialogOpen(false);
+      setError(null);
+      pushActivity(
+        "已进入保存的房间",
+        result.member.status === "pending" ? "仍在等待主人批准" : result.session.name,
+        result.member.status === "pending" ? "warning" : "success",
+      );
+      await refreshAccount();
+    } catch (caught) {
+      setAccountError(caught instanceof Error ? caught.message : "房间无法恢复");
+    } finally {
+      setRestoringRoomId(null);
+    }
+  };
+
+  const signOutAccount = async () => {
+    if (!accountProfile) return;
+    setAccountSubmitting(true);
+    setAccountError(null);
+    try {
+      await logoutAccount(accountProfile);
+      if (composerStorageKey) localStorage.removeItem(composerStorageKey);
+      setAccountProfile(null);
+      linkedRoomKeyRef.current = null;
+      setAccountDialogOpen(false);
+      clearSessionState("manual");
+      pushActivity("账号已退出", "本设备需要重新使用通行密钥登录", "info");
+    } catch (caught) {
+      setAccountError(caught instanceof Error ? caught.message : "账号退出未完成");
+    } finally {
+      setAccountSubmitting(false);
+    }
+  };
+
   const createSession = async () => {
     setSubmitting(true);
     try {
       const result = await requestJson<CreateSessionResponse>("/v1/sessions", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          ...(accountProfile ? { "x-codex-csrf": accountProfile.csrfToken } : {}),
+        },
         body: JSON.stringify({
           name: roomName,
           ownerDisplayName: displayName,
@@ -900,6 +1094,7 @@ export function App() {
       setError(null);
       setCredentialNotice(null);
       pushActivity("共享任务已创建", "你是主人", "success");
+      if (accountProfile) void refreshAccount();
     } catch (caught) {
       showError(caught);
     } finally {
@@ -912,7 +1107,10 @@ export function App() {
     try {
       const result = await requestJson<JoinInviteResponse>("/v1/invites/join", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          ...(accountProfile ? { "x-codex-csrf": accountProfile.csrfToken } : {}),
+        },
         body: JSON.stringify({
           inviteToken: joinToken,
           displayName,
@@ -932,6 +1130,7 @@ export function App() {
       setCredentialNotice(null);
       window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
       pushActivity("加入申请已发送", "等待主人批准", "warning");
+      if (accountProfile) void refreshAccount();
     } catch (caught) {
       showError(caught);
     } finally {
@@ -941,6 +1140,7 @@ export function App() {
 
   const submitSetup = (event: React.FormEvent) => {
     event.preventDefault();
+    if (!accountProfile) return;
     if (setupSubmissionMode(joinToken) === "join") {
       void joinSession();
       return;
@@ -1369,6 +1569,17 @@ export function App() {
                 创建邀请
               </Button>
             ) : null}
+            <Button
+              appearance="subtle"
+              icon={<PersonAccountsRegular />}
+              className="account-button"
+              aria-label={accountProfile ? "打开我的房间" : "登录账号"}
+              onClick={() => setAccountDialogOpen(true)}
+            >
+              <span className="account-button-label">
+                {accountProfile?.account.displayName ?? "登录"}
+              </span>
+            </Button>
             <Button
               appearance="subtle"
               className="stable-icon-button"
@@ -2351,11 +2562,13 @@ export function App() {
         </DialogSurface>
       </Dialog>
 
-      <Dialog open={setupOpen} modalType="alert">
+      <Dialog open={setupOpen}>
         <DialogSurface>
           <form onSubmit={submitSetup}>
             <DialogBody>
-              <DialogTitle>连接协作会话</DialogTitle>
+              <DialogTitle>
+                {accountProfile ? "选择或创建房间" : "登录 Codex Collab"}
+              </DialogTitle>
               <DialogContent className="setup-fields">
                 {credentialNotice ? (
                   <MessageBar intent="warning">
@@ -2371,26 +2584,93 @@ export function App() {
                     />
                   </MessageBar>
                 ) : null}
-                <p className="dialog-intro">
-                  {initialInviteToken
-                    ? "你收到了一次性协作邀请。填写显示名称后申请加入。"
-                    : "创建一个新任务，或使用一次性令牌加入已有任务。"}
-                </p>
-                <Field label="你的显示名称" required>
-                  <Input
-                    value={displayName}
-                    maxLength={80}
-                    onChange={(_, data) => setDisplayName(data.value)}
-                  />
-                </Field>
-                {initialInviteToken ? (
-                  <MessageBar intent="success">
+                {accountError ? (
+                  <MessageBar intent="error">
                     <MessageBarBody>
-                      一次性邀请已读取。提交后需要等待主人明确批准。
+                      <MessageBarTitle>账号操作未完成</MessageBarTitle>
+                      {accountError}
                     </MessageBarBody>
                   </MessageBar>
+                ) : null}
+                {accountChecking ? (
+                  <div className="account-loading" aria-live="polite">
+                    <Spinner size="small" label="正在检查账号状态" />
+                  </div>
+                ) : !accountProfile ? (
+                  <>
+                    <p className="dialog-intro">
+                      使用设备通行密钥保存你的房间。以后在其他支持的设备上登录即可继续使用。
+                    </p>
+                    {!supportsPasskeys ? (
+                      <MessageBar intent="warning">
+                        <MessageBarBody>
+                          通行密钥需要 HTTPS，或从本机 localhost 地址打开。
+                        </MessageBarBody>
+                      </MessageBar>
+                    ) : null}
+                    {initialInviteToken ? (
+                      <MessageBar intent="success">
+                        <MessageBarBody>
+                          邀请已经读取。登录或创建账号后继续申请加入。
+                        </MessageBarBody>
+                      </MessageBar>
+                    ) : null}
+                    <Field label="新账号显示名称" required>
+                      <Input
+                        value={accountDisplayName}
+                        maxLength={80}
+                        autoComplete="name webauthn"
+                        onChange={(_, data) => setAccountDisplayName(data.value)}
+                      />
+                    </Field>
+                  </>
                 ) : (
                   <>
+                    <div className="account-summary">
+                      <Avatar
+                        name={accountProfile.account.displayName}
+                        color="colorful"
+                        size={36}
+                      />
+                      <div>
+                        <strong>{accountProfile.account.displayName}</strong>
+                        <span>{accountProfile.rooms.length} 个已保存房间</span>
+                      </div>
+                    </div>
+                    {!initialInviteToken && accountProfile.rooms.length > 0 ? (
+                      <AccountRoomList
+                        rooms={accountProfile.rooms}
+                        currentSessionId={session?.id ?? null}
+                        restoringRoomId={restoringRoomId}
+                        onRestore={(room) => void activateAccountRoom(room)}
+                      />
+                    ) : null}
+                    {!initialInviteToken && accountProfile.rooms.length > 0 ? (
+                      <div className="dialog-divider">
+                        <span>创建或加入其他房间</span>
+                      </div>
+                    ) : null}
+                    <p className="dialog-intro">
+                      {initialInviteToken
+                        ? "你收到了一次性协作邀请。申请后仍需主人明确批准。"
+                        : "创建一个新房间，或使用一次性邀请令牌加入。"}
+                    </p>
+                    <Field label="房间内显示名称" required>
+                      <Input
+                        value={displayName}
+                        maxLength={80}
+                        autoComplete="name"
+                        onChange={(_, data) => setDisplayName(data.value)}
+                      />
+                    </Field>
+                    {initialInviteToken ? (
+                      <MessageBar intent="success">
+                        <MessageBarBody>
+                          一次性邀请已读取。提交后需要等待主人明确批准。
+                        </MessageBarBody>
+                      </MessageBar>
+                    ) : (
+                      <>
                     <Field label="新会话名称">
                       <Input
                         value={roomName}
@@ -2409,11 +2689,34 @@ export function App() {
                         onChange={(_, data) => setJoinToken(data.value)}
                       />
                     </Field>
+                      </>
+                    )}
                   </>
                 )}
               </DialogContent>
               <DialogActions>
-                {joinToken.trim() ? (
+                {accountChecking ? null : !accountProfile ? (
+                  <>
+                    <Button
+                      type="button"
+                      appearance="secondary"
+                      disabled={!supportsPasskeys || accountSubmitting}
+                      onClick={() => void authenticateAccount("signin")}
+                    >
+                      使用通行密钥登录
+                    </Button>
+                    <Button
+                      type="button"
+                      appearance="primary"
+                      disabled={
+                        !supportsPasskeys || !accountDisplayName.trim() || accountSubmitting
+                      }
+                      onClick={() => void authenticateAccount("register")}
+                    >
+                      创建账号
+                    </Button>
+                  </>
+                ) : joinToken.trim() ? (
                   <Button
                     type="submit"
                     appearance="primary"
@@ -2433,6 +2736,109 @@ export function App() {
               </DialogActions>
             </DialogBody>
           </form>
+        </DialogSurface>
+      </Dialog>
+
+      <Dialog
+        open={accountDialogOpen}
+        onOpenChange={(_, data) => setAccountDialogOpen(data.open)}
+      >
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>{accountProfile ? "我的房间" : "账号登录"}</DialogTitle>
+            <DialogContent className="setup-fields">
+              {accountError ? (
+                <MessageBar intent="error">
+                  <MessageBarBody>
+                    <MessageBarTitle>账号操作未完成</MessageBarTitle>
+                    {accountError}
+                  </MessageBarBody>
+                </MessageBar>
+              ) : null}
+              {accountProfile ? (
+                <>
+                  <div className="account-summary">
+                    <Avatar
+                      name={accountProfile.account.displayName}
+                      color="colorful"
+                      size={40}
+                    />
+                    <div>
+                      <strong>{accountProfile.account.displayName}</strong>
+                      <span>通行密钥账号</span>
+                    </div>
+                  </div>
+                  {accountProfile.rooms.length > 0 ? (
+                    <AccountRoomList
+                      rooms={accountProfile.rooms}
+                      currentSessionId={session?.id ?? null}
+                      restoringRoomId={restoringRoomId}
+                      onRestore={(room) => void activateAccountRoom(room)}
+                    />
+                  ) : (
+                    <div className="account-empty">
+                      创建房间或通过邀请加入后，这里会保存你的房间。
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  <p className="dialog-intro">
+                    登录后可以从其他支持通行密钥的设备重新进入自己的房间。
+                  </p>
+                  {!supportsPasskeys ? (
+                    <MessageBar intent="warning">
+                      <MessageBarBody>
+                        通行密钥需要 HTTPS，或从本机 localhost 地址打开。
+                      </MessageBarBody>
+                    </MessageBar>
+                  ) : null}
+                  <Field label="新账号显示名称" required>
+                    <Input
+                      value={accountDisplayName}
+                      maxLength={80}
+                      autoComplete="name webauthn"
+                      onChange={(_, data) => setAccountDisplayName(data.value)}
+                    />
+                  </Field>
+                </>
+              )}
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="secondary" onClick={() => setAccountDialogOpen(false)}>
+                关闭
+              </Button>
+              {accountProfile ? (
+                <Button
+                  appearance="secondary"
+                  icon={<SignOutRegular />}
+                  disabled={accountSubmitting}
+                  onClick={() => void signOutAccount()}
+                >
+                  退出账号
+                </Button>
+              ) : (
+                <>
+                  <Button
+                    appearance="secondary"
+                    disabled={!supportsPasskeys || accountSubmitting}
+                    onClick={() => void authenticateAccount("signin")}
+                  >
+                    使用通行密钥登录
+                  </Button>
+                  <Button
+                    appearance="primary"
+                    disabled={
+                      !supportsPasskeys || !accountDisplayName.trim() || accountSubmitting
+                    }
+                    onClick={() => void authenticateAccount("register")}
+                  >
+                    创建账号
+                  </Button>
+                </>
+              )}
+            </DialogActions>
+          </DialogBody>
         </DialogSurface>
       </Dialog>
 
@@ -2492,6 +2898,79 @@ export function App() {
         </DialogSurface>
       </Dialog>
     </FluentProvider>
+  );
+}
+
+function AccountRoomList({
+  rooms,
+  currentSessionId,
+  restoringRoomId,
+  onRestore,
+}: {
+  rooms: AccountRoom[];
+  currentSessionId: string | null;
+  restoringRoomId: string | null;
+  onRestore: (room: AccountRoom) => void;
+}) {
+  return (
+    <div className="account-room-list" role="list" aria-label="我的房间">
+      {rooms.map((room) => {
+        const current = room.session.id === currentSessionId;
+        const inactive =
+          room.member.status === "rejected" || room.member.status === "revoked";
+        const statusLabel =
+          room.member.status === "pending"
+            ? "等待批准"
+            : room.member.status === "rejected"
+              ? "已拒绝"
+              : room.member.status === "revoked"
+                ? "权限已撤销"
+                : room.member.role === "owner"
+                  ? "主人"
+                  : "成员";
+        const statusColor =
+          room.member.status === "pending"
+            ? "warning"
+            : inactive
+              ? "danger"
+              : "success";
+        return (
+          <div className="account-room-item" role="listitem" key={room.session.id}>
+            <div className="account-room-icon" aria-hidden="true">
+              <HomeRegular />
+            </div>
+            <div className="account-room-copy">
+              <strong>{room.session.name}</strong>
+              <span>
+                {room.session.roomStatus === "closed" ? "房间已关闭" : statusLabel}
+                {room.lastUsedAt
+                  ? `，上次使用 ${new Intl.DateTimeFormat("zh-CN", {
+                      month: "numeric",
+                      day: "numeric",
+                    }).format(new Date(room.lastUsedAt))}`
+                  : ""}
+              </span>
+            </div>
+            <Badge appearance="tint" color={statusColor}>
+              {statusLabel}
+            </Badge>
+            <Button
+              appearance={current ? "secondary" : "primary"}
+              size="small"
+              aria-current={current ? "page" : undefined}
+              disabled={current || inactive || restoringRoomId !== null}
+              onClick={() => onRestore(room)}
+            >
+              {current
+                ? "当前房间"
+                : restoringRoomId === room.session.id
+                  ? "正在进入"
+                  : "进入"}
+            </Button>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

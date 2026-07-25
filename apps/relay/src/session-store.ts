@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import {
+  type Account,
+  type AccountProfileResponse,
   type ClaimHostPairingResponse,
   type CodexPromptOptions,
   type CodexRecordEntry,
@@ -15,6 +17,7 @@ import {
   type MessageDeliveryStatus,
   type MessageKind,
   type RoomStatus,
+  type RestoreAccountRoomResponse,
   type Session,
   type WorkspaceFile,
   type WorkspaceFileContent,
@@ -100,6 +103,69 @@ interface WorkspaceFileRow {
   content: string;
 }
 
+interface AccountRow {
+  id: string;
+  display_name: string;
+  created_at: string;
+}
+
+interface AccountChallengeRow {
+  kind: "registration" | "authentication";
+  challenge: string;
+  account_id: string | null;
+  display_name: string | null;
+  expected_origin: string;
+  rp_id: string;
+  expires_at: string;
+}
+
+interface AccountCredentialRow {
+  id: string;
+  account_id: string;
+  public_key: Uint8Array;
+  counter: number;
+  transports_json: string;
+}
+
+interface AccountRoomRow {
+  session_id: string;
+  session_name: string;
+  owner_member_id: string;
+  room_status: RoomStatus;
+  session_created_at: string;
+  member_id: string;
+  member_display_name: string;
+  member_device_label: string | null;
+  member_role: "owner" | "editor";
+  member_status: MemberStatus;
+  member_created_at: string;
+  member_approved_at: string | null;
+  last_used_at: string | null;
+}
+
+export interface AccountChallenge {
+  kind: "registration" | "authentication";
+  challenge: string;
+  accountId: string | null;
+  displayName: string | null;
+  expectedOrigin: string;
+  rpId: string;
+}
+
+export interface StoredAccountCredential {
+  id: string;
+  accountId: string;
+  publicKey: Uint8Array;
+  counter: number;
+  transports: string[];
+}
+
+export interface AccountSessionIdentity {
+  account: Account;
+  accountSessionId: string;
+  expiresAt: string;
+}
+
 function now(): string {
   return new Date().toISOString();
 }
@@ -124,6 +190,14 @@ function toMember(row: MemberRow): Member {
     status: row.status,
     createdAt: row.created_at,
     approvedAt: row.approved_at,
+  };
+}
+
+function toAccount(row: AccountRow): Account {
+  return {
+    id: row.id,
+    displayName: row.display_name,
+    createdAt: row.created_at,
   };
 }
 
@@ -190,7 +264,63 @@ export class SessionStore {
         member_id TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
         token_hash TEXT NOT NULL UNIQUE,
         device_label TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        account_session_id TEXT REFERENCES account_sessions(id) ON DELETE SET NULL,
+        expires_at TEXT,
+        revoked_at TEXT
+      );
+      CREATE TABLE IF NOT EXISTS accounts (
+        id TEXT PRIMARY KEY,
+        display_name TEXT NOT NULL,
         created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS account_credentials (
+        id TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        public_key BLOB NOT NULL,
+        counter INTEGER NOT NULL DEFAULT 0,
+        transports_json TEXT NOT NULL DEFAULT '[]',
+        device_type TEXT NOT NULL,
+        backed_up INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        last_used_at TEXT
+      );
+      CREATE TABLE IF NOT EXISTS account_challenges (
+        token_hash TEXT PRIMARY KEY,
+        kind TEXT NOT NULL CHECK (kind IN ('registration', 'authentication')),
+        challenge TEXT NOT NULL,
+        account_id TEXT,
+        display_name TEXT,
+        expected_origin TEXT NOT NULL,
+        rp_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS account_sessions (
+        id TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        token_hash TEXT NOT NULL UNIQUE,
+        csrf_token_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        last_used_at TEXT NOT NULL,
+        revoked_at TEXT
+      );
+      CREATE TABLE IF NOT EXISTS account_csrf_tokens (
+        token_hash TEXT PRIMARY KEY,
+        account_session_id TEXT NOT NULL REFERENCES account_sessions(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS account_memberships (
+        account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        member_id TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL,
+        last_used_at TEXT,
+        PRIMARY KEY (account_id, session_id),
+        FOREIGN KEY (session_id, member_id)
+          REFERENCES members(session_id, id) ON DELETE CASCADE
       );
       CREATE TABLE IF NOT EXISTS host_pairings (
         id TEXT PRIMARY KEY,
@@ -222,10 +352,28 @@ export class SessionStore {
         PRIMARY KEY (session_id, path)
       );
       CREATE INDEX IF NOT EXISTS members_session_idx ON members(session_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS members_session_id_unique
+        ON members(session_id, id);
       CREATE INDEX IF NOT EXISTS messages_session_created_idx ON messages(session_id, created_at);
       CREATE INDEX IF NOT EXISTS member_tokens_member_idx ON member_tokens(member_id);
+      CREATE INDEX IF NOT EXISTS account_credentials_account_idx
+        ON account_credentials(account_id);
+      CREATE INDEX IF NOT EXISTS account_sessions_account_idx
+        ON account_sessions(account_id);
+      CREATE INDEX IF NOT EXISTS account_csrf_tokens_session_idx
+        ON account_csrf_tokens(account_session_id);
+      CREATE INDEX IF NOT EXISTS account_memberships_session_idx
+        ON account_memberships(session_id);
       CREATE INDEX IF NOT EXISTS workspace_files_session_idx ON workspace_files(session_id);
     `);
+    this.ensureColumn(
+      "account_sessions",
+      "csrf_token_hash",
+      "TEXT NOT NULL DEFAULT ''",
+    );
+    this.ensureColumn("member_tokens", "account_session_id", "TEXT");
+    this.ensureColumn("member_tokens", "expires_at", "TEXT");
+    this.ensureColumn("member_tokens", "revoked_at", "TEXT");
     this.ensureColumn(
       "sessions",
       "room_status",
@@ -361,7 +509,12 @@ export class SessionStore {
     }
   }
 
-  createSession(name: string, ownerDisplayName: string, deviceLabel?: string): CreateSessionResponse {
+  createSession(
+    name: string,
+    ownerDisplayName: string,
+    deviceLabel?: string,
+    accountIdentity?: AccountSessionIdentity,
+  ): CreateSessionResponse {
     const sessionId = randomUUID();
     const ownerId = randomUUID();
     const memberToken = issueToken("ccm");
@@ -385,10 +538,33 @@ export class SessionStore {
           sessionId,
           ownerDisplayName,
           deviceLabel ?? null,
-          hashToken(memberToken),
+          hashToken(accountIdentity ? issueToken("ccm") : memberToken),
           createdAt,
           createdAt,
         );
+      if (accountIdentity) {
+        this.insertAccountMemberToken(
+          sessionId,
+          ownerId,
+          memberToken,
+          deviceLabel,
+          createdAt,
+          accountIdentity,
+        );
+        this.db
+          .prepare(`
+            INSERT INTO account_memberships
+              (account_id, session_id, member_id, created_at, last_used_at)
+            VALUES (?, ?, ?, ?, ?)
+          `)
+          .run(
+            accountIdentity.account.id,
+            sessionId,
+            ownerId,
+            createdAt,
+            createdAt,
+          );
+      }
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");
@@ -446,7 +622,12 @@ export class SessionStore {
     return { inviteToken, expiresAt };
   }
 
-  joinInvite(inviteToken: string, displayName: string, deviceLabel?: string): JoinInviteResponse {
+  joinInvite(
+    inviteToken: string,
+    displayName: string,
+    deviceLabel?: string,
+    accountIdentity?: AccountSessionIdentity,
+  ): JoinInviteResponse {
     const invite = this.db
       .prepare(`
         SELECT i.id, i.session_id, i.expires_at, i.max_uses, i.uses,
@@ -469,6 +650,20 @@ export class SessionStore {
     if (invite.uses >= invite.max_uses) {
       throw new ProtocolError(410, "invite_exhausted", "Invitation has already been used");
     }
+    if (
+      accountIdentity &&
+      this.db
+        .prepare(
+          "SELECT 1 AS present FROM account_memberships WHERE account_id = ? AND session_id = ?",
+        )
+        .get(accountIdentity.account.id, invite.session_id)
+    ) {
+      throw new ProtocolError(
+        409,
+        "account_room_exists",
+        "This account already belongs to the room",
+      );
+    }
 
     const memberToken = issueToken("ccm");
     const memberId = randomUUID();
@@ -486,10 +681,33 @@ export class SessionStore {
           invite.session_id,
           displayName,
           deviceLabel ?? null,
-          hashToken(memberToken),
+          hashToken(accountIdentity ? issueToken("ccm") : memberToken),
           createdAt,
         );
       this.db.prepare("UPDATE invites SET uses = uses + 1 WHERE id = ?").run(invite.id);
+      if (accountIdentity) {
+        this.insertAccountMemberToken(
+          invite.session_id,
+          memberId,
+          memberToken,
+          deviceLabel,
+          createdAt,
+          accountIdentity,
+        );
+        this.db
+          .prepare(`
+            INSERT INTO account_memberships
+              (account_id, session_id, member_id, created_at, last_used_at)
+            VALUES (?, ?, ?, ?, ?)
+          `)
+          .run(
+            accountIdentity.account.id,
+            invite.session_id,
+            memberId,
+            createdAt,
+            createdAt,
+          );
+      }
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");
@@ -509,6 +727,504 @@ export class SessionStore {
         createdAt,
         approvedAt: null,
       },
+      memberToken,
+    };
+  }
+
+  createAccountChallenge(input: {
+    kind: "registration" | "authentication";
+    challenge: string;
+    expectedOrigin: string;
+    rpId: string;
+    accountId?: string;
+    displayName?: string;
+  }): string {
+    const ceremonyToken = issueToken("cca");
+    const createdAt = now();
+    const expiresAt = new Date(Date.now() + 5 * 60_000).toISOString();
+    this.db
+      .prepare("DELETE FROM account_challenges WHERE expires_at <= ?")
+      .run(createdAt);
+    this.db
+      .prepare(`
+        INSERT INTO account_challenges
+          (token_hash, kind, challenge, account_id, display_name,
+           expected_origin, rp_id, created_at, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        hashToken(ceremonyToken),
+        input.kind,
+        input.challenge,
+        input.accountId ?? null,
+        input.displayName ?? null,
+        input.expectedOrigin,
+        input.rpId,
+        createdAt,
+        expiresAt,
+      );
+    return ceremonyToken;
+  }
+
+  consumeAccountChallenge(
+    ceremonyToken: string,
+    expectedKind: "registration" | "authentication",
+  ): AccountChallenge {
+    const tokenHash = hashToken(ceremonyToken);
+    this.db.exec("BEGIN IMMEDIATE");
+    let row: AccountChallengeRow | undefined;
+    try {
+      row = this.db
+        .prepare(`
+          SELECT kind, challenge, account_id, display_name, expected_origin, rp_id, expires_at
+          FROM account_challenges WHERE token_hash = ?
+        `)
+        .get(tokenHash) as AccountChallengeRow | undefined;
+      this.db
+        .prepare("DELETE FROM account_challenges WHERE token_hash = ?")
+        .run(tokenHash);
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+    if (!row || row.kind !== expectedKind || Date.parse(row.expires_at) <= Date.now()) {
+      throw new ProtocolError(
+        400,
+        "passkey_challenge_invalid",
+        "The passkey request expired or was already used",
+      );
+    }
+    return {
+      kind: row.kind,
+      challenge: row.challenge,
+      accountId: row.account_id,
+      displayName: row.display_name,
+      expectedOrigin: row.expected_origin,
+      rpId: row.rp_id,
+    };
+  }
+
+  registerAccount(input: {
+    accountId: string;
+    displayName: string;
+    credentialId: string;
+    publicKey: Uint8Array;
+    counter: number;
+    transports: string[];
+    deviceType: string;
+    backedUp: boolean;
+  }): { account: Account; accountSessionToken: string; csrfToken: string } {
+    if (
+      this.db
+        .prepare("SELECT 1 AS present FROM account_credentials WHERE id = ?")
+        .get(input.credentialId)
+    ) {
+      throw new ProtocolError(
+        409,
+        "passkey_already_registered",
+        "This passkey is already registered",
+      );
+    }
+    const createdAt = now();
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db
+        .prepare("INSERT INTO accounts (id, display_name, created_at) VALUES (?, ?, ?)")
+        .run(input.accountId, input.displayName, createdAt);
+      this.db
+        .prepare(`
+          INSERT INTO account_credentials
+            (id, account_id, public_key, counter, transports_json, device_type,
+             backed_up, created_at, last_used_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `)
+        .run(
+          input.credentialId,
+          input.accountId,
+          Buffer.from(input.publicKey),
+          input.counter,
+          JSON.stringify(input.transports),
+          input.deviceType,
+          input.backedUp ? 1 : 0,
+          createdAt,
+          createdAt,
+        );
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+    const accountSession = this.createAccountSession(input.accountId);
+    return {
+      account: {
+        id: input.accountId,
+        displayName: input.displayName,
+        createdAt,
+      },
+      ...accountSession,
+    };
+  }
+
+  getAccountCredential(credentialId: string): StoredAccountCredential {
+    const row = this.db
+      .prepare(`
+        SELECT id, account_id, public_key, counter, transports_json
+        FROM account_credentials WHERE id = ?
+      `)
+      .get(credentialId) as AccountCredentialRow | undefined;
+    if (!row) {
+      throw new ProtocolError(401, "passkey_unknown", "Passkey was not recognized");
+    }
+    return {
+      id: row.id,
+      accountId: row.account_id,
+      publicKey: new Uint8Array(row.public_key),
+      counter: row.counter,
+      transports: JSON.parse(row.transports_json) as string[],
+    };
+  }
+
+  authenticateAccountCredential(
+    credentialId: string,
+    expectedCounter: number,
+    newCounter: number,
+    deviceType: string,
+    backedUp: boolean,
+  ): { account: Account; accountSessionToken: string; csrfToken: string } {
+    const credential = this.getAccountCredential(credentialId);
+    const usedAt = now();
+    const updated = this.db
+      .prepare(`
+        UPDATE account_credentials
+        SET counter = ?, device_type = ?, backed_up = ?, last_used_at = ?
+        WHERE id = ? AND counter = ?
+      `)
+      .run(
+        newCounter,
+        deviceType,
+        backedUp ? 1 : 0,
+        usedAt,
+        credentialId,
+        expectedCounter,
+      );
+    if (updated.changes !== 1) {
+      throw new ProtocolError(
+        409,
+        "passkey_state_changed",
+        "Passkey state changed; please try signing in again",
+      );
+    }
+    return {
+      account: this.accountById(credential.accountId),
+      ...this.createAccountSession(credential.accountId),
+    };
+  }
+
+  accountFromSessionToken(accountSessionToken: string): Account {
+    return this.accountSessionIdentity(accountSessionToken).account;
+  }
+
+  private accountSessionIdentity(
+    accountSessionToken: string,
+  ): AccountSessionIdentity {
+    const usedAt = now();
+    const idleCutoff = new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString();
+    const row = this.db
+      .prepare(`
+        SELECT a.id, a.display_name, a.created_at,
+               s.id AS account_session_id, s.expires_at
+        FROM account_sessions s
+        JOIN accounts a ON a.id = s.account_id
+        WHERE s.token_hash = ?
+          AND s.revoked_at IS NULL AND s.last_used_at > ? AND s.expires_at > ?
+      `)
+      .get(
+        hashToken(accountSessionToken),
+        idleCutoff,
+        usedAt,
+      ) as
+      | (AccountRow & { account_session_id: string; expires_at: string })
+      | undefined;
+    if (!row) {
+      throw new ProtocolError(401, "account_required", "Account sign-in is required");
+    }
+    this.db
+      .prepare("UPDATE account_sessions SET last_used_at = ? WHERE token_hash = ?")
+      .run(usedAt, hashToken(accountSessionToken));
+    return {
+      account: toAccount(row),
+      accountSessionId: row.account_session_id,
+      expiresAt: row.expires_at,
+    };
+  }
+
+  refreshAccountSession(accountSessionToken: string): {
+    account: Account;
+    csrfToken: string;
+  } {
+    const identity = this.accountSessionIdentity(accountSessionToken);
+    const csrfToken = issueToken("ccs");
+    const createdAt = now();
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db
+        .prepare("DELETE FROM account_csrf_tokens WHERE expires_at <= ?")
+        .run(createdAt);
+      this.db
+        .prepare(`
+          INSERT INTO account_csrf_tokens
+            (token_hash, account_session_id, created_at, expires_at)
+          VALUES (?, ?, ?, ?)
+        `)
+        .run(
+          hashToken(csrfToken),
+          identity.accountSessionId,
+          createdAt,
+          identity.expiresAt,
+        );
+      this.db
+        .prepare(`
+          DELETE FROM account_csrf_tokens
+          WHERE account_session_id = ?
+            AND rowid NOT IN (
+              SELECT rowid FROM account_csrf_tokens
+              WHERE account_session_id = ?
+              ORDER BY created_at DESC, rowid DESC
+              LIMIT 32
+            )
+        `)
+        .run(identity.accountSessionId, identity.accountSessionId);
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+    return { account: identity.account, csrfToken };
+  }
+
+  validateAccountWriteSession(
+    accountSessionToken: string,
+    csrfToken: string,
+  ): AccountSessionIdentity {
+    try {
+      const identity = this.accountSessionIdentity(accountSessionToken);
+      const csrfHash = hashToken(csrfToken);
+      const csrf = this.db
+        .prepare(`
+          SELECT 1 AS present
+          FROM account_csrf_tokens
+          WHERE account_session_id = ? AND token_hash = ? AND expires_at > ?
+          UNION ALL
+          SELECT 1 AS present
+          FROM account_sessions
+          WHERE id = ? AND csrf_token_hash = ?
+          LIMIT 1
+        `)
+        .get(
+          identity.accountSessionId,
+          csrfHash,
+          now(),
+          identity.accountSessionId,
+          csrfHash,
+        );
+      if (!csrf) {
+        throw new ProtocolError(
+          403,
+          "account_csrf_invalid",
+          "Account request could not be verified",
+        );
+      }
+      return identity;
+    } catch (error) {
+      if (error instanceof ProtocolError) {
+        throw new ProtocolError(
+          403,
+          "account_csrf_invalid",
+          "Account request could not be verified",
+        );
+      }
+      throw error;
+    }
+  }
+
+  logoutAccount(accountSessionToken: string): void {
+    const revokedAt = now();
+    const tokenHash = hashToken(accountSessionToken);
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const row = this.db
+        .prepare("SELECT id FROM account_sessions WHERE token_hash = ?")
+        .get(tokenHash) as { id: string } | undefined;
+      this.db
+        .prepare("UPDATE account_sessions SET revoked_at = ? WHERE token_hash = ?")
+        .run(revokedAt, tokenHash);
+      if (row) {
+        this.db
+          .prepare(`
+            UPDATE member_tokens SET revoked_at = ?
+            WHERE account_session_id = ? AND revoked_at IS NULL
+          `)
+          .run(revokedAt, row.id);
+      }
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  getAccountProfile(accountId: string): Omit<AccountProfileResponse, "csrfToken"> {
+    const account = this.accountById(accountId);
+    const rows = this.db
+      .prepare(`
+        SELECT s.id AS session_id, s.name AS session_name,
+               s.owner_member_id, s.room_status, s.created_at AS session_created_at,
+               m.id AS member_id, m.display_name AS member_display_name,
+               m.device_label AS member_device_label, m.role AS member_role,
+               m.status AS member_status, m.created_at AS member_created_at,
+               m.approved_at AS member_approved_at, am.last_used_at
+        FROM account_memberships am
+        JOIN sessions s ON s.id = am.session_id
+        JOIN members m ON m.id = am.member_id AND m.session_id = am.session_id
+        WHERE am.account_id = ?
+        ORDER BY COALESCE(am.last_used_at, am.created_at) DESC
+      `)
+      .all(accountId) as unknown as AccountRoomRow[];
+    return {
+      account,
+      rooms: rows.map((row) => ({
+        session: {
+          id: row.session_id,
+          name: row.session_name,
+          ownerMemberId: row.owner_member_id,
+          roomStatus: row.room_status,
+          createdAt: row.session_created_at,
+        },
+        member: {
+          id: row.member_id,
+          sessionId: row.session_id,
+          displayName: row.member_display_name,
+          deviceLabel: row.member_device_label,
+          role: row.member_role,
+          status: row.member_status,
+          createdAt: row.member_created_at,
+          approvedAt: row.member_approved_at,
+        },
+        lastUsedAt: row.last_used_at,
+      })),
+    };
+  }
+
+  bindAccountMembership(
+    accountId: string,
+    sessionId: string,
+    memberToken: string,
+  ): Omit<AccountProfileResponse, "csrfToken"> {
+    this.accountById(accountId);
+    const member = this.requireMember(sessionId, memberToken, false);
+    if (member.status === "rejected" || member.status === "revoked") {
+      throw new ProtocolError(
+        403,
+        "membership_inactive",
+        "This room membership is no longer active",
+      );
+    }
+    const owner = this.db
+      .prepare("SELECT account_id FROM account_memberships WHERE member_id = ?")
+      .get(member.id) as { account_id: string } | undefined;
+    if (owner && owner.account_id !== accountId) {
+      throw new ProtocolError(
+        409,
+        "membership_already_linked",
+        "This room identity belongs to another account",
+      );
+    }
+    const linkedAt = now();
+    const existing = this.db
+      .prepare(`
+        SELECT member_id FROM account_memberships WHERE account_id = ? AND session_id = ?
+      `)
+      .get(accountId, sessionId) as { member_id: string } | undefined;
+    if (existing && existing.member_id !== member.id) {
+      throw new ProtocolError(
+        409,
+        "account_room_exists",
+        "This account is already linked to another member in the room",
+      );
+    }
+    this.db
+      .prepare(`
+        INSERT INTO account_memberships
+          (account_id, session_id, member_id, created_at, last_used_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(account_id, session_id) DO UPDATE SET last_used_at = excluded.last_used_at
+      `)
+      .run(accountId, sessionId, member.id, linkedAt, linkedAt);
+    return this.getAccountProfile(accountId);
+  }
+
+  restoreAccountRoom(
+    accountId: string,
+    sessionId: string,
+    deviceLabel: string,
+    accountSessionId: string,
+    accountSessionExpiresAt: string,
+  ): RestoreAccountRoomResponse {
+    const row = this.db
+      .prepare(`
+        SELECT m.id, m.session_id, m.display_name, m.device_label, m.role,
+               m.status, m.created_at, m.approved_at
+        FROM account_memberships am
+        JOIN members m ON m.id = am.member_id AND m.session_id = am.session_id
+        WHERE am.account_id = ? AND am.session_id = ?
+      `)
+      .get(accountId, sessionId) as MemberRow | undefined;
+    if (!row) {
+      throw new ProtocolError(404, "membership_not_found", "Room membership was not found");
+    }
+    if (row.status === "rejected" || row.status === "revoked") {
+      throw new ProtocolError(
+        403,
+        "membership_inactive",
+        "This room membership is no longer active",
+      );
+    }
+    const memberToken = issueToken("ccm");
+    const restoredAt = now();
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db
+        .prepare(`
+          INSERT INTO member_tokens
+            (id, session_id, member_id, token_hash, device_label, created_at,
+             account_session_id, expires_at, revoked_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
+        `)
+        .run(
+          randomUUID(),
+          sessionId,
+          row.id,
+          hashToken(memberToken),
+          deviceLabel,
+          restoredAt,
+          accountSessionId,
+          accountSessionExpiresAt,
+        );
+      this.db
+        .prepare(`
+          UPDATE account_memberships SET last_used_at = ?
+          WHERE account_id = ? AND session_id = ?
+        `)
+        .run(restoredAt, accountId, sessionId);
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+    return {
+      session: this.getSession(sessionId),
+      member: toMember(row),
       memberToken,
     };
   }
@@ -1063,6 +1779,31 @@ export class SessionStore {
     return this.requireMember(sessionId, memberToken, true);
   }
 
+  accountSessionForMemberToken(
+    sessionId: string,
+    memberToken: string,
+  ): string | null {
+    const usedAt = now();
+    const idleCutoff = new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString();
+    const row = this.db
+      .prepare(`
+        SELECT mt.account_session_id
+        FROM member_tokens mt
+        JOIN account_sessions account_session ON account_session.id = mt.account_session_id
+        WHERE mt.session_id = ? AND mt.token_hash = ?
+          AND mt.account_session_id IS NOT NULL
+          AND mt.revoked_at IS NULL
+          AND (mt.expires_at IS NULL OR mt.expires_at > ?)
+          AND account_session.revoked_at IS NULL
+          AND account_session.last_used_at > ?
+          AND account_session.expires_at > ?
+      `)
+      .get(sessionId, hashToken(memberToken), usedAt, idleCutoff, usedAt) as
+      | { account_session_id: string }
+      | undefined;
+    return row?.account_session_id ?? null;
+  }
+
   private messageById(sessionId: string, messageId: string): Message {
     const row = this.db
       .prepare(`
@@ -1110,6 +1851,85 @@ export class SessionStore {
     };
   }
 
+  private accountById(accountId: string): Account {
+    const row = this.db
+      .prepare("SELECT id, display_name, created_at FROM accounts WHERE id = ?")
+      .get(accountId) as AccountRow | undefined;
+    if (!row) {
+      throw new ProtocolError(401, "account_required", "Account sign-in is required");
+    }
+    return toAccount(row);
+  }
+
+  private createAccountSession(accountId: string): {
+    accountSessionToken: string;
+    csrfToken: string;
+  } {
+    const accountSessionToken = issueToken("ccs");
+    const csrfToken = issueToken("ccs");
+    const accountSessionId = randomUUID();
+    const createdAt = now();
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60_000).toISOString();
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db
+        .prepare(`
+          INSERT INTO account_sessions
+            (id, account_id, token_hash, csrf_token_hash, created_at,
+             expires_at, last_used_at, revoked_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
+        `)
+        .run(
+          accountSessionId,
+          accountId,
+          hashToken(accountSessionToken),
+          hashToken(csrfToken),
+          createdAt,
+          expiresAt,
+          createdAt,
+        );
+      this.db
+        .prepare(`
+          INSERT INTO account_csrf_tokens
+            (token_hash, account_session_id, created_at, expires_at)
+          VALUES (?, ?, ?, ?)
+        `)
+        .run(hashToken(csrfToken), accountSessionId, createdAt, expiresAt);
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+    return { accountSessionToken, csrfToken };
+  }
+
+  private insertAccountMemberToken(
+    sessionId: string,
+    memberId: string,
+    memberToken: string,
+    deviceLabel: string | undefined,
+    createdAt: string,
+    accountIdentity: AccountSessionIdentity,
+  ): void {
+    this.db
+      .prepare(`
+        INSERT INTO member_tokens
+          (id, session_id, member_id, token_hash, device_label, created_at,
+           account_session_id, expires_at, revoked_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
+      `)
+      .run(
+        randomUUID(),
+        sessionId,
+        memberId,
+        hashToken(memberToken),
+        deviceLabel?.trim() || "Account device",
+        createdAt,
+        accountIdentity.accountSessionId,
+        accountIdentity.expiresAt,
+      );
+  }
+
   private memberById(sessionId: string, memberId: string): Member {
     const row = this.db
       .prepare(`
@@ -1129,24 +1949,54 @@ export class SessionStore {
     requireApproved: boolean,
   ): Member {
     const tokenHash = hashToken(memberToken);
+    const usedAt = now();
+    const idleCutoff = new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString();
     const row = this.db
       .prepare(`
-        SELECT id, session_id, display_name, device_label, role, status, created_at, approved_at
+        SELECT members.id, members.session_id, members.display_name,
+               members.device_label, members.role, members.status,
+               members.created_at, members.approved_at,
+               member_token.account_session_id
         FROM members
-        WHERE session_id = ?
+        LEFT JOIN member_tokens member_token
+          ON member_token.session_id = members.session_id
+          AND member_token.member_id = members.id
+          AND member_token.token_hash = ?
+        LEFT JOIN account_sessions account_session
+          ON account_session.id = member_token.account_session_id
+        WHERE members.session_id = ?
           AND (
-            token_hash = ?
-            OR EXISTS (
-              SELECT 1 FROM member_tokens
-              WHERE member_tokens.session_id = members.session_id
-                AND member_tokens.member_id = members.id
-                AND member_tokens.token_hash = ?
+            members.token_hash = ?
+            OR (
+              member_token.token_hash IS NOT NULL
+              AND member_token.revoked_at IS NULL
+              AND (member_token.expires_at IS NULL OR member_token.expires_at > ?)
+              AND (
+                member_token.account_session_id IS NULL
+                OR (
+                  account_session.revoked_at IS NULL
+                  AND account_session.last_used_at > ?
+                  AND account_session.expires_at > ?
+                )
+              )
             )
           )
       `)
-      .get(sessionId, tokenHash, tokenHash) as MemberRow | undefined;
+      .get(
+        tokenHash,
+        sessionId,
+        tokenHash,
+        usedAt,
+        idleCutoff,
+        usedAt,
+      ) as (MemberRow & { account_session_id: string | null }) | undefined;
     if (!row) {
       throw new ProtocolError(401, "unauthorized", "Member token is invalid");
+    }
+    if (row.account_session_id) {
+      this.db
+        .prepare("UPDATE account_sessions SET last_used_at = ? WHERE id = ?")
+        .run(usedAt, row.account_session_id);
     }
     if (requireApproved && row.status !== "approved") {
       throw new ProtocolError(403, "member_not_approved", "Owner approval is required");
