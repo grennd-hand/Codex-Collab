@@ -7,7 +7,8 @@
         │ HTTPS / WSS :443
         ▼
       Caddy
-        │ Docker 内网 :4177
+        │ Docker 内网唯一别名
+        │ primary-relay:4177
         ▼
   Codex Collab Relay
         │
@@ -22,6 +23,7 @@ Relay 不直接发布宿主机端口。Caddy 只发布 443，因而可以与已�
 - 健康检查：<https://codex-collab.217.194.133.194.sslip.io/health>
 - 部署目录：`/opt/codex-collab/current`
 - Compose 项目名：`codex-collab`
+- Docker 内网别名：`primary-relay`
 - 数据卷：`codex-collab_relay-data`
 - TLS：Caddy 自动管理的受信任证书
 
@@ -30,6 +32,7 @@ Relay 不直接发布宿主机端口。Caddy 只发布 443，因而可以与已�
 - 控制台与 API：<https://codex-collab-guest.217.194.133.194.sslip.io/>
 - 部署目录：`/opt/codex-collab-secondary/current`
 - Compose 项目名：`codex-collab-secondary`
+- Docker 内网别名：`secondary-relay`
 - 本机端口：`127.0.0.1:4178`
 - 数据卷：`codex-collab-secondary_relay-data`
 
@@ -96,7 +99,9 @@ curl --fail --show-error \
 ## 6. 更新第二实例
 
 第二实例使用 `deploy/docker-compose.secondary.yml`，共享主实例的 Caddy 网络，但不共享
-Relay 容器、发布目录或数据卷。部署主实例不会重启第二 Relay。
+Relay 容器、发布目录或数据卷。Caddy 只通过唯一别名 `primary-relay` 和
+`secondary-relay` 路由，不能使用两个 Compose 项目都会注册的默认服务名 `relay`。
+部署主实例不会重启第二 Relay。
 
 ```bash
 cd /opt/codex-collab-secondary/current

@@ -160,4 +160,7 @@ docker compose up -d --build
 ```
 
 The Relay is reachable only through Caddy. SQLite data, Caddy certificates, and Caddy configuration
-are stored in named Docker volumes and survive container replacement.
+are stored in named Docker volumes and survive container replacement. When the optional guest Relay
+shares the proxy network, Caddy routes through the unique `primary-relay` and `secondary-relay`
+network aliases so the two independent instances cannot be selected through an ambiguous Compose
+service name.
