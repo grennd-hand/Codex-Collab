@@ -1,79 +1,16 @@
-import { basename, extname } from "node:path";
 import {
   containsLikelySecret,
+  isPublishableCodexConfigPath,
   isPublishableWorkspacePath,
   type WorkspaceFileContent,
 } from "@codex-collab/protocol";
 import { FileSandbox } from "./file-sandbox.js";
 
-export { containsLikelySecret, isPublishableWorkspacePath } from "@codex-collab/protocol";
-
-const PUBLISHABLE_EXTENSIONS = new Set([
-  ".c",
-  ".cc",
-  ".cpp",
-  ".cs",
-  ".css",
-  ".cfg",
-  ".conf",
-  ".go",
-  ".h",
-  ".html",
-  ".ini",
-  ".java",
-  ".js",
-  ".json",
-  ".jsonc",
-  ".jsx",
-  ".md",
-  ".mjs",
-  ".mts",
-  ".ps1",
-  ".py",
-  ".rs",
-  ".rules",
-  ".scss",
-  ".sh",
-  ".sql",
-  ".toml",
-  ".ts",
-  ".tsx",
-  ".txt",
-  ".xml",
-  ".yaml",
-  ".yml",
-]);
-
-const SENSITIVE_NAMES = new Set([
-  ".netrc",
-  ".npmrc",
-  ".pypirc",
-  "auth.json",
-  "auth.toml",
-  "cookies.json",
-  "credentials.json",
-  "id_ed25519",
-  "id_rsa",
-  "history.jsonl",
-  "secrets.json",
-  "state.json",
-  "tokens.json",
-]);
-
-const CODEX_NON_CONFIG_DIRECTORIES = new Set([
-  "archived_sessions",
-  "attachments",
-  "cache",
-  "history",
-  "logs",
-  "memories",
-  "projects",
-  "rollouts",
-  "sessions",
-  "shell_snapshots",
-  "threads",
-  "tmp",
-]);
+export {
+  containsLikelySecret,
+  isPublishableCodexConfigPath,
+  isPublishableWorkspacePath,
+} from "@codex-collab/protocol";
 
 const COLLAB_IGNORE_FILE = ".codex-collabignore";
 
@@ -92,22 +29,6 @@ export async function readCollabIgnore(sandbox: FileSandbox): Promise<string[]> 
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
   }
-}
-
-export function isPublishableCodexConfigPath(path: string): boolean {
-  const normalized = path.replaceAll("\\", "/").toLowerCase();
-  const segments = normalized.split("/");
-  const name = basename(normalized);
-  if (
-    segments.some((segment) => CODEX_NON_CONFIG_DIRECTORIES.has(segment)) ||
-    name === ".env" ||
-    name.startsWith(".env.") ||
-    SENSITIVE_NAMES.has(name) ||
-    name.startsWith("service-account")
-  ) {
-    return false;
-  }
-  return PUBLISHABLE_EXTENSIONS.has(extname(name));
 }
 
 async function buildTextSnapshot(

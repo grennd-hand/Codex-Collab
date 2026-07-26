@@ -246,14 +246,14 @@ try {
           content: "# Code-only loop\n",
           size: 17,
           modifiedAt: "2026-07-25T00:00:00.000Z",
-          sha256: "b".repeat(64),
+          sha256: createHash("sha256").update("# Code-only loop\n").digest("hex"),
         },
         {
           path: ".codex/config.toml",
           content: "model = \"gpt-5\"\n",
           size: 16,
           modifiedAt: "2026-07-25T00:00:00.000Z",
-          sha256: "c".repeat(64),
+          sha256: createHash("sha256").update('model = "gpt-5"\n').digest("hex"),
         },
       ],
     }),
@@ -363,6 +363,13 @@ try {
   }
   const relayClient = new RelayClient(origin);
   const sandbox = await FileSandbox.create(projectRoot);
+  const completedEventPromise = waitForRealtime(
+    guestRealtime.socket,
+    (envelope) =>
+      envelope.type === "file.operation.updated" &&
+      envelope.payload?.operationId === queuedWrite.operation.id &&
+      envelope.payload?.status === "completed",
+  );
   const completedWrite = await processNextWorkspaceFileOperation(
     created.session.id,
     claimed.memberToken,
@@ -375,6 +382,13 @@ try {
     (await readFile(join(projectRoot, "README.md"), "utf8")) !== "# saved by IDE\n"
   ) {
     throw new Error("Host sandbox did not complete the queued IDE save");
+  }
+  const completedEvent = await completedEventPromise;
+  if (
+    JSON.stringify(Object.keys(completedEvent.payload ?? {}).sort()) !==
+    JSON.stringify(["operationId", "requestedByMemberId", "status"])
+  ) {
+    throw new Error("Completed file events must not broadcast exact workspace paths");
   }
 
   const savedHash = completedWrite.resultFile.sha256;
@@ -393,6 +407,13 @@ try {
     },
     202,
   );
+  const conflictEventPromise = waitForRealtime(
+    guestRealtime.socket,
+    (envelope) =>
+      envelope.type === "file.operation.updated" &&
+      envelope.payload?.operationId === staleWrite.operation.id &&
+      envelope.payload?.status === "failed",
+  );
   const conflict = await processNextWorkspaceFileOperation(
     created.session.id,
     claimed.memberToken,
@@ -407,6 +428,13 @@ try {
     (await readFile(join(projectRoot, "README.md"), "utf8")) !== "# host changed\n"
   ) {
     throw new Error("Stale IDE save did not return the authoritative conflict safely");
+  }
+  const conflictEvent = await conflictEventPromise;
+  if (
+    JSON.stringify(Object.keys(conflictEvent.payload ?? {}).sort()) !==
+    JSON.stringify(["operationId", "requestedByMemberId", "status"])
+  ) {
+    throw new Error("Conflict events must not broadcast paths, errors, or file content");
   }
 
   const attributedPrompt = await request(

@@ -298,6 +298,21 @@ const PRIVATE_WORKSPACE_FILE_NAMES = new Set([
   "tokens.json",
 ]);
 
+const CODEX_NON_CONFIG_DIRECTORIES = new Set([
+  "archived_sessions",
+  "attachments",
+  "cache",
+  "history",
+  "logs",
+  "memories",
+  "projects",
+  "rollouts",
+  "sessions",
+  "shell_snapshots",
+  "threads",
+  "tmp",
+]);
+
 function workspacePathName(path: string): string {
   return path.replaceAll("\\", "/").split("/").at(-1) ?? "";
 }
@@ -317,6 +332,32 @@ export function isPublishableWorkspacePath(path: string): boolean {
     return false;
   }
   if (
+    PRIVATE_WORKSPACE_FILE_NAMES.has(name) ||
+    name.startsWith("service-account")
+  ) {
+    return false;
+  }
+  const dot = name.lastIndexOf(".");
+  return dot >= 0 && PUBLISHABLE_WORKSPACE_EXTENSIONS.has(name.slice(dot));
+}
+
+export function codexConfigRelativePath(path: string): string | null {
+  const normalized = path.replaceAll("\\", "/");
+  const segments = normalized.split("/");
+  if (segments[0]?.toLowerCase() !== ".codex" || segments.length < 2) {
+    return null;
+  }
+  return segments.slice(1).join("/");
+}
+
+export function isPublishableCodexConfigPath(path: string): boolean {
+  const normalized = path.replaceAll("\\", "/").toLowerCase();
+  const segments = normalized.split("/");
+  const name = workspacePathName(normalized);
+  if (
+    segments.some((segment) => CODEX_NON_CONFIG_DIRECTORIES.has(segment)) ||
+    name === ".env" ||
+    name.startsWith(".env.") ||
     PRIVATE_WORKSPACE_FILE_NAMES.has(name) ||
     name.startsWith("service-account")
   ) {
@@ -350,10 +391,13 @@ function normalizeCollabIgnorePath(path: string): string {
 export function isWorkspacePathIgnored(
   path: string,
   ignoredPaths: readonly string[],
+  caseInsensitive = false,
 ): boolean {
-  const normalizedPath = normalizeCollabIgnorePath(path);
+  const normalizeCase = (value: string) =>
+    caseInsensitive ? value.toLocaleLowerCase("en-US") : value;
+  const normalizedPath = normalizeCase(normalizeCollabIgnorePath(path));
   return ignoredPaths.some((ignoredPath) => {
-    const ignored = normalizeCollabIgnorePath(ignoredPath);
+    const ignored = normalizeCase(normalizeCollabIgnorePath(ignoredPath));
     return Boolean(
       ignored &&
         (normalizedPath === ignored || normalizedPath.startsWith(`${ignored}/`)),
@@ -519,6 +563,7 @@ export interface WorkspaceFileOperation {
 
 export interface WorkspaceFileOperationClaim extends WorkspaceFileOperation {
   leaseId: string;
+  leaseExpiresAt: string;
   requestContent: string | null;
 }
 

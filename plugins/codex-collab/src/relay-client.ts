@@ -340,6 +340,25 @@ export class RelayClient {
     return result.operation;
   }
 
+  async confirmWorkspaceFileOperationLease(
+    sessionId: string,
+    memberToken: string,
+    operationId: string,
+    leaseId: string,
+  ): Promise<WorkspaceFileOperationClaim> {
+    const result = await this.request<{ operation: WorkspaceFileOperationClaim }>(
+      `/v1/sessions/${encodeURIComponent(
+        sessionId,
+      )}/workspace/file-operations/${encodeURIComponent(operationId)}/lease-confirmation`,
+      {
+        method: "POST",
+        headers: { authorization: `Bearer ${memberToken}` },
+        body: JSON.stringify({ leaseId }),
+      },
+    );
+    return result.operation;
+  }
+
   async publishWorkspaceCatalog(
     sessionId: string,
     memberToken: string,

@@ -2,10 +2,16 @@ import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { WorkspaceFileOperationClaim } from "@codex-collab/protocol";
-import { afterEach, describe, expect, it } from "vitest";
+import {
+  isWorkspacePathIgnored,
+  type WorkspaceFileOperationClaim,
+} from "@codex-collab/protocol";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { FileSandbox } from "./file-sandbox.js";
-import { executeWorkspaceFileOperation } from "./workspace-file-operations.js";
+import {
+  executeWorkspaceFileOperation,
+  processNextWorkspaceFileOperation,
+} from "./workspace-file-operations.js";
 
 const roots: string[] = [];
 
@@ -40,6 +46,7 @@ function operation(
     completedAt: null,
     requestContent: null,
     leaseId: "lease-1",
+    leaseExpiresAt: "2026-07-27T00:01:00.000Z",
     ...input,
   };
 }
@@ -104,19 +111,93 @@ describe("workspace file operation host execution", () => {
     expect(await readFile(join(root, "shared.ts"), "utf8")).toBe("remote change");
   });
 
-  it("defends private Codex and credential paths again on the host", async () => {
+  it("rejects Codex configuration reads without an explicit config root", async () => {
     const root = await tempRoot();
     const sandbox = await FileSandbox.create(root);
 
     await expect(
       executeWorkspaceFileOperation(
-        operation({ kind: "read", path: ".codex/auth.json" }),
+        operation({ kind: "read", path: ".codex/config.toml" }),
         sandbox,
       ),
     ).resolves.toMatchObject({
       status: "failed",
       errorCode: "workspace_file_not_shared",
     });
+  });
+
+  it("reads explicitly shared Codex configuration through its separate sandbox", async () => {
+    const projectRoot = await tempRoot();
+    const configRoot = await tempRoot();
+    await mkdir(join(configRoot, "rules"));
+    await writeFile(join(configRoot, "rules", "default.rules"), "allow = true", "utf8");
+    const projectSandbox = await FileSandbox.create(projectRoot);
+    const configSandbox = await FileSandbox.create(configRoot);
+
+    await expect(
+      executeWorkspaceFileOperation(
+        operation({ kind: "read", path: ".codex/rules/default.rules" }),
+        projectSandbox,
+        configSandbox,
+      ),
+    ).resolves.toMatchObject({
+      status: "completed",
+      file: {
+        path: ".codex/rules/default.rules",
+        content: "allow = true",
+      },
+    });
+  });
+
+  it("never writes Codex configuration even when a config root is explicit", async () => {
+    const projectRoot = await tempRoot();
+    const configRoot = await tempRoot();
+    await writeFile(join(configRoot, "config.toml"), "mode = 'safe'", "utf8");
+    const projectSandbox = await FileSandbox.create(projectRoot);
+    const configSandbox = await FileSandbox.create(configRoot);
+
+    await expect(
+      executeWorkspaceFileOperation(
+        operation({
+          kind: "write",
+          path: ".codex/config.toml",
+          requestContent: "mode = 'unsafe'",
+          expectedSha256: "a".repeat(64),
+        }),
+        projectSandbox,
+        configSandbox,
+      ),
+    ).resolves.toMatchObject({
+      status: "failed",
+      errorCode: "workspace_file_not_shared",
+    });
+    expect(await readFile(join(configRoot, "config.toml"), "utf8")).toBe("mode = 'safe'");
+  });
+
+  it("rejects sensitive Codex paths and secret config content", async () => {
+    const projectRoot = await tempRoot();
+    const configRoot = await tempRoot();
+    await writeFile(join(configRoot, "auth.json"), "{}", "utf8");
+    await writeFile(
+      join(configRoot, "config.toml"),
+      "ACCESS_TOKEN=custom-super-secret-token-123456",
+      "utf8",
+    );
+    const projectSandbox = await FileSandbox.create(projectRoot);
+    const configSandbox = await FileSandbox.create(configRoot);
+
+    for (const path of [".codex/auth.json", ".codex/config.toml"]) {
+      const result = await executeWorkspaceFileOperation(
+        operation({ kind: "read", path }),
+        projectSandbox,
+        configSandbox,
+      );
+      expect(result).toMatchObject({
+        status: "failed",
+        errorCode: "workspace_file_not_shared",
+      });
+      expect(result).not.toHaveProperty("file");
+    }
   });
 
   it("applies ignore exact and directory-prefix rules to direct reads", async () => {
@@ -138,6 +219,19 @@ describe("workspace file operation host execution", () => {
         status: "failed",
         errorCode: "workspace_file_not_shared",
         errorMessage: "This file is not available to the collaboration editor",
+      });
+    }
+    expect(isWorkspacePathIgnored("PRIVATE.TS", ["private.ts"], true)).toBe(true);
+    expect(isWorkspacePathIgnored("PRIVATE.TS", ["private.ts"], false)).toBe(false);
+    if (process.platform === "win32") {
+      await expect(
+        executeWorkspaceFileOperation(
+          operation({ kind: "read", path: "PRIVATE.TS" }),
+          sandbox,
+        ),
+      ).resolves.toMatchObject({
+        status: "failed",
+        errorCode: "workspace_file_not_shared",
       });
     }
   });
@@ -190,5 +284,37 @@ describe("workspace file operation host execution", () => {
 
     expect(result).toMatchObject({ status: "failed", errorCode: "file_conflict" });
     expect(result).not.toHaveProperty("file");
+  });
+
+  it("confirms the lease before touching disk", async () => {
+    const root = await tempRoot();
+    const path = join(root, "guarded.ts");
+    await writeFile(path, "original", "utf8");
+    const sandbox = await FileSandbox.create(root);
+    const relay = {
+      claimNextWorkspaceFileOperation: vi.fn().mockResolvedValue(
+        operation({
+          kind: "write",
+          path: "guarded.ts",
+          requestContent: "should not be written",
+          expectedSha256: createHash("sha256").update("original").digest("hex"),
+        }),
+      ),
+      confirmWorkspaceFileOperationLease: vi
+        .fn()
+        .mockRejectedValue(new Error("workspace operation lease expired")),
+      completeWorkspaceFileOperation: vi.fn(),
+    };
+
+    await expect(
+      processNextWorkspaceFileOperation(
+        "session-1",
+        "host-token",
+        relay as never,
+        sandbox,
+      ),
+    ).rejects.toThrow(/lease expired/i);
+    expect(await readFile(path, "utf8")).toBe("original");
+    expect(relay.completeWorkspaceFileOperation).not.toHaveBeenCalled();
   });
 });

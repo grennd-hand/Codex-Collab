@@ -27,7 +27,9 @@ import {
   type WorkspaceFileOperationKind,
   type WorkspaceFileOperationStatus,
   type WorkspaceSummary,
+  codexConfigRelativePath,
   containsLikelySecret,
+  isPublishableCodexConfigPath,
   isPublishableWorkspacePath,
   ProtocolError,
 } from "@codex-collab/protocol";
@@ -129,6 +131,7 @@ interface WorkspaceFileOperationRow {
   kind: WorkspaceFileOperationKind;
   path: string;
   request_content: string | null;
+  request_size: number | null;
   expected_sha256: string | null;
   status: WorkspaceFileOperationStatus;
   result_content: string | null;
@@ -140,6 +143,7 @@ interface WorkspaceFileOperationRow {
   requested_at: string;
   started_at: string | null;
   lease_id: string | null;
+  lease_expires_at: string | null;
   completed_at: string | null;
 }
 
@@ -238,6 +242,17 @@ function normalizeWorkspaceOperationPath(path: string): string {
   ) {
     throw new ProtocolError(400, "unsafe_workspace_path", "Use a safe relative file path");
   }
+  const configRelativePath = codexConfigRelativePath(normalized);
+  if (configRelativePath) {
+    if (!isPublishableCodexConfigPath(configRelativePath)) {
+      throw new ProtocolError(
+        403,
+        "workspace_file_not_shared",
+        "This file is not available to the collaboration editor",
+      );
+    }
+    return `.codex/${configRelativePath}`;
+  }
   if (!isPublishableWorkspacePath(normalized)) {
     throw new ProtocolError(
       403,
@@ -258,6 +273,10 @@ const MAX_FILE_OPERATION_AUDIT_ROWS_PER_SESSION = 500;
 const MAX_FILE_OPERATION_RESULT_CONTENT_COUNT = 20;
 const MAX_FILE_OPERATION_RESULT_CONTENT_BYTES = 10_000_000;
 const FILE_OPERATION_LEASE_MS = 30_000;
+const MAX_WORKSPACE_FILE_COUNT = 600;
+const MAX_WORKSPACE_FILE_BYTES = 5_000_000;
+const MAX_MEMBER_WRITE_OPERATIONS_PER_MINUTE = 30;
+const MAX_MEMBER_WRITE_BYTES_PER_MINUTE = 4_000_000;
 
 function toSession(row: SessionRow): Session {
   return {
@@ -363,7 +382,8 @@ export class SessionStore {
         created_at TEXT NOT NULL,
         account_session_id TEXT REFERENCES account_sessions(id) ON DELETE SET NULL,
         expires_at TEXT,
-        revoked_at TEXT
+        revoked_at TEXT,
+        token_purpose TEXT NOT NULL DEFAULT 'legacy'
       );
       CREATE TABLE IF NOT EXISTS accounts (
         id TEXT PRIMARY KEY,
@@ -458,6 +478,7 @@ export class SessionStore {
         kind TEXT NOT NULL CHECK (kind IN ('read', 'write')),
         path TEXT NOT NULL,
         request_content TEXT,
+        request_size INTEGER,
         expected_sha256 TEXT,
         status TEXT NOT NULL CHECK (status IN ('queued', 'processing', 'completed', 'failed')),
         result_content TEXT,
@@ -469,6 +490,7 @@ export class SessionStore {
         requested_at TEXT NOT NULL,
         started_at TEXT,
         lease_id TEXT,
+        lease_expires_at TEXT,
         completed_at TEXT
       );
       CREATE INDEX IF NOT EXISTS members_session_idx ON members(session_id);
@@ -499,6 +521,11 @@ export class SessionStore {
     this.ensureColumn("member_tokens", "expires_at", "TEXT");
     this.ensureColumn("member_tokens", "revoked_at", "TEXT");
     this.ensureColumn(
+      "member_tokens",
+      "token_purpose",
+      "TEXT NOT NULL DEFAULT 'legacy'",
+    );
+    this.ensureColumn(
       "sessions",
       "room_status",
       "TEXT NOT NULL DEFAULT 'open' CHECK (room_status IN ('open', 'closed'))",
@@ -522,6 +549,26 @@ export class SessionStore {
     this.ensureColumn("workspace_state", "host_generation", "TEXT");
     this.ensureColumn("workspace_file_operations", "host_generation", "TEXT");
     this.ensureColumn("workspace_file_operations", "lease_id", "TEXT");
+    this.ensureColumn("workspace_file_operations", "lease_expires_at", "TEXT");
+    this.ensureColumn("workspace_file_operations", "request_size", "INTEGER");
+    this.db.exec(`
+      UPDATE member_tokens
+      SET token_purpose = 'account'
+      WHERE account_session_id IS NOT NULL;
+      UPDATE member_tokens
+      SET token_purpose = 'host'
+      WHERE id IN (
+        SELECT host_token_id FROM workspace_state
+        WHERE host_token_id IS NOT NULL AND host_generation IS NOT NULL
+      );
+    `);
+    this.db
+      .prepare(`
+        UPDATE member_tokens
+        SET revoked_at = COALESCE(revoked_at, ?)
+        WHERE token_purpose = 'legacy' AND account_session_id IS NULL
+      `)
+      .run(now());
     this.db
       .prepare(`
         UPDATE workspace_file_operations
@@ -545,6 +592,7 @@ export class SessionStore {
         ON message_attachments(message_id);
     `);
     this.backfillInFlightMessageThreadIds();
+    this.disconnectUnboundLegacyHosts();
   }
 
   private ensureColumn(table: string, column: string, definition: string): void {
@@ -1361,8 +1409,8 @@ export class SessionStore {
         .prepare(`
           INSERT INTO member_tokens
             (id, session_id, member_id, token_hash, device_label, created_at,
-             account_session_id, expires_at, revoked_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
+             account_session_id, expires_at, revoked_at, token_purpose)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'account')
         `)
         .run(
           randomUUID(),
@@ -1433,10 +1481,7 @@ export class SessionStore {
   }
 
   approveMember(sessionId: string, memberToken: string, targetMemberId: string): Member {
-    const owner = this.requireMember(sessionId, memberToken, true);
-    if (owner.role !== "owner") {
-      throw new ProtocolError(403, "owner_required", "Only the owner can approve members");
-    }
+    this.requireOwner(sessionId, memberToken);
     const approvedAt = now();
     const result = this.db
       .prepare(`
@@ -1730,8 +1775,9 @@ export class SessionStore {
       this.db
         .prepare(`
           INSERT INTO member_tokens
-            (id, session_id, member_id, token_hash, device_label, created_at)
-          VALUES (?, ?, ?, ?, ?, ?)
+            (id, session_id, member_id, token_hash, device_label, created_at,
+             token_purpose)
+          VALUES (?, ?, ?, ?, ?, ?, 'host')
         `)
         .run(
           hostTokenId,
@@ -1753,7 +1799,7 @@ export class SessionStore {
         .prepare(`
           UPDATE workspace_file_operations
           SET status = 'failed', request_content = NULL, result_content = NULL,
-              lease_id = NULL, error_code = 'host_repaired',
+              lease_id = NULL, lease_expires_at = NULL, error_code = 'host_repaired',
               error_message = 'The host workspace changed before this operation completed',
               completed_at = ?
           WHERE session_id = ? AND status IN ('queued', 'processing')
@@ -1802,7 +1848,7 @@ export class SessionStore {
       threads: CodexThreadCatalogEntry[];
     },
   ): WorkspaceSummary {
-    const host = this.requireCurrentHost(sessionId, memberToken, true);
+    const host = this.requireCurrentHost(sessionId, memberToken);
     const current = this.workspaceState(sessionId);
     const selectedStillExists =
       current?.selected_thread_id &&
@@ -1905,6 +1951,28 @@ export class SessionStore {
         409,
         "thread_not_selected",
         "The owner must select this Codex task before it can be imported",
+      );
+    }
+    let snapshotBytes = 0;
+    for (const file of input.files) {
+      const actualSize = Buffer.byteLength(file.content);
+      if (actualSize !== file.size || contentSha256(file.content) !== file.sha256) {
+        throw new ProtocolError(
+          400,
+          "invalid_workspace_file",
+          "Host workspace file metadata does not match its content",
+        );
+      }
+      snapshotBytes += actualSize;
+    }
+    if (
+      input.files.length > MAX_WORKSPACE_FILE_COUNT ||
+      snapshotBytes > MAX_WORKSPACE_FILE_BYTES
+    ) {
+      throw new ProtocolError(
+        413,
+        "workspace_capacity_exceeded",
+        "The shared workspace file snapshot exceeds the session limit",
       );
     }
     const syncedAt = now();
@@ -2015,7 +2083,7 @@ export class SessionStore {
   getWorkspace(sessionId: string, memberToken: string): WorkspaceSummary {
     const member = this.requireMember(sessionId, memberToken, true);
     const state = this.workspaceState(sessionId);
-    if (!state) {
+    if (!state?.host_token_id || !state.host_generation) {
       return {
         hostConnected: false,
         hostDeviceLabel: null,
@@ -2082,7 +2150,21 @@ export class SessionStore {
     if (!state?.host_generation || !state.host_token_id) {
       throw new ProtocolError(409, "host_not_paired", "Pair the local Codex host first");
     }
+    if (!state.selected_thread_id) {
+      throw new ProtocolError(
+        409,
+        "workspace_thread_not_selected",
+        "Select a Codex task before opening or editing workspace files",
+      );
+    }
     const path = normalizeWorkspaceOperationPath(input.path);
+    if (codexConfigRelativePath(path) && input.kind !== "read") {
+      throw new ProtocolError(
+        403,
+        "workspace_file_not_shared",
+        "Codex configuration is read-only in the collaboration editor",
+      );
+    }
     if (input.kind === "write") {
       this.requireRoomOpen(sessionId);
       if (member.role !== "owner" && member.workspaceFileAccess !== "workspace-write") {
@@ -2125,6 +2207,15 @@ export class SessionStore {
 
     const operationId = randomUUID();
     const requestedAt = now();
+    if (input.kind === "write") {
+      this.assertWorkspaceWriteAdmission(
+        sessionId,
+        member.id,
+        path,
+        Buffer.byteLength(input.content),
+        requestedAt,
+      );
+    }
     const activeForMember = this.db
       .prepare(`
         SELECT COUNT(*) AS count FROM workspace_file_operations
@@ -2152,8 +2243,9 @@ export class SessionStore {
       .prepare(`
         INSERT INTO workspace_file_operations
           (id, session_id, requested_by_member_id, requested_by_display_name,
-           host_generation, kind, path, request_content, expected_sha256, status, requested_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)
+           host_generation, kind, path, request_content, request_size,
+           expected_sha256, status, requested_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)
       `)
       .run(
         operationId,
@@ -2164,6 +2256,7 @@ export class SessionStore {
         input.kind,
         path,
         input.kind === "write" ? input.content : null,
+        input.kind === "write" ? Buffer.byteLength(input.content) : null,
         input.kind === "write" ? input.expectedSha256 : null,
         requestedAt,
       );
@@ -2231,7 +2324,8 @@ export class SessionStore {
       this.db
         .prepare(`
           UPDATE workspace_file_operations
-          SET status = 'queued', started_at = NULL, lease_id = NULL
+          SET status = 'queued', started_at = NULL, lease_id = NULL,
+              lease_expires_at = NULL
           WHERE session_id = ? AND host_generation = ?
             AND status = 'processing' AND started_at < ?
         `)
@@ -2282,14 +2376,15 @@ export class SessionStore {
           continue;
         }
         const leaseId = randomUUID();
+        const leaseExpiresAt = new Date(Date.now() + FILE_OPERATION_LEASE_MS).toISOString();
         const claimed = this.db
           .prepare(`
             UPDATE workspace_file_operations
-            SET status = 'processing', started_at = ?, lease_id = ?,
+            SET status = 'processing', started_at = ?, lease_id = ?, lease_expires_at = ?,
                 error_code = NULL, error_message = NULL
             WHERE id = ? AND session_id = ? AND host_generation = ? AND status = 'queued'
           `)
-          .run(claimedAt, leaseId, row.id, sessionId, host.generation);
+          .run(claimedAt, leaseId, leaseExpiresAt, row.id, sessionId, host.generation);
         if (claimed.changes !== 1) continue;
         const current = this.workspaceFileOperationRowById(sessionId, row.id);
         this.db.exec("COMMIT");
@@ -2297,6 +2392,7 @@ export class SessionStore {
           operation: {
             ...this.toWorkspaceFileOperation(current),
             leaseId,
+            leaseExpiresAt,
             requestContent: current.request_content,
           },
           rejected,
@@ -2308,7 +2404,64 @@ export class SessionStore {
     }
   }
 
+  confirmWorkspaceFileOperationLease(
+    sessionId: string,
+    memberToken: string,
+    operationId: string,
+    leaseId: string,
+  ): WorkspaceFileOperationClaim {
+    const host = this.requireCurrentHost(sessionId, memberToken);
+    const row = this.workspaceFileOperationRowById(sessionId, operationId);
+    if (
+      row.status !== "processing" ||
+      row.host_generation !== host.generation ||
+      row.lease_id !== leaseId ||
+      !row.lease_expires_at ||
+      Date.parse(row.lease_expires_at) <= Date.now()
+    ) {
+      throw new ProtocolError(
+        409,
+        "workspace_operation_lease_expired",
+        "The workspace file operation lease expired before host execution",
+      );
+    }
+    const permissionError = this.workspaceOperationPermissionError(row);
+    if (permissionError) {
+      const failedAt = now();
+      this.db
+        .prepare(`
+          UPDATE workspace_file_operations
+          SET status = 'failed', request_content = NULL, lease_id = NULL,
+              lease_expires_at = NULL, error_code = ?, error_message = ?, completed_at = ?
+          WHERE id = ? AND session_id = ? AND status = 'processing' AND lease_id = ?
+        `)
+        .run(
+          permissionError.code,
+          permissionError.message,
+          failedAt,
+          operationId,
+          sessionId,
+          leaseId,
+        );
+      throw new ProtocolError(403, permissionError.code, permissionError.message);
+    }
+    if (row.kind === "write" && row.request_content !== null) {
+      this.assertWorkspaceFileCapacity(
+        sessionId,
+        row.path,
+        Buffer.byteLength(row.request_content),
+      );
+    }
+    return {
+      ...this.toWorkspaceFileOperation(row),
+      leaseId,
+      leaseExpiresAt: row.lease_expires_at,
+      requestContent: row.request_content,
+    };
+  }
+
   private backfillInFlightMessageThreadIds(): void {
+    const migratedAt = now();
     this.db.exec(`
       UPDATE messages
       SET selected_thread_id = (
@@ -2325,6 +2478,63 @@ export class SessionStore {
             AND workspace_state.selected_thread_id IS NOT NULL
         )
     `);
+    this.db
+      .prepare(`
+        UPDATE messages
+        SET delivery_status = 'failed',
+            codex_turn_id = 'migration:no-selected-workspace-task',
+            completed_at = ?
+        WHERE selected_thread_id IS NULL
+          AND kind IN ('codex_prompt', 'codex_stop')
+          AND delivery_status IN ('queued', 'submitted')
+      `)
+      .run(migratedAt);
+  }
+
+  private disconnectUnboundLegacyHosts(): void {
+    const disconnectedAt = now();
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db
+        .prepare(`
+          UPDATE workspace_file_operations
+          SET status = 'failed', request_content = NULL, result_content = NULL,
+              lease_id = NULL, lease_expires_at = NULL,
+              error_code = 'host_repair_required',
+              error_message = 'Pair the Codex host again after upgrading',
+              completed_at = COALESCE(completed_at, ?)
+          WHERE status IN ('queued', 'processing')
+            AND session_id IN (
+              SELECT session_id FROM workspace_state
+              WHERE host_token_id IS NULL OR host_generation IS NULL
+            )
+        `)
+        .run(disconnectedAt);
+      this.db
+        .prepare(`
+          UPDATE host_pairings SET used_at = ?
+          WHERE used_at IS NULL AND session_id IN (
+            SELECT session_id FROM workspace_state
+            WHERE host_token_id IS NULL OR host_generation IS NULL
+          )
+        `)
+        .run(disconnectedAt);
+      this.db.exec(`
+        DELETE FROM workspace_files
+        WHERE session_id IN (
+          SELECT session_id FROM workspace_state
+          WHERE host_token_id IS NULL OR host_generation IS NULL
+        );
+        UPDATE workspace_state
+        SET catalog_json = '[]', selected_thread_id = NULL, history_json = '[]',
+            codex_runtime_status = 'unavailable', synced_at = NULL
+        WHERE host_token_id IS NULL OR host_generation IS NULL;
+      `);
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   completeWorkspaceFileOperation(
@@ -2346,13 +2556,19 @@ export class SessionStore {
     if (
       row.status !== "processing" ||
       row.host_generation !== host.generation ||
-      row.lease_id !== input.leaseId
+      row.lease_id !== input.leaseId ||
+      !row.lease_expires_at ||
+      Date.parse(row.lease_expires_at) <= Date.now()
     ) {
       throw new ProtocolError(
         409,
         "workspace_operation_not_processing",
         "The file operation is not currently claimed by the host",
       );
+    }
+    const permissionError = this.workspaceOperationPermissionError(row);
+    if (permissionError) {
+      throw new ProtocolError(403, permissionError.code, permissionError.message);
     }
     const file = input.file ?? null;
     if (file) {
@@ -2400,14 +2616,18 @@ export class SessionStore {
     const completedAt = now();
     this.db.exec("BEGIN IMMEDIATE");
     try {
+      if (file) {
+        this.assertWorkspaceFileCapacity(sessionId, row.path, file.size);
+      }
       const updated = this.db
         .prepare(`
           UPDATE workspace_file_operations
           SET status = ?, request_content = NULL,
               result_content = ?, result_size = ?, result_modified_at = ?, result_sha256 = ?,
-              error_code = ?, error_message = ?, completed_at = ?, lease_id = NULL
+              error_code = ?, error_message = ?, completed_at = ?, lease_id = NULL,
+              lease_expires_at = NULL
           WHERE id = ? AND session_id = ? AND host_generation = ?
-            AND status = 'processing' AND lease_id = ?
+            AND status = 'processing' AND lease_id = ? AND lease_expires_at > ?
         `)
         .run(
           input.status,
@@ -2422,6 +2642,7 @@ export class SessionStore {
           sessionId,
           host.generation,
           input.leaseId,
+          completedAt,
         );
       if (updated.changes !== 1) {
         throw new ProtocolError(
@@ -2614,8 +2835,8 @@ export class SessionStore {
       .prepare(`
         INSERT INTO member_tokens
           (id, session_id, member_id, token_hash, device_label, created_at,
-           account_session_id, expires_at, revoked_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
+           account_session_id, expires_at, revoked_at, token_purpose)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'account')
       `)
       .run(
         randomUUID(),
@@ -2705,6 +2926,13 @@ export class SessionStore {
   }
 
   private requireOwner(sessionId: string, memberToken: string): Member {
+    if (memberToken.startsWith("cch_")) {
+      throw new ProtocolError(
+        403,
+        "browser_owner_required",
+        "Use the owner browser session for room administration",
+      );
+    }
     const member = this.requireMember(sessionId, memberToken, true);
     if (member.role !== "owner") {
       throw new ProtocolError(403, "owner_required", "Only the owner can manage the host workspace");
@@ -2715,53 +2943,42 @@ export class SessionStore {
   private requireCurrentHost(
     sessionId: string,
     memberToken: string,
-    allowInitialize = false,
   ): { tokenId: string; generation: string } {
-    const owner = this.requireOwner(sessionId, memberToken);
+    if (!memberToken.startsWith("cch_")) {
+      throw new ProtocolError(
+        403,
+        "host_token_required",
+        "Use the currently paired Codex host token for workspace processing",
+      );
+    }
+    const owner = this.requireMember(sessionId, memberToken, true);
+    if (owner.role !== "owner") {
+      throw new ProtocolError(403, "owner_required", "Only the owner host can publish a workspace");
+    }
     const tokenHash = hashToken(memberToken);
     const state = this.workspaceState(sessionId);
-    let token = this.db
+    if (!state?.host_token_id || !state.host_generation) {
+      throw new ProtocolError(
+        409,
+        "host_repair_required",
+        "Pair this Codex host again before publishing or processing workspace data",
+      );
+    }
+    const token = this.db
       .prepare(`
         SELECT id FROM member_tokens
         WHERE session_id = ? AND member_id = ? AND token_hash = ?
           AND revoked_at IS NULL
       `)
       .get(sessionId, owner.id, tokenHash) as { id: string } | undefined;
-    if (state?.host_token_id && token?.id !== state.host_token_id) {
+    if (token?.id !== state.host_token_id) {
       throw new ProtocolError(
         403,
         "current_host_required",
         "Only the currently paired host can publish or process workspace data",
       );
     }
-    if (!state && !allowInitialize) {
-      throw new ProtocolError(409, "host_not_paired", "Pair the local Codex host first");
-    }
-    if (!token) {
-      token = { id: randomUUID() };
-      this.db
-        .prepare(`
-          INSERT INTO member_tokens
-            (id, session_id, member_id, token_hash, device_label, created_at)
-          VALUES (?, ?, ?, ?, 'Bound owner host', ?)
-        `)
-        .run(token.id, sessionId, owner.id, tokenHash, now());
-    }
-
-    if (!state) {
-      return { tokenId: token.id, generation: randomUUID() };
-    }
-
-    const generation = state.host_generation ?? randomUUID();
-    if (!state.host_token_id || !state.host_generation) {
-      this.db
-        .prepare(`
-          UPDATE workspace_state SET host_token_id = ?, host_generation = ?
-          WHERE session_id = ? AND (host_token_id IS NULL OR host_token_id = ?)
-        `)
-        .run(token.id, generation, sessionId, token.id);
-    }
-    return { tokenId: token.id, generation };
+    return { tokenId: token.id, generation: state.host_generation };
   }
 
   private requireRoomOpen(sessionId: string): void {
@@ -2794,6 +3011,123 @@ export class SessionStore {
       );
     }
     return row;
+  }
+
+  private assertWorkspaceWriteAdmission(
+    sessionId: string,
+    memberId: string,
+    path: string,
+    contentBytes: number,
+    requestedAt: string,
+  ): void {
+    const cutoff = new Date(Date.parse(requestedAt) - 60_000).toISOString();
+    const recent = this.db
+      .prepare(`
+        SELECT COUNT(*) AS count,
+               COALESCE(SUM(request_size), 0) AS bytes
+        FROM workspace_file_operations
+        WHERE session_id = ? AND requested_by_member_id = ? AND kind = 'write'
+          AND requested_at >= ?
+      `)
+      .get(sessionId, memberId, cutoff) as { count: number; bytes: number };
+    if (
+      recent.count >= MAX_MEMBER_WRITE_OPERATIONS_PER_MINUTE ||
+      recent.bytes + contentBytes > MAX_MEMBER_WRITE_BYTES_PER_MINUTE
+    ) {
+      throw new ProtocolError(
+        429,
+        "workspace_write_rate_limit",
+        "Wait before sending more workspace file changes",
+      );
+    }
+
+    const projected = new Map(
+      (
+        this.db
+          .prepare("SELECT path, size FROM workspace_files WHERE session_id = ?")
+          .all(sessionId) as unknown as Array<{ path: string; size: number }>
+      ).map((file) => [file.path, file.size]),
+    );
+    const activeWrites = this.db
+      .prepare(`
+        SELECT path, LENGTH(CAST(request_content AS BLOB)) AS content_bytes
+        FROM workspace_file_operations
+        WHERE session_id = ? AND kind = 'write'
+          AND status IN ('queued', 'processing') AND request_content IS NOT NULL
+      `)
+      .all(sessionId) as unknown as Array<{ path: string; content_bytes: number }>;
+    for (const active of activeWrites) projected.set(active.path, active.content_bytes);
+    projected.set(path, contentBytes);
+    const projectedBytes = [...projected.values()].reduce((total, size) => total + size, 0);
+    if (
+      projected.size > MAX_WORKSPACE_FILE_COUNT ||
+      projectedBytes > MAX_WORKSPACE_FILE_BYTES
+    ) {
+      throw new ProtocolError(
+        413,
+        "workspace_capacity_exceeded",
+        "The shared workspace has reached its file storage limit",
+      );
+    }
+  }
+
+  private workspaceOperationPermissionError(
+    row: WorkspaceFileOperationRow,
+  ): { code: string; message: string } | null {
+    const requester = this.db
+      .prepare(`
+        SELECT status, role, workspace_file_access
+        FROM members WHERE session_id = ? AND id = ?
+      `)
+      .get(row.session_id, row.requested_by_member_id) as
+      | Pick<MemberRow, "status" | "role" | "workspace_file_access">
+      | undefined;
+    if (requester?.status !== "approved") {
+      return {
+        code: "member_not_approved",
+        message: "The requesting member is no longer approved",
+      };
+    }
+    if (
+      row.kind === "write" &&
+      requester.role !== "owner" &&
+      requester.workspace_file_access !== "workspace-write"
+    ) {
+      return {
+        code: "workspace_read_only",
+        message: "Workspace write access was removed before host execution",
+      };
+    }
+    return null;
+  }
+
+  private assertWorkspaceFileCapacity(
+    sessionId: string,
+    path: string,
+    contentBytes: number,
+  ): void {
+    const current = this.db
+      .prepare(`
+        SELECT COUNT(*) AS count, COALESCE(SUM(size), 0) AS bytes,
+               COALESCE(MAX(CASE WHEN path = ? THEN size END), 0) AS replaced_bytes,
+               MAX(CASE WHEN path = ? THEN 1 ELSE 0 END) AS path_exists
+        FROM workspace_files WHERE session_id = ?
+      `)
+      .get(path, path, sessionId) as {
+      count: number;
+      bytes: number;
+      replaced_bytes: number;
+      path_exists: number;
+    };
+    const nextCount = current.count + (current.path_exists ? 0 : 1);
+    const nextBytes = current.bytes - current.replaced_bytes + contentBytes;
+    if (nextCount > MAX_WORKSPACE_FILE_COUNT || nextBytes > MAX_WORKSPACE_FILE_BYTES) {
+      throw new ProtocolError(
+        413,
+        "workspace_capacity_exceeded",
+        "The shared workspace has reached its file storage limit",
+      );
+    }
   }
 
   private enforceWorkspaceFileOperationRetention(sessionId: string): void {

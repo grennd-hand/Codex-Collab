@@ -318,14 +318,20 @@ export class WorkspaceSyncService {
       const profile = await this.profiles.read();
       if (!profile || profile.role !== "owner") return 0;
       const relay = new RelayClient(profile.relayUrl);
-      const sandbox = await FileSandbox.create(profile.projectRoot);
+      const [projectSandbox, codexConfigSandbox] = await Promise.all([
+        FileSandbox.create(profile.projectRoot),
+        profile.codexConfigRoot
+          ? FileSandbox.create(profile.codexConfigRoot)
+          : Promise.resolve(null),
+      ]);
       let processed = 0;
       while (processed < 20) {
         const operation = await processNextWorkspaceFileOperation(
           profile.sessionId,
           profile.memberToken,
           relay,
-          sandbox,
+          projectSandbox,
+          codexConfigSandbox,
         );
         if (!operation) break;
         processed += 1;

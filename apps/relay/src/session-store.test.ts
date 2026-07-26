@@ -14,6 +14,20 @@ function createStore(): SessionStore {
   return store;
 }
 
+function selectIdeThread(
+  store: SessionStore,
+  sessionId: string,
+  ownerToken: string,
+  hostToken: string,
+): void {
+  store.publishWorkspaceCatalog(sessionId, hostToken, {
+    deviceLabel: "Owner PC",
+    rootLabel: "Project",
+    threads: [{ id: "thread-ide", name: "IDE task", preview: "", updatedAt: null }],
+  });
+  store.selectWorkspaceThread(sessionId, ownerToken, "thread-ide");
+}
+
 afterEach(() => {
   for (const store of stores.splice(0)) {
     store.close();
@@ -422,6 +436,8 @@ describe("SessionStore", () => {
   it("migrates delivery tracking without losing existing attachments", async () => {
     const directory = await mkdtemp(join(tmpdir(), "codex-collab-migration-"));
     const filename = join(directory, "relay.sqlite");
+    const browserToken = "ccm_legacy-browser-token";
+    const oldHostToken = "cch_legacy-host-token";
     const legacy = new DatabaseSync(filename);
     legacy.exec(`
       PRAGMA foreign_keys = ON;
@@ -460,6 +476,14 @@ describe("SessionStore", () => {
         size INTEGER NOT NULL,
         content BLOB NOT NULL
       );
+      CREATE TABLE member_tokens (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        member_id TEXT NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        device_label TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
       CREATE TABLE workspace_state (
         session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
         host_device_label TEXT NOT NULL,
@@ -470,10 +494,21 @@ describe("SessionStore", () => {
         synced_at TEXT
       );
       INSERT INTO sessions VALUES ('session-1', 'Room', 'owner-1', '2026-07-25T00:00:00.000Z');
+      INSERT INTO sessions VALUES ('session-2', 'No task room', 'owner-2', '2026-07-25T00:00:00.000Z');
       INSERT INTO members VALUES (
         'owner-1', 'session-1', 'Owner', NULL, 'owner', 'approved',
-        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        '${createHash("sha256").update(browserToken).digest("hex")}',
         '2026-07-25T00:00:00.000Z', '2026-07-25T00:00:00.000Z'
+      );
+      INSERT INTO members VALUES (
+        'owner-2', 'session-2', 'Owner 2', NULL, 'owner', 'approved',
+        '${createHash("sha256").update("ccm_second-browser-token").digest("hex")}',
+        '2026-07-25T00:00:00.000Z', '2026-07-25T00:00:00.000Z'
+      );
+      INSERT INTO member_tokens VALUES (
+        'legacy-host-token-id', 'session-1', 'owner-1',
+        '${createHash("sha256").update(oldHostToken).digest("hex")}',
+        'Old host', '2026-07-25T00:00:00.000Z'
       );
       INSERT INTO messages VALUES (
         'message-1', 'session-1', 'owner-1', 'codex_prompt', 'Run',
@@ -482,6 +517,10 @@ describe("SessionStore", () => {
       INSERT INTO messages VALUES (
         'message-2', 'session-1', 'owner-1', 'codex_prompt', 'Already failed',
         NULL, 'failed', '2026-07-25T00:00:01.000Z'
+      );
+      INSERT INTO messages VALUES (
+        'message-3', 'session-2', 'owner-2', 'codex_prompt', 'No task',
+        NULL, 'queued', '2026-07-25T00:00:02.000Z'
       );
       INSERT INTO workspace_state VALUES (
         'session-1', 'Legacy host', 'Project', '[]', 'thread-legacy', '[]', NULL
@@ -521,6 +560,16 @@ describe("SessionStore", () => {
       const terminal = migrated.db
         .prepare("SELECT selected_thread_id FROM messages WHERE id = 'message-2'")
         .get() as { selected_thread_id: string | null };
+      const unbound = migrated.db
+        .prepare(
+          "SELECT delivery_status, codex_turn_id, selected_thread_id, completed_at FROM messages WHERE id = 'message-3'",
+        )
+        .get() as {
+        delivery_status: string;
+        codex_turn_id: string | null;
+        selected_thread_id: string | null;
+        completed_at: string | null;
+      };
 
       expect(message).toEqual({
         delivery_status: "submitted",
@@ -529,6 +578,53 @@ describe("SessionStore", () => {
         completed_at: null,
       });
       expect(terminal.selected_thread_id).toBeNull();
+      expect(unbound).toMatchObject({
+        delivery_status: "failed",
+        codex_turn_id: "migration:no-selected-workspace-task",
+        selected_thread_id: null,
+        completed_at: expect.any(String),
+      });
+      expect(migrated.getWorkspace("session-1", browserToken).hostConnected).toBe(false);
+      expect(() => migrated.getWorkspace("session-1", oldHostToken)).toThrowError(/invalid/i);
+      expect(() =>
+        migrated.publishWorkspaceCatalog("session-1", browserToken, {
+          deviceLabel: "Browser",
+          rootLabel: "Project",
+          threads: [],
+        }),
+      ).toThrowError(/host token/i);
+      expect(() =>
+        migrated.createHostPairing("session-1", oldHostToken, 10),
+      ).toThrowError(/browser session/i);
+      expect(() => migrated.createInvite("session-1", oldHostToken, 10, 1)).toThrowError(
+        /browser session/i,
+      );
+      expect(() =>
+        migrated.approveMember("session-1", oldHostToken, "missing-member"),
+      ).toThrowError(/browser session/i);
+      expect(() =>
+        migrated.claimNextWorkspaceFileOperation("session-1", oldHostToken),
+      ).toThrowError(/invalid/i);
+      expect(() =>
+        migrated.publishWorkspaceCatalog("session-1", oldHostToken, {
+          deviceLabel: "Old host",
+          rootLabel: "Old project",
+          threads: [],
+        }),
+      ).toThrowError(/invalid/i);
+      const repairedPairing = migrated.createHostPairing("session-1", browserToken, 10);
+      const repairedHost = migrated.claimHostPairing(
+        repairedPairing.pairingToken,
+        "New host",
+        "Project",
+      );
+      expect(
+        migrated.publishWorkspaceCatalog("session-1", repairedHost.memberToken, {
+          deviceLabel: "New host",
+          rootLabel: "Project",
+          threads: [],
+        }).hostConnected,
+      ).toBe(true);
       expect(new TextDecoder().decode(attachment?.content)).toBe("body");
       expect(
         (
@@ -598,6 +694,60 @@ describe("SessionStore", () => {
     expect(hostRows[0]?.token_hash).not.toContain(claimed.memberToken);
     expect(pairingRows[0]?.token_hash).toMatch(/^[a-f0-9]{64}$/);
     expect(hostRows[0]?.token_hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(() =>
+      store.createInvite(created.session.id, claimed.memberToken, 10, 1),
+    ).toThrowError(/browser session/i);
+  });
+
+  it("requires a selected task and queues only safe read-only Codex config paths", () => {
+    const store = createStore();
+    const created = store.createSession("Config IDE room", "Owner");
+    const pairing = store.createHostPairing(created.session.id, created.memberToken, 10);
+    const host = store.claimHostPairing(pairing.pairingToken, "Owner PC", "Project");
+
+    expect(() =>
+      store.createWorkspaceFileOperation(created.session.id, created.memberToken, {
+        kind: "read",
+        path: ".codex/config.toml",
+      }),
+    ).toThrowError(/select a Codex task/i);
+    selectIdeThread(store, created.session.id, created.memberToken, host.memberToken);
+    const read = store.createWorkspaceFileOperation(
+      created.session.id,
+      created.memberToken,
+      { kind: "read", path: ".codex/config.toml" },
+    );
+    const claim = store.claimNextWorkspaceFileOperation(
+      created.session.id,
+      host.memberToken,
+    ).operation!;
+    expect(claim).toMatchObject({
+      id: read.id,
+      path: ".codex/config.toml",
+      hostGeneration: expect.any(String),
+      leaseId: expect.any(String),
+      leaseExpiresAt: expect.any(String),
+    });
+    expect(() =>
+      store.createWorkspaceFileOperation(created.session.id, created.memberToken, {
+        kind: "write",
+        path: ".codex/config.toml",
+        content: "model = 'changed'",
+        expectedSha256: "a".repeat(64),
+      }),
+    ).toThrowError(/read-only/i);
+    for (const path of [
+      ".codex/auth.json",
+      ".codex/sessions/thread.json",
+      ".codex/memories/MEMORY.md",
+    ]) {
+      expect(() =>
+        store.createWorkspaceFileOperation(created.session.id, created.memberToken, {
+          kind: "read",
+          path,
+        }),
+      ).toThrowError(/not available/i);
+    }
   });
 
   it("queues auditable host file operations behind explicit member write access", () => {
@@ -605,6 +755,7 @@ describe("SessionStore", () => {
     const created = store.createSession("IDE room", "Owner");
     const pairing = store.createHostPairing(created.session.id, created.memberToken, 10);
     const host = store.claimHostPairing(pairing.pairingToken, "Owner PC", "Project");
+    selectIdeThread(store, created.session.id, created.memberToken, host.memberToken);
     const invite = store.createInvite(created.session.id, created.memberToken, 60, 1);
     const guest = store.joinInvite(invite.inviteToken, "Editor");
     store.approveMember(created.session.id, created.memberToken, guest.member.id);
@@ -711,6 +862,7 @@ describe("SessionStore", () => {
     const created = store.createSession("Secure IDE room", "Owner");
     const pairing = store.createHostPairing(created.session.id, created.memberToken, 10);
     const host = store.claimHostPairing(pairing.pairingToken, "Owner PC", "Project");
+    selectIdeThread(store, created.session.id, created.memberToken, host.memberToken);
     const invite = store.createInvite(created.session.id, created.memberToken, 60, 1);
     const guest = store.joinInvite(invite.inviteToken, "Editor");
     store.approveMember(created.session.id, created.memberToken, guest.member.id);
@@ -832,6 +984,7 @@ describe("SessionStore", () => {
     const created = first.createSession("Durable IDE room", "Owner");
     const pairing = first.createHostPairing(created.session.id, created.memberToken, 10);
     const host = first.claimHostPairing(pairing.pairingToken, "Owner PC", "Project");
+    selectIdeThread(first, created.session.id, created.memberToken, host.memberToken);
     const queued = first.createWorkspaceFileOperation(
       created.session.id,
       created.memberToken,
@@ -937,7 +1090,7 @@ describe("SessionStore", () => {
     ).toThrow();
     expect(() =>
       store.claimNextWorkspaceFileOperation(created.session.id, created.memberToken),
-    ).toThrowError(/currently paired host/i);
+    ).toThrowError(/host token/i);
     expect(
       store.publishWorkspaceCatalog(created.session.id, secondHost.memberToken, {
         deviceLabel: "New PC",
@@ -952,6 +1105,7 @@ describe("SessionStore", () => {
     const created = store.createSession("Lease room", "Owner");
     const pairing = store.createHostPairing(created.session.id, created.memberToken, 10);
     const host = store.claimHostPairing(pairing.pairingToken, "Owner PC", "Project");
+    selectIdeThread(store, created.session.id, created.memberToken, host.memberToken);
     const queued = store.createWorkspaceFileOperation(
       created.session.id,
       created.memberToken,
@@ -994,11 +1148,155 @@ describe("SessionStore", () => {
     ).toBe("completed");
   });
 
+  it("expires a stalled lease without waiting for a second claimant", () => {
+    const store = createStore();
+    const created = store.createSession("Expired lease room", "Owner");
+    const pairing = store.createHostPairing(created.session.id, created.memberToken, 10);
+    const host = store.claimHostPairing(pairing.pairingToken, "Owner PC", "Project");
+    selectIdeThread(store, created.session.id, created.memberToken, host.memberToken);
+    const queued = store.createWorkspaceFileOperation(
+      created.session.id,
+      created.memberToken,
+      { kind: "read", path: "src/stalled.ts" },
+    );
+    const claim = store.claimNextWorkspaceFileOperation(
+      created.session.id,
+      host.memberToken,
+    ).operation!;
+    store.db
+      .prepare("UPDATE workspace_file_operations SET lease_expires_at = ? WHERE id = ?")
+      .run("2000-01-01T00:00:00.000Z", queued.id);
+
+    expect(() =>
+      store.confirmWorkspaceFileOperationLease(
+        created.session.id,
+        host.memberToken,
+        queued.id,
+        claim.leaseId,
+      ),
+    ).toThrowError(/lease expired/i);
+    expect(() =>
+      store.completeWorkspaceFileOperation(created.session.id, host.memberToken, queued.id, {
+        status: "failed",
+        leaseId: claim.leaseId,
+        errorCode: "test",
+        errorMessage: "test",
+      }),
+    ).toThrowError(/not currently claimed/i);
+  });
+
+  it("rechecks member write permission when confirming and completing a lease", () => {
+    const store = createStore();
+    const created = store.createSession("Revoked lease room", "Owner");
+    const pairing = store.createHostPairing(created.session.id, created.memberToken, 10);
+    const host = store.claimHostPairing(pairing.pairingToken, "Owner PC", "Project");
+    selectIdeThread(store, created.session.id, created.memberToken, host.memberToken);
+    const invite = store.createInvite(created.session.id, created.memberToken, 10, 1);
+    const guest = store.joinInvite(invite.inviteToken, "Editor");
+    store.approveMember(created.session.id, created.memberToken, guest.member.id);
+    store.updateMemberWorkspaceFileAccess(
+      created.session.id,
+      created.memberToken,
+      guest.member.id,
+      "workspace-write",
+    );
+    const queued = store.createWorkspaceFileOperation(
+      created.session.id,
+      guest.memberToken,
+      {
+        kind: "write",
+        path: "src/revoked.ts",
+        content: "export {};",
+        expectedSha256: "",
+      },
+    );
+    const claim = store.claimNextWorkspaceFileOperation(
+      created.session.id,
+      host.memberToken,
+    ).operation!;
+    store.updateMemberWorkspaceFileAccess(
+      created.session.id,
+      created.memberToken,
+      guest.member.id,
+      "read-only",
+    );
+
+    expect(() =>
+      store.confirmWorkspaceFileOperationLease(
+        created.session.id,
+        host.memberToken,
+        queued.id,
+        claim.leaseId,
+      ),
+    ).toThrowError(/removed before host execution/i);
+    expect(
+      store.getWorkspaceFileOperation(created.session.id, created.memberToken, queued.id),
+    ).toMatchObject({ status: "failed", errorCode: "workspace_read_only" });
+    expect(
+      store.db
+        .prepare("SELECT request_content, lease_id FROM workspace_file_operations WHERE id = ?")
+        .get(queued.id),
+    ).toEqual({ request_content: null, lease_id: null });
+
+    store.updateMemberWorkspaceFileAccess(
+      created.session.id,
+      created.memberToken,
+      guest.member.id,
+      "workspace-write",
+    );
+    const lateRevoked = store.createWorkspaceFileOperation(
+      created.session.id,
+      guest.memberToken,
+      {
+        kind: "write",
+        path: "src/late-revoked.ts",
+        content: "export const value = 1;",
+        expectedSha256: "",
+      },
+    );
+    const lateClaim = store.claimNextWorkspaceFileOperation(
+      created.session.id,
+      host.memberToken,
+    ).operation!;
+    store.confirmWorkspaceFileOperationLease(
+      created.session.id,
+      host.memberToken,
+      lateRevoked.id,
+      lateClaim.leaseId,
+    );
+    store.updateMemberWorkspaceFileAccess(
+      created.session.id,
+      created.memberToken,
+      guest.member.id,
+      "read-only",
+    );
+    const lateContent = "export const value = 1;";
+    expect(() =>
+      store.completeWorkspaceFileOperation(
+        created.session.id,
+        host.memberToken,
+        lateRevoked.id,
+        {
+          status: "completed",
+          leaseId: lateClaim.leaseId,
+          file: {
+            path: lateRevoked.path,
+            content: lateContent,
+            size: Buffer.byteLength(lateContent),
+            modifiedAt: "2026-07-27T00:00:00.000Z",
+            sha256: createHash("sha256").update(lateContent).digest("hex"),
+          },
+        },
+      ),
+    ).toThrowError(/removed before host execution/i);
+  });
+
   it("caps active operations and retains bounded result bodies and audit rows", () => {
     const store = createStore();
     const created = store.createSession("Bounded IDE room", "Owner");
     const pairing = store.createHostPairing(created.session.id, created.memberToken, 10);
     const host = store.claimHostPairing(pairing.pairingToken, "Owner PC", "Project");
+    selectIdeThread(store, created.session.id, created.memberToken, host.memberToken);
     for (let index = 0; index < 8; index += 1) {
       store.createWorkspaceFileOperation(created.session.id, created.memberToken, {
         kind: "read",
@@ -1131,6 +1429,160 @@ describe("SessionStore", () => {
     ).toEqual({ count: 500 });
   });
 
+  it("enforces workspace file count and byte caps without double-counting updates", () => {
+    const store = createStore();
+    const created = store.createSession("Capacity room", "Owner");
+    const pairing = store.createHostPairing(created.session.id, created.memberToken, 10);
+    const host = store.claimHostPairing(pairing.pairingToken, "Owner PC", "Project");
+    selectIdeThread(store, created.session.id, created.memberToken, host.memberToken);
+    const insertFile = store.db.prepare(`
+      INSERT INTO workspace_files (session_id, path, size, modified_at, sha256, content)
+      VALUES (?, ?, ?, '2026-07-27T00:00:00.000Z', ?, ?)
+    `);
+    store.db.exec("BEGIN IMMEDIATE");
+    try {
+      for (let index = 0; index < 600; index += 1) {
+        insertFile.run(
+          created.session.id,
+          `src/existing-${index}.ts`,
+          0,
+          "a".repeat(64),
+          "",
+        );
+      }
+      store.db.exec("COMMIT");
+    } catch (error) {
+      store.db.exec("ROLLBACK");
+      throw error;
+    }
+    expect(() =>
+      store.createWorkspaceFileOperation(created.session.id, created.memberToken, {
+        kind: "write",
+        path: "src/new-file.ts",
+        content: "x",
+        expectedSha256: "",
+      }),
+    ).toThrowError(/storage limit/i);
+
+    const update = store.createWorkspaceFileOperation(
+      created.session.id,
+      created.memberToken,
+      {
+        kind: "write",
+        path: "src/existing-0.ts",
+        content: "x",
+        expectedSha256: "a".repeat(64),
+      },
+    );
+    const updateClaim = store.claimNextWorkspaceFileOperation(
+      created.session.id,
+      host.memberToken,
+    ).operation!;
+    store.confirmWorkspaceFileOperationLease(
+      created.session.id,
+      host.memberToken,
+      update.id,
+      updateClaim.leaseId,
+    );
+    expect(
+      store.completeWorkspaceFileOperation(
+        created.session.id,
+        host.memberToken,
+        update.id,
+        {
+          status: "completed",
+          leaseId: updateClaim.leaseId,
+          file: {
+            path: update.path,
+            content: "x",
+            size: 1,
+            modifiedAt: "2026-07-27T00:00:01.000Z",
+            sha256: createHash("sha256").update("x").digest("hex"),
+          },
+        },
+      ).status,
+    ).toBe("completed");
+    expect(
+      store.db
+        .prepare("SELECT COUNT(*) AS count FROM workspace_files WHERE session_id = ?")
+        .get(created.session.id),
+    ).toEqual({ count: 600 });
+
+    store.db
+      .prepare("DELETE FROM workspace_files WHERE session_id = ? AND path = ?")
+      .run(created.session.id, "src/existing-599.ts");
+    const raced = store.createWorkspaceFileOperation(
+      created.session.id,
+      created.memberToken,
+      {
+        kind: "write",
+        path: "src/raced.ts",
+        content: "raced",
+        expectedSha256: "",
+      },
+    );
+    const racedClaim = store.claimNextWorkspaceFileOperation(
+      created.session.id,
+      host.memberToken,
+    ).operation!;
+    store.confirmWorkspaceFileOperationLease(
+      created.session.id,
+      host.memberToken,
+      raced.id,
+      racedClaim.leaseId,
+    );
+    insertFile.run(created.session.id, "src/race-a.ts", 0, "c".repeat(64), "");
+    insertFile.run(created.session.id, "src/race-b.ts", 0, "d".repeat(64), "");
+    expect(() =>
+      store.completeWorkspaceFileOperation(
+        created.session.id,
+        host.memberToken,
+        raced.id,
+        {
+          status: "completed",
+          leaseId: racedClaim.leaseId,
+          file: {
+            path: raced.path,
+            content: "raced",
+            size: 5,
+            modifiedAt: "2026-07-27T00:00:02.000Z",
+            sha256: createHash("sha256").update("raced").digest("hex"),
+          },
+        },
+      ),
+    ).toThrowError(/storage limit/i);
+
+    store.db.prepare("DELETE FROM workspace_files WHERE session_id = ?").run(created.session.id);
+    store.db
+      .prepare(
+        "UPDATE workspace_file_operations SET status = 'failed', request_content = NULL, lease_id = NULL, lease_expires_at = NULL, completed_at = ? WHERE status IN ('queued', 'processing')",
+      )
+      .run("2026-07-27T00:00:03.000Z");
+    insertFile.run(
+      created.session.id,
+      "src/large.ts",
+      5_000_000,
+      "b".repeat(64),
+      "",
+    );
+    expect(() =>
+      store.createWorkspaceFileOperation(created.session.id, created.memberToken, {
+        kind: "write",
+        path: "src/another.ts",
+        content: "y",
+        expectedSha256: "",
+      }),
+    ).toThrowError(/storage limit/i);
+    expect(
+      store.createWorkspaceFileOperation(created.session.id, created.memberToken, {
+        kind: "write",
+        path: "src/large.ts",
+        content: "smaller",
+        expectedSha256: "b".repeat(64),
+      }).status,
+    ).toBe("queued");
+  });
+
   it("attributes every new Codex command to the selected workspace task", () => {
     const store = createStore();
     const created = store.createSession("Task room", "Owner");
@@ -1213,7 +1665,7 @@ describe("SessionStore", () => {
           content: "# Codex Collab",
           size: 14,
           modifiedAt: "2026-07-25T00:00:00.000Z",
-          sha256: "a".repeat(64),
+          sha256: createHash("sha256").update("# Codex Collab").digest("hex"),
         },
       ],
     });
@@ -1239,7 +1691,7 @@ describe("SessionStore", () => {
           content: "# Codex Collab",
           size: 14,
           modifiedAt: "2026-07-25T00:00:00.000Z",
-          sha256: "a".repeat(64),
+          sha256: createHash("sha256").update("# Codex Collab").digest("hex"),
         },
       ],
     });
@@ -1284,7 +1736,7 @@ describe("SessionStore", () => {
           content: "keep me",
           size: 7,
           modifiedAt: "2026-07-25T00:00:00.000Z",
-          sha256: "b".repeat(64),
+          sha256: createHash("sha256").update("keep me").digest("hex"),
         },
       ],
     });

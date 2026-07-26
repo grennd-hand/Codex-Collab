@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createReadStream, existsSync, mkdirSync } from "node:fs";
 import {
   createServer,
@@ -275,9 +276,23 @@ function parseWorkspaceFiles(value: unknown): WorkspaceFileContent[] {
     if (!Number.isInteger(size) || (size as number) < 0 || (size as number) > 256_000) {
       throw new ProtocolError(400, "invalid_request", `files[${index}].size is invalid`);
     }
+    if (size !== Buffer.byteLength(content)) {
+      throw new ProtocolError(
+        400,
+        "invalid_request",
+        `files[${index}].size does not match its content`,
+      );
+    }
     const sha256 = requiredString(record.sha256, `files[${index}].sha256`, 64);
     if (!/^[a-f0-9]{64}$/.test(sha256)) {
       throw new ProtocolError(400, "invalid_request", `files[${index}].sha256 is invalid`);
+    }
+    if (createHash("sha256").update(content).digest("hex") !== sha256) {
+      throw new ProtocolError(
+        400,
+        "invalid_request",
+        `files[${index}].sha256 does not match its content`,
+      );
     }
     const modifiedAt = requiredString(record.modifiedAt, `files[${index}].modifiedAt`, 40);
     if (Number.isNaN(Date.parse(modifiedAt))) {
@@ -1348,6 +1363,25 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    const workspaceFileOperationLeaseMatch = url.pathname.match(
+      /^\/v1\/sessions\/([^/]+)\/workspace\/file-operations\/([^/]+)\/lease-confirmation$/,
+    );
+    if (
+      method === "POST" &&
+      workspaceFileOperationLeaseMatch?.[1] &&
+      workspaceFileOperationLeaseMatch[2]
+    ) {
+      const body = await readJson(request, 4_096);
+      const operation = store.confirmWorkspaceFileOperationLease(
+        workspaceFileOperationLeaseMatch[1],
+        bearerToken(request),
+        workspaceFileOperationLeaseMatch[2],
+        requiredString(body.leaseId, "leaseId", 100),
+      );
+      sendJson(response, 200, { operation });
+      return;
+    }
+
     const workspaceFileOperationResultMatch = url.pathname.match(
       /^\/v1\/sessions\/([^/]+)\/workspace\/file-operations\/([^/]+)\/result$/,
     );
@@ -1400,13 +1434,6 @@ const server = createServer(async (request, response) => {
         "file.operation.updated",
         toWorkspaceFileOperationEvent(operation),
       );
-      if (operation.resultFile) {
-        broadcast(workspaceFileOperationResultMatch[1], "workspace.updated", {
-          path: operation.resultFile.path,
-          sha256: operation.resultFile.sha256,
-          modifiedAt: operation.resultFile.modifiedAt,
-        });
-      }
       sendJson(response, 200, { operation });
       return;
     }
