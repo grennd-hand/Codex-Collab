@@ -102,11 +102,13 @@ private-key material, high-confidence embedded tokens and symlinks. The same pat
 secret-content policy runs at the Relay boundary and again on the Host. Switching the selected
 Codex task clears the previous history and file catalog before the new import.
 
-On Windows, an existing-file save uses the operating system's replace-with-backup primitive. The
-Host atomically captures the version present at replacement time, verifies its SHA-256, rolls back
-on mismatch and keeps a bounded local recovery journal. New files use no-clobber publication.
-Unsupported Host platforms fail writes closed rather than falling back to a check-then-rename
-sequence.
+On Windows, an existing-file save holds native file and directory handles that deny concurrent
+write/delete sharing, hashes the exact opened target, records and flushes a prepared journal, moves
+the observed target into a bounded recovery area, then publishes the candidate with no-replace
+semantics. If another writer creates the target in the brief publication window, the Host reports a
+conflict and preserves the target, recovery and candidate; it never rolls back over the concurrent
+version. An interrupted partial transaction remains manually recoverable from the journal. New
+files also use no-clobber publication. Unsupported Host platforms fail writes closed.
 
 The current IDE phase does not yet permit two Codex writers to share one checkout. The planned
 multi-writer phase assigns each writer a separate Git worktree; the relay coordinates messages and

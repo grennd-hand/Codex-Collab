@@ -155,8 +155,10 @@ Project file operations are durable Relay jobs, but only the currently paired Ho
 Claims expire, permissions are checked again immediately before disk access, and operation contents
 and audit rows have bounded retention. `.codex` files use their separately approved root and remain
 read-only even when a member has project write access. Phase-one direct writes require a Windows
-Host so the plugin can use the operating system's replace-with-backup primitive; unsupported Host
-platforms fail closed instead of falling back to a racy rename.
+Host so the plugin can hold native file and directory guards, verify the exact opened version,
+move that version into a bounded recovery area, then publish with no-replace semantics. If another
+writer creates a version during publication, the Host reports a conflict and preserves every
+version instead of rolling back over it. Unsupported Host platforms fail closed.
 
 The first IDE phase edits existing safe UTF-8 text files. File creation controls, rename/delete,
 terminal/debugger integration, extensions and multi-writer Git worktree merge queues remain later

@@ -123,8 +123,9 @@ Codex Collab 是一套 local-first 协作层，让小型可信团队通过同一
 5. 哈希变化时返回冲突，不静默覆盖。
 6. 文件操作先进入 Relay 持久队列，只有当前 Host token 与 Host generation 可以认领；
    30 秒租约到期、成员撤销或写权限撤销都会在磁盘访问前失败关闭。
-7. Windows Host 对已有文件使用系统 replace-with-backup 原语，原子捕获被替换版本后再
-   校验哈希；竞态时恢复冲突版本并保留有界恢复日志。非 Windows Host 第一阶段只读。
+7. Windows Host 通过原生句柄锁定并校验实际打开的版本，先将旧版本移入有界恢复区，
+   再以 no-replace 语义发布候选文件；发布窗口出现并发版本时保留目标、旧版和候选版，
+   绝不通过回滚覆盖并发版本。中断事务可按 journal 人工恢复。非 Windows Host 第一阶段只读。
 8. `.codex-collabignore`、扩展名允许列表、敏感文件名和高置信凭据内容在 Relay 与 Host
    两端重复检查；Windows 上忽略规则按文件系统的大小写语义执行。
 
