@@ -246,6 +246,22 @@ export class RelayClient {
     return result.workspace;
   }
 
+  async selectWorkspaceThread(
+    sessionId: string,
+    memberToken: string,
+    threadId: string,
+  ): Promise<WorkspaceSummary> {
+    const result = await this.request<{ workspace: WorkspaceSummary }>(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/workspace/selection`,
+      {
+        method: "PUT",
+        headers: { authorization: `Bearer ${memberToken}` },
+        body: JSON.stringify({ threadId }),
+      },
+    );
+    return result.workspace;
+  }
+
   async publishWorkspaceSnapshot(
     sessionId: string,
     memberToken: string,

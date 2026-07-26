@@ -103,6 +103,7 @@ import {
   splitConversationMessages,
 } from "./imported-timeline.js";
 import {
+  classifyReadableSource,
   parseReadableBlocks,
   presentExecutionEntries,
   presentExecutionEntry,
@@ -584,6 +585,18 @@ function ReadableOutput({ text }: { text: string }) {
   );
 }
 
+function ReadableSource({ text }: { text: string }) {
+  if (classifyReadableSource(text) === "code") {
+    return (
+      <div className="readable-code">
+        <span>代码</span>
+        <pre>{text}</pre>
+      </div>
+    );
+  }
+  return <ReadableOutput text={text} />;
+}
+
 function executionStatusLabel(status: ExecutionStatus): string {
   switch (status) {
     case "running":
@@ -748,9 +761,9 @@ function ExecutionStepCard({
               <small>内容可能为英文</small>
             </summary>
             <div className="execution-detail-body">
-              <div className="execution-output visible">
+              <div className="reasoning-source-content">
                 <span>原始摘要</span>
-                <pre>{record.sourceText}</pre>
+                <ReadableSource text={record.sourceText} />
               </div>
             </div>
           </details>

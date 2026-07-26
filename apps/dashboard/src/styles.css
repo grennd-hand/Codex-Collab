@@ -1210,12 +1210,22 @@ textarea {
 }
 
 .execution-input > span,
-.execution-output.visible > span {
+.execution-output.visible > span,
+.reasoning-source-content > span {
   display: block;
   margin-bottom: 4px;
   color: var(--colorNeutralForeground3);
   font-size: 10px;
   font-weight: 650;
+}
+
+.reasoning-source-content {
+  margin-top: 9px;
+  min-width: 0;
+}
+
+.reasoning-source-content .readable-output p {
+  white-space: pre-wrap;
 }
 
 .execution-input pre,

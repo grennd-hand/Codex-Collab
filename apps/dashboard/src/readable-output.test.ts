@@ -1,9 +1,49 @@
 import { describe, expect, it } from "vitest";
 import {
+  classifyReadableSource,
   parseReadableBlocks,
   presentExecutionEntries,
   presentExecutionEntry,
 } from "./readable-output.js";
+
+describe("classifyReadableSource", () => {
+  it("keeps Markdown summaries semantic instead of showing their markers", () => {
+    expect(
+      classifyReadableSource(
+        "**Investigating relay DNS**\n**Planning stable routing**",
+      ),
+    ).toBe("markdown");
+  });
+
+  it("recognizes unfenced source code while leaving fenced code to Markdown", () => {
+    expect(classifyReadableSource("const ready = true;\nconsole.log(ready);"))
+      .toBe("code");
+    expect(
+      classifyReadableSource("const label = `ready`;\nconsole.log(label);"),
+    ).toBe("code");
+    expect(classifyReadableSource("// prepare request\nconst ready = true;"))
+      .toBe("code");
+    expect(classifyReadableSource('export { helper } from "./helper.js";'))
+      .toBe("code");
+    expect(classifyReadableSource('export * from "./helper.js";'))
+      .toBe("code");
+    expect(classifyReadableSource("```ts\nconst ready = true;\n```"))
+      .toBe("markdown");
+  });
+
+  it("does not confuse English reasoning with declarations", () => {
+    expect(classifyReadableSource("Type checking remains active while the server restarts."))
+      .toBe("markdown");
+    expect(classifyReadableSource("Class names need review before deployment."))
+      .toBe("markdown");
+    expect(classifyReadableSource("Function behavior remains unchanged."))
+      .toBe("markdown");
+    expect(classifyReadableSource("Import handling remains unchanged after the update."))
+      .toBe("markdown");
+    expect(classifyReadableSource("Import the helper from the shared module."))
+      .toBe("markdown");
+  });
+});
 
 describe("parseReadableBlocks", () => {
   it("turns common Markdown into readable blocks", () => {
@@ -35,6 +75,17 @@ describe("parseReadableBlocks", () => {
         text: "const ready = true;",
       },
     ]);
+  });
+
+  it("accepts standard Markdown indentation for fenced code", () => {
+    expect(parseReadableBlocks("   ```ts\nconst ready = true;\n   ```"))
+      .toEqual([
+        {
+          kind: "code",
+          language: "ts",
+          text: "const ready = true;",
+        },
+      ]);
   });
 });
 

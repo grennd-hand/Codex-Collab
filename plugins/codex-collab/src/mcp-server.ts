@@ -292,19 +292,24 @@ async function publishCatalog(
 ): Promise<Awaited<ReturnType<RelayClient["publishWorkspaceCatalog"]>>> {
   const sandbox = await FileSandbox.create(profile.projectRoot);
   const threads = await codex.listThreads(sandbox.getRoot());
-  return relay.publishWorkspaceCatalog(profile.sessionId, profile.memberToken, {
-    deviceLabel: hostname(),
-    rootLabel: rootLabel(sandbox.getRoot()),
-    threads: threads.map((thread) => ({
-      id: thread.id,
-      name: thread.name ?? null,
-      preview: thread.preview?.trim().slice(0, 1_000) ?? "",
-      updatedAt:
-        typeof thread.updatedAt === "number" && Number.isFinite(thread.updatedAt)
-          ? thread.updatedAt
-          : null,
-    })),
-  });
+  const workspace = await relay.publishWorkspaceCatalog(
+    profile.sessionId,
+    profile.memberToken,
+    {
+      deviceLabel: hostname(),
+      rootLabel: rootLabel(sandbox.getRoot()),
+      threads: threads.map((thread) => ({
+        id: thread.id,
+        name: thread.name ?? null,
+        preview: thread.preview?.trim().slice(0, 1_000) ?? "",
+        updatedAt:
+          typeof thread.updatedAt === "number" && Number.isFinite(thread.updatedAt)
+            ? thread.updatedAt
+            : null,
+      })),
+    },
+  );
+  return workspace;
 }
 
 async function current(): Promise<{
@@ -405,6 +410,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
         await profiles.write(profile);
         const workspace = await publishCatalog(profile, relay);
+        await profiles.update({
+          observedThreadIds: workspace.threads.map((thread) => thread.id),
+        });
         return text({
           session: claimed.session,
           profile: publicProfile(profile),
@@ -521,6 +529,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             await profiles.update({
               threadId: stringArg(args, "threadId")!,
               projectRoot,
+              observedThreadIds: undefined,
             }),
           ),
         );

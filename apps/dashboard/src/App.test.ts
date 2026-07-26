@@ -213,6 +213,38 @@ describe("Codex client-style task process", () => {
     expect(activeReasoning).toContain("Codex 正在分析当前任务并规划下一步。");
     expect(activeReasoning).toContain("查看 Codex 原始摘要");
     expect(activeReasoning).not.toContain("全部步骤已完成");
+
+    const markdownReasoning = renderToStaticMarkup(
+      createElement(ExecutionProcess, {
+        active: true,
+        entries: [
+          {
+            id: "reasoning-markdown",
+            role: "reasoning",
+            text: "**Investigating relay DNS**\n**Planning stable routing**",
+            createdAt: null,
+          },
+        ],
+      }),
+    );
+    expect(markdownReasoning).toContain("<strong>Investigating relay DNS</strong>");
+    expect(markdownReasoning).not.toContain("**Investigating relay DNS**");
+
+    const codeReasoning = renderToStaticMarkup(
+      createElement(ExecutionProcess, {
+        active: true,
+        entries: [
+          {
+            id: "reasoning-code",
+            role: "reasoning",
+            text: "const ready = true;\nconsole.log(ready);",
+            createdAt: null,
+          },
+        ],
+      }),
+    );
+    expect(codeReasoning).toContain("readable-code");
+    expect(codeReasoning).toContain("<pre>const ready = true;\nconsole.log(ready);</pre>");
   });
 
   it("formats a compact live elapsed-time label", () => {

@@ -1,7 +1,13 @@
 import { hostname } from "node:os";
+import { basename } from "node:path";
+import type {
+  CodexThreadCatalogEntry,
+  Message,
+} from "@codex-collab/protocol";
 import {
   CodexAppServerClient,
   readCodexThreadRevision,
+  type CodexThreadSummary,
 } from "./app-server-client.js";
 import { FileSandbox } from "./file-sandbox.js";
 import { LocalProfileStore, type LocalProfile } from "./local-profile.js";
@@ -23,6 +29,56 @@ export interface WorkspaceSyncResult {
   syncedAt: string | null;
   historyCount: number;
   fileCount: number;
+}
+
+function catalogEntry(thread: CodexThreadSummary): CodexThreadCatalogEntry {
+  return {
+    id: thread.id,
+    name: thread.name ?? null,
+    preview: thread.preview?.trim().slice(0, 1_000) ?? "",
+    updatedAt:
+      typeof thread.updatedAt === "number" && Number.isFinite(thread.updatedAt)
+        ? thread.updatedAt
+        : null,
+  };
+}
+
+function catalogsMatch(
+  current: readonly CodexThreadCatalogEntry[],
+  next: readonly CodexThreadCatalogEntry[],
+): boolean {
+  return (
+    current.length === next.length &&
+    current.every((thread, index) => {
+      const candidate = next[index];
+      return (
+        candidate !== undefined &&
+        thread.id === candidate.id &&
+        thread.name === candidate.name &&
+        thread.preview === candidate.preview &&
+        thread.updatedAt === candidate.updatedAt
+      );
+    })
+  );
+}
+
+function stringListsMatch(
+  current: readonly string[] | undefined,
+  next: readonly string[],
+): boolean {
+  return (
+    current !== undefined &&
+    current.length === next.length &&
+    current.every((value, index) => value === next[index])
+  );
+}
+
+function hasInFlightCodexCommand(messages: readonly Message[]): boolean {
+  return messages.some(
+    (message) =>
+      (message.kind === "codex_prompt" || message.kind === "codex_stop") &&
+      (message.deliveryStatus === "queued" || message.deliveryStatus === "submitted"),
+  );
 }
 
 export async function forwardNextCodexPrompt(
@@ -251,7 +307,69 @@ export class WorkspaceSyncService {
         return { selectedThreadId: null, syncedAt: null, historyCount: 0, fileCount: 0 };
       }
       const relay = new RelayClient(profile.relayUrl);
-      const workspace = await relay.getWorkspace(profile.sessionId, profile.memberToken);
+      let workspace = await relay.getWorkspace(profile.sessionId, profile.memberToken);
+      const sandbox = await FileSandbox.create(profile.projectRoot);
+      const localThreads = await this.codex.listThreads(sandbox.getRoot());
+      const catalog = localThreads.map(catalogEntry);
+      const localThreadIds = localThreads.map((thread) => thread.id);
+      const observedThreadIds = profile.observedThreadIds;
+      const observed = new Set(observedThreadIds ?? []);
+      const newestDiscoveredThread = observedThreadIds === undefined
+        ? null
+        : localThreads.find((thread) => !observed.has(thread.id)) ?? null;
+      if (!catalogsMatch(workspace.threads, catalog)) {
+        workspace = await relay.publishWorkspaceCatalog(
+          profile.sessionId,
+          profile.memberToken,
+          {
+            deviceLabel: hostname(),
+            rootLabel: basename(sandbox.getRoot()) || sandbox.getRoot(),
+            threads: catalog,
+          },
+        );
+      }
+
+      let selectedLocalThread = localThreads.find(
+        (thread) => thread.id === workspace.selectedThreadId,
+      );
+      let selectedRuntimeBusy: boolean | undefined;
+      let selectionDeferred = false;
+
+      if (
+        newestDiscoveredThread &&
+        newestDiscoveredThread.id !== workspace.selectedThreadId
+      ) {
+        if (selectedLocalThread && workspace.selectedThreadId) {
+          selectedRuntimeBusy = await this.codex.isThreadBusyForPrompt(
+            workspace.selectedThreadId,
+            selectedLocalThread.path,
+          );
+          selectionDeferred = selectedRuntimeBusy;
+          if (!selectionDeferred) {
+            selectionDeferred = hasInFlightCodexCommand(
+              await relay.listMessages(profile.sessionId, profile.memberToken),
+            );
+          }
+        }
+        if (!selectionDeferred) {
+          workspace = await relay.selectWorkspaceThread(
+            profile.sessionId,
+            profile.memberToken,
+            newestDiscoveredThread.id,
+          );
+          selectedLocalThread = newestDiscoveredThread;
+          selectedRuntimeBusy = undefined;
+          this.marker = null;
+          this.filesDirty = false;
+        }
+      }
+
+      if (!selectionDeferred && !stringListsMatch(observedThreadIds, localThreadIds)) {
+        await this.profiles.update({
+          observedThreadIds: localThreadIds,
+        });
+      }
+
       if (!workspace.selectedThreadId) {
         this.marker = null;
         this.filesDirty = false;
@@ -263,19 +381,15 @@ export class WorkspaceSyncService {
         };
       }
 
-      const sandbox = await FileSandbox.create(profile.projectRoot);
-      const localThreads = await this.codex.listThreads(sandbox.getRoot());
-      const selectedLocalThread = localThreads.find(
-        (thread) => thread.id === workspace.selectedThreadId,
-      );
       if (!selectedLocalThread) {
         throw new Error("Selected Codex task no longer belongs to the explicitly shared root");
       }
 
-      const runtimeBusy = await this.codex.isThreadBusyForPrompt(
-        workspace.selectedThreadId,
-        selectedLocalThread.path,
-      );
+      const runtimeBusy = selectedRuntimeBusy ??
+        (await this.codex.isThreadBusyForPrompt(
+          workspace.selectedThreadId,
+          selectedLocalThread.path,
+        ));
       await reconcileCodexCommandStatuses(
         profile,
         workspace.selectedThreadId,

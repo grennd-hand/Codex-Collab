@@ -19,6 +19,7 @@ const profile: LocalProfile = {
   memberToken: "member-token",
   projectRoot: "C:\\project",
   forwardedMessageIds: [],
+  observedThreadIds: ["thread-1"],
 };
 
 const ownerPrompt = {
@@ -488,7 +489,14 @@ describe("workspace live history sync", () => {
       hostConnected: true,
       hostDeviceLabel: "Owner PC",
       rootLabel: "Project",
-      threads: [],
+      threads: [
+        {
+          id: "thread-1",
+          name: "Live task",
+          preview: "",
+          updatedAt: 1,
+        },
+      ],
       selectedThreadId: "thread-1",
       selectedThread: {
         id: "thread-1",
@@ -589,6 +597,263 @@ describe("workspace live history sync", () => {
           history: liveHistory,
         }),
       );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("establishes a catalog baseline without switching an existing task", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codex-collab-thread-baseline-"));
+    const threads = [
+      {
+        id: "thread-2",
+        name: "Existing newer task",
+        preview: "Newer",
+        updatedAt: 2,
+        path: null,
+      },
+      {
+        id: "thread-1",
+        name: "Existing selected task",
+        preview: "Selected",
+        updatedAt: 1,
+        path: null,
+      },
+    ];
+    const workspace = {
+      hostConnected: true,
+      hostDeviceLabel: "Owner PC",
+      rootLabel: "Project",
+      threads: [],
+      selectedThreadId: null,
+      selectedThread: null,
+      history: [],
+      files: [],
+      codexRuntimeStatus: "unavailable" as const,
+      syncedAt: null,
+    };
+    vi.spyOn(RelayClient.prototype, "getWorkspace").mockResolvedValue(workspace);
+    vi.spyOn(RelayClient.prototype, "publishWorkspaceCatalog").mockResolvedValue({
+      ...workspace,
+      threads: threads.map(({ path: _path, ...thread }) => thread),
+    });
+    const selectThread = vi.spyOn(RelayClient.prototype, "selectWorkspaceThread");
+    const update = vi.fn().mockResolvedValue(profile);
+    const profiles = {
+      read: vi.fn().mockResolvedValue({
+        ...profile,
+        projectRoot: directory,
+        observedThreadIds: undefined,
+      }),
+      update,
+    };
+    const codex = {
+      listThreads: vi.fn().mockResolvedValue(threads),
+    };
+
+    try {
+      const service = new WorkspaceSyncService(profiles as never, codex as never);
+      await expect(service.sync()).resolves.toMatchObject({
+        selectedThreadId: null,
+        historyCount: 0,
+      });
+      expect(selectThread).not.toHaveBeenCalled();
+      expect(update).toHaveBeenCalledWith({
+        observedThreadIds: ["thread-2", "thread-1"],
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("does not rewrite the profile when the observed task list is unchanged", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codex-collab-thread-stable-"));
+    const thread = {
+      id: "thread-1",
+      name: "Existing task",
+      preview: "Existing",
+      updatedAt: 1,
+      path: null,
+    };
+    const workspace = {
+      hostConnected: true,
+      hostDeviceLabel: "Owner PC",
+      rootLabel: "Project",
+      threads: [{
+        id: thread.id,
+        name: thread.name,
+        preview: thread.preview,
+        updatedAt: thread.updatedAt,
+      }],
+      selectedThreadId: null,
+      selectedThread: null,
+      history: [],
+      files: [],
+      codexRuntimeStatus: "unavailable" as const,
+      syncedAt: null,
+    };
+    vi.spyOn(RelayClient.prototype, "getWorkspace").mockResolvedValue(workspace);
+    const publishCatalog = vi.spyOn(RelayClient.prototype, "publishWorkspaceCatalog");
+    const update = vi.fn().mockResolvedValue(profile);
+    const profiles = {
+      read: vi.fn().mockResolvedValue({
+        ...profile,
+        projectRoot: directory,
+        observedThreadIds: [thread.id],
+      }),
+      update,
+    };
+    const codex = {
+      listThreads: vi.fn().mockResolvedValue([thread]),
+    };
+
+    try {
+      const service = new WorkspaceSyncService(profiles as never, codex as never);
+      await expect(service.sync()).resolves.toMatchObject({
+        selectedThreadId: null,
+        historyCount: 0,
+      });
+      expect(publishCatalog).not.toHaveBeenCalled();
+      expect(update).not.toHaveBeenCalled();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("discovers and synchronizes a new Codex task in the approved project root", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codex-collab-new-thread-"));
+    const newHistory = [
+      {
+        id: "user-new",
+        role: "user" as const,
+        text: "Start the new task",
+        createdAt: "2026-07-26T00:00:02.000Z",
+      },
+    ];
+    const oldThread = {
+      id: "thread-1",
+      name: "Existing task",
+      preview: "Existing",
+      updatedAt: 1,
+      path: null,
+    };
+    const newThread = {
+      id: "thread-2",
+      name: "New task",
+      preview: "Start the new task",
+      updatedAt: 2,
+      path: null,
+    };
+    const initialWorkspace = {
+      hostConnected: true,
+      hostDeviceLabel: "Owner PC",
+      rootLabel: "Project",
+      threads: [
+        {
+          id: oldThread.id,
+          name: oldThread.name,
+          preview: oldThread.preview,
+          updatedAt: oldThread.updatedAt,
+        },
+      ],
+      selectedThreadId: oldThread.id,
+      selectedThread: {
+        id: oldThread.id,
+        name: oldThread.name,
+        preview: oldThread.preview,
+        updatedAt: oldThread.updatedAt,
+      },
+      history: [],
+      files: [],
+      codexRuntimeStatus: "idle" as const,
+      syncedAt: "2026-07-26T00:00:01.000Z",
+    };
+    const catalogWorkspace = {
+      ...initialWorkspace,
+      threads: [
+        {
+          id: newThread.id,
+          name: newThread.name,
+          preview: newThread.preview,
+          updatedAt: newThread.updatedAt,
+        },
+        ...initialWorkspace.threads,
+      ],
+    };
+    const selectedWorkspace = {
+      ...catalogWorkspace,
+      selectedThreadId: newThread.id,
+      selectedThread: catalogWorkspace.threads[0]!,
+      syncedAt: null,
+    };
+    vi.spyOn(RelayClient.prototype, "getWorkspace").mockResolvedValue(initialWorkspace);
+    const publishCatalog = vi
+      .spyOn(RelayClient.prototype, "publishWorkspaceCatalog")
+      .mockResolvedValue(catalogWorkspace);
+    const selectThread = vi
+      .spyOn(RelayClient.prototype, "selectWorkspaceThread")
+      .mockResolvedValue(selectedWorkspace);
+    vi.spyOn(RelayClient.prototype, "listMessages").mockResolvedValue([]);
+    vi.spyOn(RelayClient.prototype, "publishCodexRuntimeStatus")
+      .mockResolvedValue(selectedWorkspace);
+    const publishSnapshot = vi
+      .spyOn(RelayClient.prototype, "publishWorkspaceSnapshot")
+      .mockResolvedValue({
+        ...selectedWorkspace,
+        history: newHistory,
+        syncedAt: "2026-07-26T00:00:03.000Z",
+      });
+    const update = vi.fn().mockResolvedValue(profile);
+    const profiles = {
+      read: vi.fn().mockResolvedValue({
+        ...profile,
+        projectRoot: directory,
+        observedThreadIds: [oldThread.id],
+      }),
+      update,
+    };
+    const codex = {
+      listThreads: vi.fn().mockResolvedValue([newThread, oldThread]),
+      isThreadBusyForPrompt: vi.fn().mockResolvedValue(false),
+      readThreadHistory: vi.fn().mockResolvedValue(newHistory),
+      getTurnStatus: vi.fn(),
+      submitPeerPrompt: vi.fn(),
+      stopPeerPrompt: vi.fn(),
+    };
+
+    try {
+      const service = new WorkspaceSyncService(profiles as never, codex as never);
+      await expect(service.sync()).resolves.toMatchObject({
+        selectedThreadId: newThread.id,
+        historyCount: 1,
+      });
+
+      expect(codex.listThreads).toHaveBeenCalledWith(directory);
+      expect(publishCatalog).toHaveBeenCalledWith(
+        "session-1",
+        "member-token",
+        expect.objectContaining({
+          threads: [
+            expect.objectContaining({ id: newThread.id }),
+            expect.objectContaining({ id: oldThread.id }),
+          ],
+        }),
+      );
+      expect(selectThread).toHaveBeenCalledWith(
+        "session-1",
+        "member-token",
+        newThread.id,
+      );
+      expect(codex.readThreadHistory).toHaveBeenCalledWith(newThread.id, null);
+      expect(publishSnapshot).toHaveBeenCalledWith(
+        "session-1",
+        "member-token",
+        expect.objectContaining({ threadId: newThread.id, history: newHistory }),
+      );
+      expect(update).toHaveBeenCalledWith({
+        observedThreadIds: [newThread.id, oldThread.id],
+      });
+      expect(update).toHaveBeenCalledWith({ threadId: newThread.id });
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
