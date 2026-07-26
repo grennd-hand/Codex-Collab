@@ -57,6 +57,8 @@ export function workspaceHistoryDigest(history: CodexRecordEntry[]): string {
     hash.update("\0");
     hash.update(entry.role);
     hash.update("\0");
+    hash.update(entry.phase ?? "");
+    hash.update("\0");
     hash.update(entry.createdAt ?? "");
     hash.update("\0");
     hash.update(entry.text);

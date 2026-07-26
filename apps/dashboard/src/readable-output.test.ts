@@ -126,6 +126,23 @@ describe("presentExecutionEntry", () => {
     });
   });
 
+  it("presents commentary as a readable processing update", () => {
+    expect(
+      presentExecutionEntry({
+        id: "commentary-1",
+        role: "assistant",
+        phase: "commentary",
+        text: "正在核对桌面端记录。",
+        createdAt: null,
+      }),
+    ).toMatchObject({
+      role: "commentary",
+      title: "处理进展",
+      status: "completed",
+      input: "正在核对桌面端记录。",
+    });
+  });
+
   it("presents an in-progress command separately from its future output", () => {
     expect(
       presentExecutionEntry({

@@ -453,6 +453,30 @@ describe("Codex record import", () => {
     expect(records[0]?.text).toContain("building...");
   });
 
+  it("preserves app-server commentary and final-answer phases", () => {
+    const records = extractCodexRecordEntries([
+      {
+        id: "turn-phases",
+        items: [
+          {
+            type: "agentMessage",
+            id: "assistant-progress",
+            phase: "commentary",
+            text: "正在检查。",
+          },
+          {
+            type: "agentMessage",
+            id: "assistant-final",
+            phase: "final_answer",
+            text: "检查完成。",
+          },
+        ],
+      },
+    ]);
+
+    expect(records.map((record) => record.phase)).toEqual(["commentary", "final_answer"]);
+  });
+
   it("imports app-server file changes without exposing patch contents", () => {
     const records = extractCodexRecordEntries([
       {
@@ -576,6 +600,58 @@ describe("Codex record import", () => {
         createdAt: "2026-07-25T00:00:02.000Z",
       },
     ]);
+  });
+
+  it("preserves rollout commentary and final-answer phases", () => {
+    const records = extractCodexRolloutEntries(
+      ["commentary", "final_answer"].map((phase, index) =>
+        JSON.stringify({
+          timestamp: `2026-07-25T00:00:0${index}.000Z`,
+          type: "response_item",
+          payload: {
+            type: "message",
+            id: `assistant-${index}`,
+            role: "assistant",
+            phase,
+            content: [{ type: "output_text", text: phase }],
+          },
+        }),
+      ),
+      "thread-1",
+    );
+
+    expect(records.map((record) => record.phase)).toEqual(["commentary", "final_answer"]);
+  });
+
+  it("removes Desktop attachment wrappers before publishing user history", () => {
+    const wrapped = [
+      "# Files mentioned by the user:",
+      "",
+      "## screenshot.png: C:/Users/test/AppData/Local/Temp/screenshot.png",
+      "",
+      "## My request for Codex:",
+      "只保留这句正文。",
+      "",
+      '<image name=[Image #1] path="C:\\Users\\test\\Temp\\screenshot.png">',
+      "</image>",
+    ].join("\n");
+    const records = extractCodexRolloutEntries(
+      [
+        JSON.stringify({
+          timestamp: "2026-07-25T00:00:00.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            id: "user-with-image",
+            role: "user",
+            content: [{ type: "input_text", text: wrapped }],
+          },
+        }),
+      ],
+      "thread-1",
+    );
+
+    expect(records[0]?.text).toBe("只保留这句正文。");
   });
 
   it("hides unfinished apply_patch contents while keeping the edited filename", () => {

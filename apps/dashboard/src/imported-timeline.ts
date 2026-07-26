@@ -1,4 +1,8 @@
-import type { CodexRecordEntry, Message } from "@codex-collab/protocol";
+import {
+  sanitizeCodexUserMessageText,
+  type CodexRecordEntry,
+  type Message,
+} from "@codex-collab/protocol";
 
 export type ImportedTimelineItem =
   | {
@@ -9,6 +13,7 @@ export type ImportedTimelineItem =
       kind: "execution";
       id: string;
       entries: CodexRecordEntry[];
+      completedAt?: string;
     };
 
 export type UnifiedTimelineItem =
@@ -39,46 +44,8 @@ export function splitConversationMessages(messages: readonly Message[]): {
   return { chatMessages, codexMessages };
 }
 
-const FILES_HEADER = "# Files mentioned by the user:";
-const REQUEST_HEADER = "## My request for Codex:";
-
-function isAbsoluteLocalPath(value: string): boolean {
-  return /^(?:[A-Za-z]:[\\/]|\\\\|\/)/.test(value);
-}
-
 export function sanitizeImportedUserText(text: string): string {
-  const lines = text.split(/\r?\n/);
-  if (lines[0] !== FILES_HEADER) return text;
-
-  const requestHeaderIndex = lines.indexOf(REQUEST_HEADER, 1);
-  if (requestHeaderIndex < 0) return text;
-
-  let attachmentCount = 0;
-  let index = 1;
-  while (index < requestHeaderIndex) {
-    if (lines[index]?.trim() === "") {
-      index += 1;
-      continue;
-    }
-
-    const heading = lines[index];
-    const path = lines[index + 1];
-    if (
-      !heading ||
-      !/^## .+:$/.test(heading) ||
-      !path ||
-      !isAbsoluteLocalPath(path) ||
-      index + 1 >= requestHeaderIndex
-    ) {
-      return text;
-    }
-
-    attachmentCount += 1;
-    index += 2;
-  }
-
-  const body = lines.slice(requestHeaderIndex + 1).join("\n").trim();
-  return attachmentCount > 0 && body ? body : text;
+  return sanitizeCodexUserMessageText(text);
 }
 
 export function parseCollabCommandEnvelope(
@@ -108,7 +75,16 @@ export function buildImportedTimeline(history: CodexRecordEntry[]): ImportedTime
   const timeline: ImportedTimelineItem[] = [];
 
   for (const entry of history) {
-    if (entry.role === "user" || entry.role === "assistant") {
+    const isCommentary = entry.role === "assistant" && entry.phase === "commentary";
+    if (entry.role === "user" || (entry.role === "assistant" && !isCommentary)) {
+      const previous = timeline.at(-1);
+      if (
+        entry.role === "assistant" &&
+        previous?.kind === "execution" &&
+        entry.createdAt
+      ) {
+        previous.completedAt = entry.createdAt;
+      }
       timeline.push({
         kind: "message",
         entry:
@@ -214,10 +190,12 @@ export function buildUnifiedTimeline(
 }
 
 export function executionDetailLabel(entries: CodexRecordEntry[]): string {
-  const reasoningCount = entries.filter((entry) => entry.role === "reasoning").length;
+  const processCount = entries.filter(
+    (entry) => entry.role === "reasoning" || entry.phase === "commentary",
+  ).length;
   const commandCount = entries.filter((entry) => entry.role === "command").length;
   const parts = [
-    reasoningCount > 0 ? `${reasoningCount} 条推理` : null,
+    processCount > 0 ? `${processCount} 条处理` : null,
     commandCount > 0 ? `${commandCount} 条命令` : null,
   ].filter((part): part is string => Boolean(part));
 

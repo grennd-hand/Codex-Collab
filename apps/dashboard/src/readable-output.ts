@@ -12,7 +12,7 @@ export type ExecutionStatus = "running" | "completed" | "failed" | "unknown";
 
 export interface ReadableExecution {
   id: string;
-  role: "reasoning" | "command";
+  role: "reasoning" | "commentary" | "command";
   title: string;
   status: ExecutionStatus;
   summary: string;
@@ -562,6 +562,21 @@ export function presentExecutionEntry(
       input: reasoning.displayText,
       output: null,
       sourceText: reasoning.sourceText,
+      outputLineCount: 0,
+      createdAt: entry.createdAt,
+    };
+  }
+
+  if (entry.role === "assistant" && entry.phase === "commentary") {
+    return {
+      id: entry.id,
+      role: "commentary",
+      title: "处理进展",
+      status: "completed",
+      summary: "Codex 的阶段性处理说明",
+      input: entry.text.trim() || null,
+      output: null,
+      sourceText: null,
       outputLineCount: 0,
       createdAt: entry.createdAt,
     };

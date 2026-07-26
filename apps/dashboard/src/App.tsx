@@ -627,11 +627,13 @@ export function executionProcessPresentation(
   const failed = records.filter((record) => record.status === "failed");
   const completedCount = records.filter((record) => record.status === "completed").length;
   const commandCount = records.filter((record) => record.role === "command").length;
-  const reasoningCount = records.filter((record) => record.role === "reasoning").length;
-  const hasRoleDetails = commandCount > 0 || reasoningCount > 0;
+  const processCount = records.filter(
+    (record) => record.role === "reasoning" || record.role === "commentary",
+  ).length;
+  const hasRoleDetails = commandCount > 0 || processCount > 0;
   const stepBreakdown =
     hasRoleDetails
-      ? `${records.length} 个步骤（${commandCount} 个操作，${reasoningCount} 条分析）`
+      ? `${records.length} 个步骤（${commandCount} 个操作，${processCount} 条处理）`
       : `${records.length} 个步骤`;
   const latestRunning = running.at(-1);
 
@@ -670,8 +672,8 @@ export function executionProcessPresentation(
   if (records.length > 0 && completedCount === records.length) {
     return {
       status: "completed",
-      title: "任务过程",
-      detail: "全部步骤已完成",
+      title: "已处理",
+      detail: "处理概要已收起",
       progress: stepBreakdown,
       defaultExpanded: false,
     };
@@ -700,6 +702,27 @@ export function elapsedExecutionLabel(
   if (minutes < 60) return `已运行 ${minutes} 分 ${seconds} 秒`;
   const hours = Math.floor(minutes / 60);
   return `已运行 ${hours} 小时 ${minutes % 60} 分`;
+}
+
+export function completedExecutionDurationLabel(
+  records: readonly Pick<ReadableExecution, "createdAt">[],
+  completedAt: string | null = null,
+): string | null {
+  const timestamps = records
+    .map((record) => (record.createdAt ? Date.parse(record.createdAt) : Number.NaN))
+    .filter(Number.isFinite);
+  if (timestamps.length === 0) return null;
+  const started = Math.min(...timestamps);
+  if (!completedAt && Math.max(...timestamps) === started) return null;
+  const completed = completedAt ? Date.parse(completedAt) : Math.max(...timestamps);
+  if (!Number.isFinite(completed) || completed < started) return null;
+  const totalSeconds = Math.max(0, Math.floor((completed - started) / 1_000));
+  if (totalSeconds < 60) return `${totalSeconds} 秒`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 60) return `${minutes} 分 ${seconds} 秒`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours} 小时 ${minutes % 60} 分`;
 }
 
 function ExecutionElapsedTime({ startedAt }: { startedAt: string }) {
@@ -746,7 +769,10 @@ function ExecutionStepCard({
       className={`execution-step ${record.role} ${record.status}${compact ? " compact" : ""}`}
     >
       <div className="execution-step-marker" aria-hidden="true">
-        <ExecutionStatusIcon status={record.status} fallback={record.role} />
+        <ExecutionStatusIcon
+          status={record.status}
+          fallback={record.role === "command" ? "command" : "reasoning"}
+        />
       </div>
       <div className="execution-step-content">
         <header>
@@ -761,7 +787,7 @@ function ExecutionStepCard({
           ) : null}
         </header>
         <p className="execution-step-summary">{record.summary}</p>
-        {record.role === "reasoning" && record.input ? (
+        {(record.role === "reasoning" || record.role === "commentary") && record.input ? (
           <ReadableOutput text={record.input} />
         ) : null}
         {record.role === "reasoning" && record.sourceText ? (
@@ -824,9 +850,11 @@ function ExecutionStepCard({
 export function ExecutionProcess({
   entries,
   active = false,
+  completedAt = null,
 }: {
   entries: CodexRecordEntry[];
   active?: boolean;
+  completedAt?: string | null;
 }) {
   const records = presentExecutionEntries(entries, active);
   const presentation = executionProcessPresentation(records, active);
@@ -836,6 +864,18 @@ export function ExecutionProcess({
     presentation.status === "running"
       ? (records.find((record) => record.createdAt)?.createdAt ?? null)
       : null;
+  const completedDuration =
+    presentation.status === "completed"
+      ? completedExecutionDurationLabel(records, completedAt)
+      : null;
+  const disclosureAction =
+    presentation.status === "completed"
+      ? expanded
+        ? "收起处理概要"
+        : "展开处理概要"
+      : expanded
+        ? "折叠任务过程"
+        : "展开任务过程";
 
   useEffect(() => {
     setExpanded(presentation.defaultExpanded);
@@ -843,10 +883,11 @@ export function ExecutionProcess({
   return (
     <section
       className={`execution-process ${presentation.status} ${expanded ? "expanded" : "collapsed"}`}
-      aria-label="任务过程"
+      aria-label={presentation.status === "completed" ? "处理概要" : "任务过程"}
     >
       <span className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">
-        {presentation.title}：{presentation.detail}，{presentation.progress}
+        {presentation.title}：{completedDuration ? `耗时 ${completedDuration}，` : ""}
+        {presentation.detail}，{presentation.progress}
       </span>
       <header className="execution-process-heading">
         <button
@@ -854,7 +895,7 @@ export function ExecutionProcess({
           aria-controls={contentId}
           aria-expanded={expanded}
           aria-label={`${presentation.title}：${presentation.detail}，${presentation.progress}，${
-            expanded ? "折叠任务过程" : "展开任务过程"
+            disclosureAction
           }`}
           onClick={() => setExpanded((current) => !current)}
         >
@@ -863,11 +904,16 @@ export function ExecutionProcess({
           </span>
           <span className="execution-process-title">
             <strong>{presentation.title}</strong>
-            <span>{presentation.detail}</span>
+            {presentation.status !== "completed" || expanded ? (
+              <span>{presentation.detail}</span>
+            ) : null}
           </span>
           <span className="execution-process-meta">
             {runningStartedAt ? <ExecutionElapsedTime startedAt={runningStartedAt} /> : null}
-            <span>{presentation.progress}</span>
+            {completedDuration ? <span>耗时 {completedDuration}</span> : null}
+            {presentation.status !== "completed" || expanded || !completedDuration ? (
+              <span>{presentation.progress}</span>
+            ) : null}
           </span>
           <ChevronDownRegular className="execution-process-chevron" aria-hidden="true" />
         </button>
@@ -2979,6 +3025,7 @@ export function App() {
                           timelineIndex === codexTimeline.length - 1
                         }
                         entries={item.entries}
+                        completedAt={item.completedAt ?? null}
                         key={item.id}
                       />
                     );

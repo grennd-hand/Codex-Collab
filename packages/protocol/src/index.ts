@@ -1,5 +1,69 @@
 export const PROTOCOL_VERSION = "v1" as const;
 
+const CODEX_FILES_HEADER = "# Files mentioned by the user:";
+const CODEX_REQUEST_HEADER = "## My request for Codex:";
+
+function isAbsoluteCodexAttachmentPath(value: string): boolean {
+  return /^(?:[A-Za-z]:[\\/]|\\\\|\/)/.test(value);
+}
+
+export function sanitizeCodexUserMessageText(text: string): string {
+  const lines = text.split(/\r?\n/);
+  const firstContentIndex = lines.findIndex((line) => line.trim());
+  if (
+    firstContentIndex < 0 ||
+    lines[firstContentIndex]?.trim() !== CODEX_FILES_HEADER
+  ) {
+    return text;
+  }
+
+  const requestHeaderIndex = lines.findIndex(
+    (line, index) =>
+      index > firstContentIndex && line.trim() === CODEX_REQUEST_HEADER,
+  );
+  if (requestHeaderIndex < 0) return text;
+
+  let attachmentCount = 0;
+  let index = firstContentIndex + 1;
+  while (index < requestHeaderIndex) {
+    if (lines[index]?.trim() === "") {
+      index += 1;
+      continue;
+    }
+
+    const heading = lines[index]?.trim() ?? "";
+    const inlineAttachment = heading.match(/^##\s+.+?:\s+(.+)$/);
+    if (
+      inlineAttachment?.[1] &&
+      isAbsoluteCodexAttachmentPath(inlineAttachment[1].trim())
+    ) {
+      attachmentCount += 1;
+      index += 1;
+      continue;
+    }
+
+    if (!/^##\s+.+?:$/.test(heading)) return text;
+    let pathIndex = index + 1;
+    while (pathIndex < requestHeaderIndex && lines[pathIndex]?.trim() === "") {
+      pathIndex += 1;
+    }
+    const path = lines[pathIndex]?.trim() ?? "";
+    if (!isAbsoluteCodexAttachmentPath(path)) return text;
+    attachmentCount += 1;
+    index = pathIndex + 1;
+  }
+
+  const body = lines
+    .slice(requestHeaderIndex + 1)
+    .join("\n")
+    .replace(
+      /(?:^|\n)<image\b[^>\n]*\bpath=(?:"[^"\n]+"|'[^'\n]+')[^>\n]*>\s*(?:\n)?<\/image>(?=\n|$)/gi,
+      "\n",
+    )
+    .trim();
+  return attachmentCount > 0 && body ? body : text;
+}
+
 export type MemberRole = "owner" | "editor";
 export type MemberStatus = "pending" | "approved" | "rejected" | "revoked";
 export type RoomStatus = "open" | "closed";
@@ -264,6 +328,7 @@ export interface CodexThreadCatalogEntry {
 export interface CodexRecordEntry {
   id: string;
   role: "user" | "assistant" | "reasoning" | "command";
+  phase?: "commentary" | "final_answer";
   text: string;
   createdAt: string | null;
 }

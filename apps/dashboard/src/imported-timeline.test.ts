@@ -72,6 +72,47 @@ describe("buildImportedTimeline", () => {
       },
     ]);
   });
+
+  it("folds commentary into one process before the final answer", () => {
+    const finalAnswer = {
+      ...record("assistant-final", "assistant", "处理完成，下面是正文。"),
+      phase: "final_answer" as const,
+      createdAt: "2026-07-27T00:03:46.000Z",
+    };
+    const timeline = buildImportedTimeline([
+      { ...record("user-1", "user"), createdAt: "2026-07-27T00:00:00.000Z" },
+      { ...record("reasoning-1", "reasoning"), createdAt: "2026-07-27T00:00:01.000Z" },
+      {
+        ...record("assistant-progress", "assistant", "正在核对任务记录。"),
+        phase: "commentary" as const,
+        createdAt: "2026-07-27T00:01:00.000Z",
+      },
+      { ...record("command-1", "command"), createdAt: "2026-07-27T00:02:00.000Z" },
+      finalAnswer,
+    ]);
+
+    expect(timeline).toEqual([
+      {
+        kind: "message",
+        entry: { ...record("user-1", "user"), createdAt: "2026-07-27T00:00:00.000Z" },
+      },
+      {
+        kind: "execution",
+        id: "execution-reasoning-1",
+        entries: [
+          { ...record("reasoning-1", "reasoning"), createdAt: "2026-07-27T00:00:01.000Z" },
+          {
+            ...record("assistant-progress", "assistant", "正在核对任务记录。"),
+            phase: "commentary",
+            createdAt: "2026-07-27T00:01:00.000Z",
+          },
+          { ...record("command-1", "command"), createdAt: "2026-07-27T00:02:00.000Z" },
+        ],
+        completedAt: "2026-07-27T00:03:46.000Z",
+      },
+      { kind: "message", entry: finalAnswer },
+    ]);
+  });
 });
 
 describe("sanitizeImportedUserText", () => {
@@ -110,6 +151,26 @@ describe("sanitizeImportedUserText", () => {
     expect(sanitizeImportedUserText(wrapped)).toBe(
       "请修复消息同步。\n\n不要改动其他页面。",
     );
+  });
+
+  it("removes inline attachment paths and Desktop image placeholders", () => {
+    const wrapped = [
+      "# Files mentioned by the user:",
+      "",
+      "## first.png: C:/Users/test/AppData/Local/Temp/first.png",
+      "",
+      "## second.png: C:/Users/test/AppData/Local/Temp/second.png",
+      "",
+      "## My request for Codex:",
+      "只显示我真正输入的正文。",
+      "",
+      '<image name=[Image #1] path="C:\\Users\\test\\Temp\\first.png">',
+      "</image>",
+      '<image name=[Image #2] path="C:\\Users\\test\\Temp\\second.png">',
+      "</image>",
+    ].join("\n");
+
+    expect(sanitizeImportedUserText(wrapped)).toBe("只显示我真正输入的正文。");
   });
 
   it("leaves ordinary Markdown without an attachment wrapper unchanged", () => {
@@ -301,6 +362,6 @@ describe("executionDetailLabel", () => {
         record("reasoning-2", "reasoning"),
         record("command-1", "command"),
       ]),
-    ).toBe("2 条推理，1 条命令");
+    ).toBe("2 条处理，1 条命令");
   });
 });

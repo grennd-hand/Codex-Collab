@@ -22,6 +22,7 @@ import {
   codexModelSupportsImages,
   codexModelSupportsReasoningEffort,
   normalizeCodexModelId,
+  sanitizeCodexUserMessageText,
   type CodexPromptOptions,
   type CodexRecordEntry,
   type CodexReasoningEffort,
@@ -348,6 +349,7 @@ interface CodexThreadItem {
   type: string;
   id?: string;
   status?: string;
+  phase?: string;
   text?: string;
   content?: Array<{ type: string; text?: string } | string>;
   summary?: string[];
@@ -591,11 +593,17 @@ export function extractCodexRecordEntries(turns: CodexTurn[]): CodexRecordEntry[
         role = "command";
         value = appServerFileChangeText(item);
       }
-      const normalized = redactSensitiveText(value.trim());
+      const normalized = redactSensitiveText(
+        (role === "user" ? sanitizeCodexUserMessageText(value) : value).trim(),
+      );
       if (!role || !normalized) continue;
       entries.push({
         id: item.id ?? `${turn.id}-${entries.length}`,
         role,
+        ...(role === "assistant" &&
+          (item.phase === "commentary" || item.phase === "final_answer")
+          ? { phase: item.phase }
+          : {}),
         text: normalized.slice(0, 50_000),
         createdAt,
       });
@@ -736,7 +744,10 @@ export function extractCodexRolloutEntries(
     if (item.type !== "response_item") continue;
 
     if (payloadType === "message" && (payload.role === "user" || payload.role === "assistant")) {
-      const text = redactSensitiveText(rolloutText(payload.content).trim());
+      const rawText = rolloutText(payload.content).trim();
+      const text = redactSensitiveText(
+        payload.role === "user" ? sanitizeCodexUserMessageText(rawText) : rawText,
+      );
       if (!text) continue;
       entries.push({
         id:
@@ -744,6 +755,10 @@ export function extractCodexRolloutEntries(
             ? payload.id
             : `${threadId}-message-${entries.length}`,
         role: payload.role,
+        ...(payload.role === "assistant" &&
+          (payload.phase === "commentary" || payload.phase === "final_answer")
+          ? { phase: payload.phase }
+          : {}),
         text: text.slice(0, 50_000),
         createdAt,
       });

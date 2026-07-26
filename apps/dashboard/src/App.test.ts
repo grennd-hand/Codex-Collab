@@ -8,6 +8,7 @@ import {
   chatMessageBody,
   codexExecutionPhase,
   composerPrimaryAction,
+  completedExecutionDurationLabel,
   elapsedExecutionLabel,
   executionProcessPresentation,
   filterUnsupportedImageAttachments,
@@ -144,7 +145,8 @@ describe("Codex client-style task process", () => {
       executionProcessPresentation([{ status: "completed", title: "运行测试" }]),
     ).toMatchObject({
       status: "completed",
-      detail: "全部步骤已完成",
+      title: "已处理",
+      detail: "处理概要已收起",
       defaultExpanded: false,
     });
     expect(
@@ -163,12 +165,13 @@ describe("Codex client-style task process", () => {
         { status: "completed", title: "运行测试", role: "command" },
         { status: "completed", title: "分析与计划", role: "reasoning" },
       ]).progress,
-    ).toBe("2 个步骤（1 个操作，1 条分析）");
+    ).toBe("2 个步骤（1 个操作，1 条处理）");
   });
 
   it("renders an accessible collapse control with client-style defaults", () => {
     const completed = renderToStaticMarkup(
       createElement(ExecutionProcess, {
+        completedAt: "2026-07-26T00:03:46.000Z",
         entries: [
           {
             id: "done",
@@ -180,8 +183,9 @@ describe("Codex client-style task process", () => {
       }),
     );
     expect(completed).toContain('aria-expanded="false"');
-    expect(completed).toContain("全部步骤已完成");
-    expect(completed).toContain("展开任务过程");
+    expect(completed).toContain("已处理");
+    expect(completed).toContain("耗时 3 分 46 秒");
+    expect(completed).toContain("展开处理概要");
     expect(completed).not.toContain("查看执行详情");
 
     const running = renderToStaticMarkup(
@@ -261,6 +265,22 @@ describe("Codex client-style task process", () => {
       "已运行 2 分 9 秒",
     );
     expect(elapsedExecutionLabel(null)).toBeNull();
+  });
+
+  it("formats a completed processing duration from the first step to the final answer", () => {
+    expect(
+      completedExecutionDurationLabel(
+        [
+          { createdAt: "2026-07-26T00:00:00.000Z" },
+          { createdAt: "2026-07-26T00:02:00.000Z" },
+        ],
+        "2026-07-26T00:03:46.000Z",
+      ),
+    ).toBe("3 分 46 秒");
+    expect(completedExecutionDurationLabel([{ createdAt: null }])).toBeNull();
+    expect(
+      completedExecutionDurationLabel([{ createdAt: "2026-07-26T00:00:00.000Z" }]),
+    ).toBeNull();
   });
 });
 

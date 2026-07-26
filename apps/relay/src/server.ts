@@ -216,6 +216,11 @@ function parseHistory(value: unknown): CodexRecordEntry[] {
       );
     }
     const text = requiredString(record.text, `history[${index}].text`, 50_000);
+    const phase =
+      record.role === "assistant" &&
+      (record.phase === "commentary" || record.phase === "final_answer")
+        ? record.phase
+        : null;
     totalLength += text.length;
     if (totalLength > 2_000_000) {
       throw new ProtocolError(413, "history_too_large", "Imported Codex history is too large");
@@ -223,6 +228,7 @@ function parseHistory(value: unknown): CodexRecordEntry[] {
     return {
       id: requiredString(record.id, `history[${index}].id`, 160),
       role: record.role,
+      ...(phase ? { phase } : {}),
       text,
       createdAt:
         typeof record.createdAt === "string" && !Number.isNaN(Date.parse(record.createdAt))

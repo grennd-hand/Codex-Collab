@@ -923,6 +923,51 @@ textarea {
   border-color: var(--colorStatusDangerBorder1);
 }
 
+.execution-process.completed.collapsed {
+  margin-top: 0;
+  margin-bottom: 6px;
+  border: 0;
+  border-bottom: 1px solid var(--colorNeutralStroke2);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.execution-process.completed.collapsed .execution-process-heading {
+  min-height: 38px;
+  background: transparent;
+}
+
+.execution-process.completed.collapsed .execution-process-heading > button {
+  min-height: 38px;
+  padding: 6px 2px;
+  gap: 6px;
+}
+
+.execution-process.completed.collapsed .execution-process-status-icon {
+  display: none;
+}
+
+.execution-process.completed.collapsed .execution-process-title {
+  flex: 0 0 auto;
+  display: block;
+}
+
+.execution-process.completed.collapsed .execution-process-title strong {
+  color: var(--colorNeutralForeground3);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.execution-process.completed.collapsed .execution-process-meta {
+  margin-right: auto;
+  font-size: 11px;
+}
+
+.execution-process.completed.collapsed .execution-process-chevron {
+  transform: rotate(-90deg);
+}
+
 .execution-process-heading {
   min-height: 48px;
   background: var(--colorNeutralBackground1);
