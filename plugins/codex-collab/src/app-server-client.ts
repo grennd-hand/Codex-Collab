@@ -22,6 +22,7 @@ import {
   codexModelSupportsImages,
   codexModelSupportsReasoningEffort,
   normalizeCodexModelId,
+  sanitizeCodexAssistantMessageText,
   sanitizeCodexUserMessageText,
   type CodexPromptOptions,
   type CodexRecordEntry,
@@ -594,7 +595,12 @@ export function extractCodexRecordEntries(turns: CodexTurn[]): CodexRecordEntry[
         value = appServerFileChangeText(item);
       }
       const normalized = redactSensitiveText(
-        (role === "user" ? sanitizeCodexUserMessageText(value) : value).trim(),
+        (role === "user"
+          ? sanitizeCodexUserMessageText(value)
+          : role === "assistant"
+            ? sanitizeCodexAssistantMessageText(value)
+            : value
+        ).trim(),
       );
       if (!role || !normalized) continue;
       entries.push({
@@ -746,7 +752,9 @@ export function extractCodexRolloutEntries(
     if (payloadType === "message" && (payload.role === "user" || payload.role === "assistant")) {
       const rawText = rolloutText(payload.content).trim();
       const text = redactSensitiveText(
-        payload.role === "user" ? sanitizeCodexUserMessageText(rawText) : rawText,
+        payload.role === "user"
+          ? sanitizeCodexUserMessageText(rawText)
+          : sanitizeCodexAssistantMessageText(rawText),
       );
       if (!text) continue;
       entries.push({

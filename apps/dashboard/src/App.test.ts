@@ -166,6 +166,20 @@ describe("Codex client-style task process", () => {
         { status: "completed", title: "分析与计划", role: "reasoning" },
       ]).progress,
     ).toBe("2 个步骤（1 个操作，1 条处理）");
+    expect(
+      executionProcessPresentation(
+        [
+          { status: "running", title: "连接服务器", role: "command" },
+          { status: "failed", title: "旧验证方式", role: "command" },
+        ],
+        true,
+        true,
+      ),
+    ).toMatchObject({
+      status: "completed",
+      title: "已处理",
+      defaultExpanded: false,
+    });
   });
 
   it("renders an accessible collapse control with client-style defaults", () => {
@@ -187,6 +201,25 @@ describe("Codex client-style task process", () => {
     expect(completed).toContain("耗时 3 分 46 秒");
     expect(completed).toContain("展开处理概要");
     expect(completed).not.toContain("查看执行详情");
+
+    const finalizedWithStaleRunningStep = renderToStaticMarkup(
+      createElement(ExecutionProcess, {
+        active: true,
+        completedAt: "2026-07-26T00:03:46.000Z",
+        entries: [
+          {
+            id: "stale-running",
+            role: "command",
+            text: "tool: exec_command\nstatus: running\ninput:\n{\"cmd\":\"npm test\"}",
+            createdAt: "2026-07-26T00:00:00.000Z",
+          },
+        ],
+      }),
+    );
+    expect(finalizedWithStaleRunningStep).toContain('aria-expanded="false"');
+    expect(finalizedWithStaleRunningStep).toContain("已处理");
+    expect(finalizedWithStaleRunningStep).not.toContain("已运行");
+    expect(finalizedWithStaleRunningStep).not.toContain("查看正在执行的内容");
 
     const running = renderToStaticMarkup(
       createElement(ExecutionProcess, {

@@ -126,6 +126,31 @@ describe("presentExecutionEntry", () => {
     });
   });
 
+  it("closes stale running records after a final answer boundary", () => {
+    expect(
+      presentExecutionEntries(
+        [
+          {
+            id: "stale-running",
+            role: "command",
+            text: [
+              "tool: exec_command",
+              "status: running",
+              "input:",
+              '{"cmd":"npm test"}',
+            ].join("\n"),
+            createdAt: "2026-07-26T00:00:00.000Z",
+          },
+        ],
+        true,
+        true,
+      )[0],
+    ).toMatchObject({
+      status: "completed",
+      summary: "任务完成时该步骤已结束",
+    });
+  });
+
   it("presents commentary as a readable processing update", () => {
     expect(
       presentExecutionEntry({

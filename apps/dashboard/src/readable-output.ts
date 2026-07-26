@@ -602,8 +602,20 @@ export function presentExecutionEntry(
 export function presentExecutionEntries(
   entries: readonly CodexRecordEntry[],
   active = false,
+  finalized = false,
 ): ReadableExecution[] {
   const records = entries.map((entry) => presentExecutionEntry(entry));
+  if (finalized) {
+    return records.map((record) =>
+      record.status === "running"
+        ? {
+            ...record,
+            status: "completed",
+            summary: "任务完成时该步骤已结束",
+          }
+        : record,
+    );
+  }
   if (!active || records.some((record) => record.status === "running")) {
     return records;
   }

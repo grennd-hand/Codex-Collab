@@ -1,4 +1,5 @@
 import {
+  sanitizeCodexAssistantMessageText,
   sanitizeCodexUserMessageText,
   type CodexRecordEntry,
   type Message,
@@ -48,6 +49,10 @@ export function sanitizeImportedUserText(text: string): string {
   return sanitizeCodexUserMessageText(text);
 }
 
+export function sanitizeImportedAssistantText(text: string): string {
+  return sanitizeCodexAssistantMessageText(text);
+}
+
 export function parseCollabCommandEnvelope(
   text: string,
 ): CollabCommandEnvelope | null {
@@ -85,12 +90,14 @@ export function buildImportedTimeline(history: CodexRecordEntry[]): ImportedTime
       ) {
         previous.completedAt = entry.createdAt;
       }
+      const visibleText =
+        entry.role === "user"
+          ? sanitizeImportedUserText(entry.text)
+          : sanitizeImportedAssistantText(entry.text);
+      if (!visibleText) continue;
       timeline.push({
         kind: "message",
-        entry:
-          entry.role === "user"
-            ? { ...entry, text: sanitizeImportedUserText(entry.text) }
-            : entry,
+        entry: visibleText === entry.text ? entry : { ...entry, text: visibleText },
       });
       continue;
     }

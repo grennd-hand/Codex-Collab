@@ -622,6 +622,7 @@ export function executionProcessPresentation(
   records: readonly (Pick<ReadableExecution, "status" | "title"> &
     Partial<Pick<ReadableExecution, "role">>)[],
   active = false,
+  finalized = false,
 ): ExecutionProcessPresentation {
   const running = records.filter((record) => record.status === "running");
   const failed = records.filter((record) => record.status === "failed");
@@ -637,6 +638,15 @@ export function executionProcessPresentation(
       : `${records.length} 个步骤`;
   const latestRunning = running.at(-1);
 
+  if (finalized) {
+    return {
+      status: "completed",
+      title: "已处理",
+      detail: "处理概要已收起",
+      progress: stepBreakdown,
+      defaultExpanded: false,
+    };
+  }
   if (running.length > 0) {
     return {
       status: "running",
@@ -856,8 +866,9 @@ export function ExecutionProcess({
   active?: boolean;
   completedAt?: string | null;
 }) {
-  const records = presentExecutionEntries(entries, active);
-  const presentation = executionProcessPresentation(records, active);
+  const finalized = Boolean(completedAt);
+  const records = presentExecutionEntries(entries, active && !finalized, finalized);
+  const presentation = executionProcessPresentation(records, active && !finalized, finalized);
   const [expanded, setExpanded] = useState(presentation.defaultExpanded);
   const contentId = useId();
   const runningStartedAt =

@@ -654,6 +654,41 @@ describe("Codex record import", () => {
     expect(records[0]?.text).toBe("只保留这句正文。");
   });
 
+  it("removes Codex rendering metadata before publishing final answers", () => {
+    const finalAnswer = [
+      "部署完成。",
+      "",
+      '::git-push{cwd="E:/Codex-Collab" branch="main"}',
+      "",
+      "<oai-mem-citation>",
+      "<citation_entries>",
+      "MEMORY.md:109-111|note=[deployment boundary]",
+      "</citation_entries>",
+      "<rollout_ids>",
+      "019f94f6-7582-7a20-8538-befd4fd7413c",
+      "</rollout_ids>",
+      "</oai-mem-citation>",
+    ].join("\n");
+    const records = extractCodexRolloutEntries(
+      [
+        JSON.stringify({
+          timestamp: "2026-07-25T00:00:00.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            id: "assistant-final",
+            role: "assistant",
+            phase: "final_answer",
+            content: [{ type: "output_text", text: finalAnswer }],
+          },
+        }),
+      ],
+      "thread-1",
+    );
+
+    expect(records[0]?.text).toBe("部署完成。");
+  });
+
   it("hides unfinished apply_patch contents while keeping the edited filename", () => {
     const records = extractCodexRolloutEntries(
       [

@@ -4,6 +4,7 @@ import {
   buildImportedTimeline,
   buildUnifiedTimeline,
   executionDetailLabel,
+  sanitizeImportedAssistantText,
   sanitizeImportedUserText,
   splitConversationMessages,
 } from "./imported-timeline.js";
@@ -195,6 +196,41 @@ describe("sanitizeImportedUserText", () => {
     ].join("\n");
 
     expect(sanitizeImportedUserText(incomplete)).toBe(incomplete);
+  });
+});
+
+describe("sanitizeImportedAssistantText", () => {
+  it("removes Codex app directives and memory citations from the visible answer", () => {
+    const answer = [
+      "主实例已部署成功。",
+      "",
+      '::git-stage{cwd="E:/Codex-Collab"}',
+      '::git-commit{cwd="E:/Codex-Collab"}',
+      '::git-push{cwd="E:/Codex-Collab" branch="main"}',
+      "",
+      "<oai-mem-citation>",
+      "<citation_entries>",
+      "MEMORY.md:109-111|note=[deployment boundary]",
+      "</citation_entries>",
+      "<rollout_ids>",
+      "019f94f6-7582-7a20-8538-befd4fd7413c",
+      "</rollout_ids>",
+      "</oai-mem-citation>",
+    ].join("\n");
+
+    expect(sanitizeImportedAssistantText(answer)).toBe("主实例已部署成功。");
+  });
+
+  it("preserves ordinary Markdown and inline examples", () => {
+    const answer = [
+      "下面是配置示例：",
+      "",
+      "`::git-push{cwd=\"E:/demo\" branch=\"main\"}`",
+      "",
+      "正文不应被删除。",
+    ].join("\n");
+
+    expect(sanitizeImportedAssistantText(answer)).toBe(answer);
   });
 });
 

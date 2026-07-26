@@ -2,6 +2,8 @@ export const PROTOCOL_VERSION = "v1" as const;
 
 const CODEX_FILES_HEADER = "# Files mentioned by the user:";
 const CODEX_REQUEST_HEADER = "## My request for Codex:";
+const CODEX_INTERNAL_DIRECTIVE =
+  /^::(?:created-thread|code-comment|git-(?:stage|commit|push|create-branch|create-pr))\{.*\}$/;
 
 function isAbsoluteCodexAttachmentPath(value: string): boolean {
   return /^(?:[A-Za-z]:[\\/]|\\\\|\/)/.test(value);
@@ -62,6 +64,20 @@ export function sanitizeCodexUserMessageText(text: string): string {
     )
     .trim();
   return attachmentCount > 0 && body ? body : text;
+}
+
+export function sanitizeCodexAssistantMessageText(text: string): string {
+  const normalized = text.replace(/\r\n?/g, "\n");
+  const withoutMemoryCitations = normalized.replace(
+    /(?:^|\n)[ \t]*<oai-mem-citation>[ \t]*\n[\s\S]*?\n[ \t]*<\/oai-mem-citation>[ \t]*(?=\n|$)/g,
+    "\n",
+  );
+  return withoutMemoryCitations
+    .split("\n")
+    .filter((line) => !CODEX_INTERNAL_DIRECTIVE.test(line.trim()))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 export type MemberRole = "owner" | "editor";
