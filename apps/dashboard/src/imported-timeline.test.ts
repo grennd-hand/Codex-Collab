@@ -36,6 +36,7 @@ function message(
     codexOptions: null,
     deliveryStatus: kind === "codex_prompt" ? "submitted" : null,
     codexTurnId: kind === "codex_prompt" ? "turn-1" : null,
+    workspaceThreadId: null,
     completedAt: null,
     createdAt,
   };
