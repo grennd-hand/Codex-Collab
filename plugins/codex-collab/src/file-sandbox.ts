@@ -1,7 +1,5 @@
-import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
-  link,
   lstat,
   mkdir,
   open,
@@ -12,6 +10,10 @@ import {
   unlink,
 } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import {
+  runWindowsFileCas,
+  type WindowsFileCasDebugOptions,
+} from "./windows-file-cas.js";
 
 export interface SharedFile {
   path: string;
@@ -38,60 +40,12 @@ export interface FileSandboxTestHooks {
   beforeFinalWriteCheck?: (path: string) => Promise<void>;
   beforeCandidateOpen?: (path: string) => Promise<void>;
   platform?: NodeJS.Platform;
-  replaceFile?: (candidate: string, target: string, recovery: string) => Promise<void>;
+  windowsCasDebug?: WindowsFileCasDebugOptions;
 }
 
 const pathWriteLocks = new Map<string, Promise<void>>();
 const RECOVERY_TRANSACTION_LIMIT = 32;
 const RECOVERY_BYTE_LIMIT = 64_000_000;
-
-const POWERSHELL_REPLACE_SCRIPT = [
-  "$ErrorActionPreference = 'Stop'",
-  "$paths = [Console]::In.ReadToEnd() | ConvertFrom-Json",
-  "[System.IO.File]::Replace([string]$paths.candidate, [string]$paths.target, [string]$paths.recovery, $false)",
-].join("; ");
-const POWERSHELL_REPLACE_ENCODED = Buffer.from(
-  POWERSHELL_REPLACE_SCRIPT,
-  "utf16le",
-).toString("base64");
-
-function replaceFileWindows(
-  candidate: string,
-  target: string,
-  recovery: string,
-): Promise<void> {
-  return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn(
-      "powershell.exe",
-      [
-        "-NoLogo",
-        "-NoProfile",
-        "-NonInteractive",
-        "-EncodedCommand",
-        POWERSHELL_REPLACE_ENCODED,
-      ],
-      { shell: false, windowsHide: true, stdio: ["pipe", "ignore", "pipe"] },
-    );
-    let stderr = "";
-    child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (chunk: string) => {
-      stderr = `${stderr}${chunk}`.slice(-4_000);
-    });
-    child.stdin.end(JSON.stringify({ candidate, target, recovery }));
-    child.once("error", rejectPromise);
-    child.once("exit", (code) => {
-      if (code === 0) {
-        resolvePromise();
-        return;
-      }
-      rejectPromise(
-        new Error(
-          `Windows atomic file replacement failed${stderr.trim() ? `: ${stderr.trim()}` : ""}`,
-        ),
-      );
-    });
-  });
-}
 
 const SKIPPED_DIRECTORY_NAMES = new Set([
   ".codex-collab",
@@ -209,7 +163,9 @@ export class FileSandbox {
     try {
       // Keep an on-disk UTF-8 BOM as U+FEFF so content, byte size and SHA-256
       // all describe the same bytes across snapshots and direct reads.
-      content = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+      content = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+        bytes,
+      );
     } catch {
       throw new Error("The collaboration editor supports UTF-8 text files only");
     }
@@ -272,26 +228,21 @@ export class FileSandbox {
       const journalRoot = resolve(this.root, ".codex-collab", "recovery");
       const candidateDirectory = resolve(journalRoot, "candidate");
       const recoveryDirectory = resolve(journalRoot, "recovery");
-      const displacedDirectory = resolve(journalRoot, "displaced");
       const metadataDirectory = resolve(journalRoot, "metadata");
       const journalDirectories = [
         resolve(this.root, ".codex-collab"),
         journalRoot,
         candidateDirectory,
         recoveryDirectory,
-        displacedDirectory,
         metadataDirectory,
       ];
       await this.ensureRecoveryJournal(journalDirectories);
       const transactionId = randomUUID();
       const candidate = resolve(candidateDirectory, transactionId);
       const recovery = resolve(recoveryDirectory, transactionId);
-      const displaced = resolve(displacedDirectory, transactionId);
       const metadata = resolve(metadataDirectory, transactionId);
       const requestedHash = sha256(content);
-      const replaceFile = this.testHooks.replaceFile ?? replaceFileWindows;
-      let keepJournal = false;
-      let replacementAttempted = false;
+      let preserveCandidate = false;
       try {
         await this.testHooks.beforeCandidateOpen?.(candidate);
         const candidateHandle = await open(candidate, "wx", 0o600);
@@ -303,105 +254,51 @@ export class FileSandbox {
         }
         await this.testHooks.beforeFinalWriteCheck?.(absolute);
         await this.ensureRecoveryJournal(journalDirectories);
-        if (currentHash === undefined) {
-          try {
-            await link(candidate, absolute);
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-              throw new FileConflictError(
-                "File was created on disk while the collaboration write was being prepared.",
-              );
-            }
-            throw error;
-          }
-        } else {
-          replacementAttempted = true;
-          await replaceFile(candidate, absolute, recovery);
-          const replacedHash = sha256(await readFile(recovery));
-          if (replacedHash !== currentHash) {
-            keepJournal = true;
-            await this.rollbackWindowsReplacement(
-              recovery,
-              absolute,
-              displaced,
-              replacedHash,
-              replaceFile,
-            );
-            await this.writeRecoveryMetadata(metadata, {
-              target: relative(this.root, absolute).split(sep).join("/"),
-              expectedSha256: currentHash,
-              requestedSha256: requestedHash,
-              phase: "rolled-back-conflict",
-              transactionId,
-            });
-            throw new FileConflictError(
-              "File changed on disk before the atomic collaboration replacement.",
-            );
-          }
-        }
-
-        const finalHash = sha256(await readFile(absolute));
-        if (finalHash !== requestedHash) {
-          if (currentHash !== undefined) {
-            keepJournal = true;
-            await this.rollbackWindowsReplacement(
-              recovery,
-              absolute,
-              displaced,
-              currentHash,
-              replaceFile,
-            );
-            await this.writeRecoveryMetadata(metadata, {
-              target: relative(this.root, absolute).split(sep).join("/"),
-              expectedSha256: currentHash,
-              requestedSha256: requestedHash,
-              phase: "rolled-back-final-mismatch",
-              transactionId,
-            });
-          }
+        const targetRelativePath = relative(this.root, absolute).split(sep).join("/");
+        const result = await runWindowsFileCas({
+          root: this.root,
+          target: absolute,
+          candidate,
+          recovery,
+          journal: metadata,
+          transactionId,
+          targetRelativePath,
+          // Legacy callers that omit an expected hash still get a strict CAS
+          // against the state observed at the start of this write.
+          expectedSha256: expectedSha256 ?? currentHash ?? "",
+          requestedSha256: requestedHash,
+          ...(this.testHooks.windowsCasDebug
+            ? { debug: this.testHooks.windowsCasDebug }
+            : {}),
+        });
+        preserveCandidate = result.targetMoved && !result.candidateMoved;
+        if (result.status === "conflict") {
           throw new FileConflictError(
-            "File changed immediately after the atomic collaboration replacement.",
+            `${result.message} (phase: ${result.phase}; recovery transaction: ${transactionId})`,
           );
         }
-        if (currentHash !== undefined) {
-          keepJournal = true;
+        if (result.status !== "committed") {
+          throw new Error(
+            `${result.message} (phase: ${result.phase}; recovery transaction: ${transactionId})`,
+          );
         }
-        await this.writeRecoveryMetadata(metadata, {
-          target: relative(this.root, absolute).split(sep).join("/"),
-          expectedSha256: currentHash ?? "",
-          requestedSha256: requestedHash,
-          phase: currentHash === undefined ? "new-file-committed" : "replacement-committed",
-          transactionId,
-        });
-        replacementAttempted = false;
+        // Do not re-open the path after the guarded helper reports commit: an
+        // unrelated writer could legitimately change it after the guard is
+        // released. The helper hashed the exact candidate handle it published.
+        return {
+          path: targetRelativePath,
+          content,
+          size: Buffer.byteLength(content),
+          sha256: requestedHash,
+          modifiedAt: result.modifiedAt ?? new Date().toISOString(),
+        };
       } finally {
-        await unlink(candidate).catch(() => undefined);
-        if (!keepJournal && !replacementAttempted) {
-          await Promise.all([
-            unlink(recovery).catch(() => undefined),
-            unlink(displaced).catch(() => undefined),
-            unlink(metadata).catch(() => undefined),
-          ]);
+        if (!preserveCandidate) {
+          await unlink(candidate).catch(() => undefined);
         }
         await this.pruneRecoveryJournal(journalRoot);
       }
-      return this.read(relativePath);
     });
-  }
-
-  private async rollbackWindowsReplacement(
-    recovery: string,
-    target: string,
-    displaced: string,
-    expectedRecoveryHash: string,
-    replaceFile: (candidate: string, target: string, recovery: string) => Promise<void>,
-  ): Promise<void> {
-    await replaceFile(recovery, target, displaced);
-    const restoredHash = sha256(await readFile(target));
-    if (restoredHash !== expectedRecoveryHash) {
-      throw new Error("Atomic collaboration rollback did not restore the displaced file");
-    }
-    await link(target, recovery);
   }
 
   private async ensureRecoveryJournal(directories: readonly string[]): Promise<void> {
@@ -426,34 +323,12 @@ export class FileSandbox {
     }
   }
 
-  private async writeRecoveryMetadata(
-    path: string,
-    metadata: {
-      target: string;
-      expectedSha256: string;
-      requestedSha256: string;
-      phase: string;
-      transactionId: string;
-    },
-  ): Promise<void> {
-    const handle = await open(path, "wx", 0o600);
-    try {
-      await handle.writeFile(
-        `${JSON.stringify({ ...metadata, recordedAt: new Date().toISOString() })}\n`,
-        "utf8",
-      );
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-  }
-
   private async pruneRecoveryJournal(journalRoot: string): Promise<void> {
     const transactions = new Map<
       string,
-      { paths: string[]; size: number; modifiedAt: number }
+      { paths: string[]; size: number; modifiedAt: number; committed: boolean }
     >();
-    for (const name of ["candidate", "recovery", "displaced", "metadata"]) {
+    for (const name of ["candidate", "recovery", "metadata"]) {
       const directory = resolve(journalRoot, name);
       const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
       for (const entry of entries) {
@@ -465,10 +340,25 @@ export class FileSandbox {
           paths: [],
           size: 0,
           modifiedAt: 0,
+          committed: false,
         };
         transaction.paths.push(path);
         transaction.size += metadata.size;
         transaction.modifiedAt = Math.max(transaction.modifiedAt, metadata.mtimeMs);
+        if (name === "metadata") {
+          const records = (await readFile(path, "utf8").catch(() => ""))
+            .split(/\r?\n/)
+            .filter(Boolean);
+          try {
+            const last = JSON.parse(records.at(-1) ?? "{}") as { phase?: string };
+            transaction.committed =
+              last.phase === "replacement-committed" ||
+              last.phase === "new-file-committed";
+          } catch {
+            // A partial journal is recovery evidence and must never be pruned
+            // as if the transaction had committed successfully.
+          }
+        }
         transactions.set(entry.name, transaction);
       }
     }
@@ -478,6 +368,7 @@ export class FileSandbox {
     let retainedCount = 0;
     let retainedBytes = 0;
     for (const transaction of ordered) {
+      if (!transaction.committed) continue;
       retainedCount += 1;
       retainedBytes += transaction.size;
       if (

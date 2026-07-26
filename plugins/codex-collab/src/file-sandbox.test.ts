@@ -1,16 +1,22 @@
 import {
+  access,
   mkdir,
   mkdtemp,
   readFile,
   readdir,
+  rename,
   rm,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { FileConflictError, FileSandbox } from "./file-sandbox.js";
+import { runWindowsFileCas } from "./windows-file-cas.js";
 
 const roots: string[] = [];
 
@@ -18,6 +24,82 @@ async function tempRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "codex-collab-files-"));
   roots.push(root);
   return root;
+}
+
+async function waitForPath(path: string): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    try {
+      await access(path);
+      return;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  throw new Error(`Timed out waiting for ${path}`);
+}
+
+function runPowerShell(script: string, paths: Record<string, string>): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      "powershell.exe",
+      ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+      {
+        shell: false,
+        windowsHide: true,
+        env: {
+          ...process.env,
+          CODEX_CAS_TEST_PATHS: Buffer.from(JSON.stringify(paths), "utf8").toString(
+            "base64",
+          ),
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => (stdout += chunk));
+    child.stderr.on("data", (chunk: string) => (stderr += chunk));
+    child.once("error", reject);
+    child.once("exit", (code) => {
+      if (code === 0) resolve(stdout.trim());
+      else reject(new Error(`PowerShell test helper failed (${code}): ${stderr}`));
+    });
+  });
+}
+
+function killProcessTree(pid: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const killer = spawn("taskkill.exe", ["/PID", String(pid), "/T", "/F"], {
+      shell: false,
+      windowsHide: true,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    killer.stderr.setEncoding("utf8");
+    killer.stderr.on("data", (chunk: string) => (stderr += chunk));
+    killer.once("error", reject);
+    killer.once("exit", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`taskkill failed (${code}): ${stderr}`));
+    });
+  });
+}
+
+const decodePowerShellPaths =
+  "$p=([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:CODEX_CAS_TEST_PATHS))|ConvertFrom-Json);";
+
+function readJournalRecords(content: string): Array<Record<string, string>> {
+  return content
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, string>);
+}
+
+function contentHash(content: string): string {
+  return createHash("sha256").update(content).digest("hex");
 }
 
 afterEach(async () => {
@@ -42,16 +124,22 @@ describe("FileSandbox", () => {
     expect(await readFile(join(journalRoot, "recovery", recoveries[0]!), "utf8")).toBe(
       "first",
     );
-    expect(
-      JSON.parse(
-        await readFile(join(journalRoot, "metadata", metadataFiles[0]!), "utf8"),
-      ),
-    ).toMatchObject({
+    const records = readJournalRecords(
+      await readFile(join(journalRoot, "metadata", metadataFiles[0]!), "utf8"),
+    );
+    expect(records[0]).toMatchObject({ phase: "prepared" });
+    expect(records.at(-1)).toMatchObject({
       target: "notes.md",
       expectedSha256: original.sha256,
       requestedSha256: updated.sha256,
       phase: "replacement-committed",
     });
+    const targetIdentity = await stat(join(root, "notes.md"), { bigint: true });
+    const recoveryIdentity = await stat(
+      join(journalRoot, "recovery", recoveries[0]!),
+      { bigint: true },
+    );
+    expect(targetIdentity.ino).not.toBe(recoveryIdentity.ino);
     await expect(sandbox.read("../outside.txt")).rejects.toThrow(/outside/i);
   });
 
@@ -69,7 +157,7 @@ describe("FileSandbox", () => {
     expect(await readFile(path, "utf8")).toBe("changed elsewhere");
   });
 
-  it("atomically restores an external race and retains recovery journals", async () => {
+  it("detects a pre-hash race before changing the target", async () => {
     const root = await tempRoot();
     const path = join(root, "shared.ts");
     await writeFile(path, "version one", "utf8");
@@ -87,15 +175,250 @@ describe("FileSandbox", () => {
     expect(await readFile(path, "utf8")).toBe("external edit");
     const recoveryRoot = join(root, ".codex-collab", "recovery");
     const recoveryFiles = await readdir(join(recoveryRoot, "recovery"));
-    const displacedFiles = await readdir(join(recoveryRoot, "displaced"));
-    expect(recoveryFiles).toHaveLength(1);
-    expect(displacedFiles).toHaveLength(1);
+    const candidateFiles = await readdir(join(recoveryRoot, "candidate"));
+    expect(recoveryFiles).toEqual([]);
+    expect(candidateFiles).toEqual([]);
+  });
+
+  it("refuses to start while another process has an existing write handle", async () => {
+    const root = await tempRoot();
+    const target = join(root, "guarded.ts");
+    const signal = join(root, "holder-ready");
+    const release = join(root, "holder-release");
+    await writeFile(target, "A", "utf8");
+    const sandbox = await FileSandbox.create(root);
+    const original = await sandbox.read("guarded.ts");
+    const holder = runPowerShell(
+      `${decodePowerShellPaths}$stream=[IO.File]::Open($p.target,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::ReadWrite);[IO.File]::WriteAllText($p.signal,'ready');while(-not(Test-Path -LiteralPath $p.release)){Start-Sleep -Milliseconds 10};$stream.Dispose()`,
+      { target, signal, release },
+    );
+    await waitForPath(signal);
+
+    await expect(
+      sandbox.write("guarded.ts", "C", original.sha256),
+    ).rejects.toBeInstanceOf(FileConflictError);
+    expect(await readFile(target, "utf8")).toBe("A");
+    await writeFile(release, "release", "utf8");
+    await holder;
+  });
+
+  it("holds a native guard that blocks external write and File.Replace", async () => {
+    const root = await tempRoot();
+    const target = join(root, "guarded.ts");
+    const replacement = join(root, "external-candidate.ts");
+    const backup = join(root, "external-backup.ts");
+    const signal = join(root, "cas-guarded");
+    const release = join(root, "cas-continue");
+    await writeFile(target, "A", "utf8");
+    await writeFile(replacement, "B", "utf8");
+    const original = await (await FileSandbox.create(root)).read("guarded.ts");
+    const sandbox = await FileSandbox.create(root, {
+      windowsCasDebug: { guardSignalPath: signal, guardContinuePath: release },
+    });
+
+    const write = sandbox.write("guarded.ts", "C", original.sha256);
+    await waitForPath(signal);
+    const blocked = await runPowerShell(
+      `${decodePowerShellPaths}$writeBlocked=$false;$replaceBlocked=$false;try{[IO.File]::WriteAllText($p.target,'B')}catch{$writeBlocked=$true};try{[IO.File]::Replace($p.replacement,$p.target,$p.backup,$false)}catch{$replaceBlocked=$true};Write-Output ($writeBlocked.ToString()+','+$replaceBlocked.ToString())`,
+      { target, replacement, backup },
+    );
+    expect(blocked).toBe("True,True");
+    expect(await readFile(target, "utf8")).toBe("A");
+    await writeFile(release, "continue", "utf8");
+    await expect(write).resolves.toMatchObject({ content: "C" });
+    expect(await readFile(target, "utf8")).toBe("C");
+  });
+
+  it("never rolls back over a file created in the publication window", async () => {
+    const root = await tempRoot();
+    const target = join(root, "window.ts");
+    const signal = join(root, "target-moved");
+    const release = join(root, "publish-continue");
+    await writeFile(target, "A", "utf8");
+    const original = await (await FileSandbox.create(root)).read("window.ts");
+    const sandbox = await FileSandbox.create(root, {
+      windowsCasDebug: {
+        targetMovedSignalPath: signal,
+        publishContinuePath: release,
+      },
+    });
+
+    const write = sandbox.write("window.ts", "C", original.sha256);
+    await waitForPath(signal);
+    await runPowerShell(
+      `${decodePowerShellPaths}[IO.File]::WriteAllText($p.target,'B')`,
+      { target },
+    );
+    await writeFile(release, "continue", "utf8");
+    await expect(write).rejects.toBeInstanceOf(FileConflictError);
+
+    expect(await readFile(target, "utf8")).toBe("B");
+    const journalRoot = join(root, ".codex-collab", "recovery");
+    const recoveries = await readdir(join(journalRoot, "recovery"));
+    const candidates = await readdir(join(journalRoot, "candidate"));
+    const journals = await readdir(join(journalRoot, "metadata"));
+    expect(recoveries).toHaveLength(1);
+    expect(candidates).toEqual(recoveries);
+    expect(journals).toEqual(recoveries);
+    expect(await readFile(join(journalRoot, "recovery", recoveries[0]!), "utf8")).toBe(
+      "A",
+    );
+    expect(await readFile(join(journalRoot, "candidate", candidates[0]!), "utf8")).toBe(
+      "C",
+    );
     expect(
-      await readFile(join(recoveryRoot, "recovery", recoveryFiles[0]!), "utf8"),
-    ).toBe("external edit");
+      readJournalRecords(
+        await readFile(join(journalRoot, "metadata", journals[0]!), "utf8"),
+      ).map((record) => record.phase),
+    ).toEqual(["prepared", "target-recovered", "publish-conflict"]);
+  });
+
+  it("leaves a fsynced recoverable transaction when the helper process tree is killed", async () => {
+    const root = await tempRoot();
+    const target = join(root, "killed.ts");
+    const signal = join(root, "target-moved");
+    const release = join(root, "never-released");
+    await writeFile(target, "A", "utf8");
+    const encodedPaths = Buffer.from(
+      JSON.stringify({
+        root,
+        target,
+        signal,
+        release,
+        moduleUrl: new URL("./file-sandbox.ts", import.meta.url).href,
+      }),
+      "utf8",
+    ).toString("base64");
+    const child = spawn(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "--input-type=module",
+        "-e",
+        `const p=JSON.parse(Buffer.from(process.env.CODEX_CAS_TEST_PATHS,'base64').toString('utf8'));const {FileSandbox}=await import(p.moduleUrl);const s=await FileSandbox.create(p.root,{windowsCasDebug:{targetMovedSignalPath:p.signal,publishContinuePath:p.release}});const f=await s.read('killed.ts');await s.write('killed.ts','C',f.sha256);`,
+      ],
+      {
+        cwd: process.cwd(),
+        shell: false,
+        windowsHide: true,
+        env: { ...process.env, CODEX_CAS_TEST_PATHS: encodedPaths },
+        stdio: ["ignore", "ignore", "pipe"],
+      },
+    );
+    let childStderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => (childStderr += chunk));
+    const childExit = new Promise<number | null>((resolveExit, rejectExit) => {
+      child.once("error", rejectExit);
+      child.once("exit", resolveExit);
+    });
+
+    await waitForPath(signal);
+    await killProcessTree(child.pid!);
+    const exitCode = await childExit;
+    expect(exitCode).not.toBe(0);
+
+    const journalRoot = join(root, ".codex-collab", "recovery");
+    const recoveries = await readdir(join(journalRoot, "recovery"));
+    const candidates = await readdir(join(journalRoot, "candidate"));
+    const journals = await readdir(join(journalRoot, "metadata"));
+    expect(recoveries).toHaveLength(1);
+    expect(candidates).toEqual(recoveries);
+    expect(journals).toEqual(recoveries);
+    await expect(readFile(target, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(join(journalRoot, "recovery", recoveries[0]!), "utf8")).toBe(
+      "A",
+    );
+    expect(await readFile(join(journalRoot, "candidate", candidates[0]!), "utf8")).toBe(
+      "C",
+    );
     expect(
-      await readFile(join(recoveryRoot, "displaced", displacedFiles[0]!), "utf8"),
-    ).toBe("collaboration edit");
+      readJournalRecords(
+        await readFile(join(journalRoot, "metadata", journals[0]!), "utf8"),
+      ).map((record) => record.phase),
+    ).toEqual(["prepared", "target-recovered"]);
+    await rename(join(journalRoot, "recovery", recoveries[0]!), target);
+    expect(await readFile(target, "utf8")).toBe("A");
+    expect(childStderr).not.toMatch(/uncaught/i);
+  }, 20_000);
+
+  it("allows at most one of two native writers with the same expected hash", async () => {
+    const root = await tempRoot();
+    const target = join(root, "contended.ts");
+    await writeFile(target, "A", "utf8");
+    const journalRoot = join(root, ".codex-collab", "recovery");
+    for (const directory of ["candidate", "recovery", "metadata"]) {
+      await mkdir(join(journalRoot, directory), { recursive: true });
+    }
+    const transactionIds = [randomUUID(), randomUUID()];
+    const contents = ["C-one", "C-two"];
+    for (let index = 0; index < 2; index += 1) {
+      await writeFile(
+        join(journalRoot, "candidate", transactionIds[index]!),
+        contents[index]!,
+        { encoding: "utf8", flag: "wx" },
+      );
+    }
+    const results = await Promise.all(
+      transactionIds.map((transactionId, index) =>
+        runWindowsFileCas({
+          root,
+          target,
+          candidate: join(journalRoot, "candidate", transactionId),
+          recovery: join(journalRoot, "recovery", transactionId),
+          journal: join(journalRoot, "metadata", transactionId),
+          transactionId,
+          targetRelativePath: "contended.ts",
+          expectedSha256: contentHash("A"),
+          requestedSha256: contentHash(contents[index]!),
+        }),
+      ),
+    );
+    expect(results.filter((result) => result.status === "committed")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "conflict")).toHaveLength(1);
+    expect(contents).toContain(await readFile(target, "utf8"));
+  });
+
+  it("reports commit even when committed metadata cannot be appended", async () => {
+    const root = await tempRoot();
+    const target = join(root, "metadata-warning.ts");
+    const transactionId = randomUUID();
+    const journalRoot = join(root, ".codex-collab", "recovery");
+    const candidate = join(journalRoot, "candidate", transactionId);
+    const recovery = join(journalRoot, "recovery", transactionId);
+    const journal = join(journalRoot, "metadata", transactionId);
+    await writeFile(target, "A", "utf8");
+    for (const directory of ["candidate", "recovery", "metadata"]) {
+      await mkdir(join(journalRoot, directory), { recursive: true });
+    }
+    await writeFile(candidate, "C", { encoding: "utf8", flag: "wx" });
+
+    const result = await runWindowsFileCas({
+      root,
+      target,
+      candidate,
+      recovery,
+      journal,
+      transactionId,
+      targetRelativePath: "metadata-warning.ts",
+      expectedSha256: contentHash("A"),
+      requestedSha256: contentHash("C"),
+      debug: { failMetadataAfterPublish: true },
+    });
+
+    expect(result).toMatchObject({
+      status: "committed",
+      phase: "replacement-committed",
+      candidateMoved: true,
+      metadataWarning: expect.any(String),
+    });
+    expect(await readFile(target, "utf8")).toBe("C");
+    expect(await readFile(recovery, "utf8")).toBe("A");
+    expect(readJournalRecords(await readFile(journal, "utf8")).map((r) => r.phase)).toEqual([
+      "prepared",
+      "target-recovered",
+    ]);
   });
 
   it("publishes new files without clobbering a concurrently created target", async () => {
@@ -138,6 +461,33 @@ describe("FileSandbox", () => {
     });
   });
 
+  it("fails before mutation when the exclusive journal path is a symlink", async () => {
+    const root = await tempRoot();
+    const outside = await tempRoot();
+    const target = join(root, "journal.ts");
+    await writeFile(target, "A", "utf8");
+    const original = await (await FileSandbox.create(root)).read("journal.ts");
+    const sandbox = await FileSandbox.create(root, {
+      beforeCandidateOpen: async (candidate) => {
+        const transactionId = candidate.split(/[\\/]/).at(-1)!;
+        await symlink(
+          outside,
+          join(root, ".codex-collab", "recovery", "metadata", transactionId),
+          "junction",
+        );
+      },
+    });
+
+    await expect(
+      sandbox.write("journal.ts", "C", original.sha256),
+    ).rejects.toThrow(/journal/i);
+    expect(await readFile(target, "utf8")).toBe("A");
+    expect(await readdir(outside)).toEqual([]);
+    expect(
+      await readdir(join(root, ".codex-collab", "recovery", "recovery")),
+    ).toEqual([]);
+  });
+
   it("fails writes closed when Windows replacement support is unavailable", async () => {
     const root = await tempRoot();
     const path = join(root, "shared.ts");
@@ -148,6 +498,16 @@ describe("FileSandbox", () => {
       /Windows atomic file replacement support/i,
     );
     expect(await readFile(path, "utf8")).toBe("original");
+  });
+
+  it("preserves a UTF-8 BOM for policy checks instead of silently stripping it", async () => {
+    const root = await tempRoot();
+    await writeFile(join(root, "bom.txt"), Buffer.from([0xef, 0xbb, 0xbf, 0x73, 0x65, 0x63]));
+    const sandbox = await FileSandbox.create(root);
+
+    await expect(sandbox.read("bom.txt")).resolves.toMatchObject({
+      content: "\uFEFFsec",
+    });
   });
 
   it("rejects a recovery journal symlink escape before creating candidates", async () => {
