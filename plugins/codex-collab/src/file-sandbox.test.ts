@@ -43,6 +43,24 @@ describe("FileSandbox", () => {
     expect(await readFile(path, "utf8")).toBe("changed elsewhere");
   });
 
+  it("rechecks the hash immediately before rename", async () => {
+    const root = await tempRoot();
+    const path = join(root, "shared.ts");
+    await writeFile(path, "version one", "utf8");
+    const reader = await FileSandbox.create(root);
+    const firstRead = await reader.read("shared.ts");
+    const sandbox = await FileSandbox.create(root, {
+      beforeFinalWriteCheck: async (absolutePath) => {
+        await writeFile(absolutePath, "external edit", "utf8");
+      },
+    });
+
+    await expect(
+      sandbox.write("shared.ts", "collaboration edit", firstRead.sha256),
+    ).rejects.toBeInstanceOf(FileConflictError);
+    expect(await readFile(path, "utf8")).toBe("external edit");
+  });
+
   it("rejects a nested symlink escape before creating directories outside the root", async () => {
     const root = await tempRoot();
     const outside = await tempRoot();

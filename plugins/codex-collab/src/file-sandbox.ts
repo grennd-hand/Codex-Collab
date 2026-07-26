@@ -33,6 +33,12 @@ export class FileConflictError extends Error {
   }
 }
 
+export interface FileSandboxTestHooks {
+  beforeFinalWriteCheck?: (path: string) => Promise<void>;
+}
+
+const pathWriteLocks = new Map<string, Promise<void>>();
+
 const SKIPPED_DIRECTORY_NAMES = new Set([
   ".codex-collab",
   ".git",
@@ -68,13 +74,19 @@ function isInside(root: string, candidate: string): boolean {
 }
 
 export class FileSandbox {
-  private constructor(private readonly root: string) {}
+  private constructor(
+    private readonly root: string,
+    private readonly testHooks: FileSandboxTestHooks,
+  ) {}
 
-  static async create(root: string): Promise<FileSandbox> {
+  static async create(
+    root: string,
+    testHooks: FileSandboxTestHooks = {},
+  ): Promise<FileSandbox> {
     if (!isAbsolute(root)) {
       throw new Error("Shared root must be an absolute path");
     }
-    return new FileSandbox(await realpath(root));
+    return new FileSandbox(await realpath(root), testHooks);
   }
 
   getRoot(): string {
@@ -161,40 +173,78 @@ export class FileSandbox {
       throw new Error("Path is outside the approved shared root");
     }
 
-    await this.ensureWritableParent(absolute);
+    return this.withPathWriteLock(absolute, async () => {
+      await this.ensureWritableParent(absolute);
 
-    let currentHash: string | undefined;
-    try {
-      const fileInfo = await lstat(absolute);
-      if (fileInfo.isSymbolicLink()) {
-        const target = await realpath(absolute);
-        if (!isInside(this.root, target)) {
-          throw new Error("Symbolic link points outside the approved shared root");
+      let currentHash: string | undefined;
+      try {
+        const fileInfo = await lstat(absolute);
+        if (fileInfo.isSymbolicLink()) {
+          const target = await realpath(absolute);
+          if (!isInside(this.root, target)) {
+            throw new Error("Symbolic link points outside the approved shared root");
+          }
+        }
+        currentHash = sha256(await readFile(absolute));
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+          throw error;
         }
       }
-      currentHash = sha256(await readFile(absolute));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        throw error;
+
+      if (expectedSha256 !== undefined && expectedSha256 !== (currentHash ?? "")) {
+        throw new FileConflictError(
+          `File changed since it was read. Expected ${expectedSha256}, current ${
+            currentHash ?? "<missing>"
+          }.`,
+        );
+      }
+
+      const temporary = `${absolute}.${process.pid}.${Date.now()}.tmp`;
+      try {
+        await writeFile(temporary, content, "utf8");
+        await this.testHooks.beforeFinalWriteCheck?.(absolute);
+        let finalHash: string | undefined;
+        try {
+          finalHash = sha256(await readFile(absolute));
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+        if ((finalHash ?? "") !== (currentHash ?? "")) {
+          throw new FileConflictError(
+            "File changed on disk while the collaboration write was being prepared.",
+          );
+        }
+        // The per-path lock closes races between local writers. The final check is
+        // immediately adjacent to rename; the OS does not expose a cross-process CAS rename.
+        await rename(temporary, absolute);
+      } finally {
+        await unlink(temporary).catch(() => undefined);
+      }
+      return this.read(relativePath);
+    });
+  }
+
+  private async withPathWriteLock<T>(
+    absolute: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const previous = pathWriteLocks.get(absolute) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolveLock) => {
+      release = resolveLock;
+    });
+    const tail = previous.catch(() => undefined).then(() => current);
+    pathWriteLocks.set(absolute, tail);
+    await previous.catch(() => undefined);
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (pathWriteLocks.get(absolute) === tail) {
+        pathWriteLocks.delete(absolute);
       }
     }
-
-    if (expectedSha256 !== undefined && expectedSha256 !== (currentHash ?? "")) {
-      throw new FileConflictError(
-        `File changed since it was read. Expected ${expectedSha256}, current ${
-          currentHash ?? "<missing>"
-        }.`,
-      );
-    }
-
-    const temporary = `${absolute}.${process.pid}.${Date.now()}.tmp`;
-    try {
-      await writeFile(temporary, content, "utf8");
-      await rename(temporary, absolute);
-    } finally {
-      await unlink(temporary).catch(() => undefined);
-    }
-    return this.read(relativePath);
   }
 
   private async ensureWritableParent(absolute: string): Promise<void> {

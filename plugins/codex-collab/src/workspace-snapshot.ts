@@ -1,6 +1,12 @@
 import { basename, extname } from "node:path";
-import type { WorkspaceFileContent } from "@codex-collab/protocol";
+import {
+  containsLikelySecret,
+  isPublishableWorkspacePath,
+  type WorkspaceFileContent,
+} from "@codex-collab/protocol";
 import { FileSandbox } from "./file-sandbox.js";
+
+export { containsLikelySecret, isPublishableWorkspacePath } from "@codex-collab/protocol";
 
 const PUBLISHABLE_EXTENSIONS = new Set([
   ".c",
@@ -79,31 +85,13 @@ export function parseCollabIgnore(content: string): string[] {
     .filter((line) => line && !line.startsWith("#") && !line.startsWith("!"));
 }
 
-async function readCollabIgnore(sandbox: FileSandbox): Promise<string[]> {
+export async function readCollabIgnore(sandbox: FileSandbox): Promise<string[]> {
   try {
     return parseCollabIgnore((await sandbox.read(COLLAB_IGNORE_FILE)).content);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
   }
-}
-
-export function isPublishableWorkspacePath(path: string): boolean {
-  const normalized = path.replaceAll("\\", "/").toLowerCase();
-  const segments = normalized.split("/");
-  const name = basename(normalized);
-  if (
-    segments.includes(".codex") ||
-    segments.includes(".codex-collab") ||
-    name === ".env" ||
-    name.startsWith(".env.")
-  ) {
-    return false;
-  }
-  if (SENSITIVE_NAMES.has(name) || name.startsWith("service-account")) {
-    return false;
-  }
-  return PUBLISHABLE_EXTENSIONS.has(extname(name));
 }
 
 export function isPublishableCodexConfigPath(path: string): boolean {
@@ -120,16 +108,6 @@ export function isPublishableCodexConfigPath(path: string): boolean {
     return false;
   }
   return PUBLISHABLE_EXTENSIONS.has(extname(name));
-}
-
-export function containsLikelySecret(content: string): boolean {
-  if (/-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(content)) return true;
-  if (/\b(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|AKIA[A-Z0-9]{16})\b/.test(content)) {
-    return true;
-  }
-  return /(?:^|\n)\s*(?:API_KEY|ACCESS_TOKEN|AUTH_TOKEN|PASSWORD|SECRET_KEY)\s*=\s*["']?(?!example|placeholder|change-me)[^\s"'#]{12,}/i.test(
-    content,
-  );
 }
 
 async function buildTextSnapshot(

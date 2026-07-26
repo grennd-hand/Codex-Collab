@@ -27,6 +27,8 @@ import {
   type WorkspaceFileOperationKind,
   type WorkspaceFileOperationStatus,
   type WorkspaceSummary,
+  containsLikelySecret,
+  isPublishableWorkspacePath,
   ProtocolError,
 } from "@codex-collab/protocol";
 import { hashToken, issueToken } from "./token.js";
@@ -98,6 +100,8 @@ interface WorkspaceStateRow {
   session_id: string;
   host_device_label: string;
   root_label: string;
+  host_token_id: string | null;
+  host_generation: string | null;
   catalog_json: string;
   selected_thread_id: string | null;
   history_json: string;
@@ -121,6 +125,7 @@ interface WorkspaceFileOperationRow {
   session_id: string;
   requested_by_member_id: string;
   requested_by_display_name: string;
+  host_generation: string | null;
   kind: WorkspaceFileOperationKind;
   path: string;
   request_content: string | null;
@@ -134,6 +139,7 @@ interface WorkspaceFileOperationRow {
   error_message: string | null;
   requested_at: string;
   started_at: string | null;
+  lease_id: string | null;
   completed_at: string | null;
 }
 
@@ -205,26 +211,6 @@ function now(): string {
   return new Date().toISOString();
 }
 
-const PRIVATE_WORKSPACE_SEGMENTS = new Set([
-  ".codex",
-  ".codex-collab",
-  ".git",
-  ".runtime-data",
-]);
-const PRIVATE_WORKSPACE_NAMES = new Set([
-  ".netrc",
-  ".npmrc",
-  ".pypirc",
-  "auth.json",
-  "auth.toml",
-  "cookies.json",
-  "credentials.json",
-  "id_ed25519",
-  "id_rsa",
-  "secrets.json",
-  "tokens.json",
-]);
-
 function normalizeWorkspaceOperationPath(path: string): string {
   const normalized = path.replaceAll("\\", "/");
   if (
@@ -252,21 +238,11 @@ function normalizeWorkspaceOperationPath(path: string): string {
   ) {
     throw new ProtocolError(400, "unsafe_workspace_path", "Use a safe relative file path");
   }
-  const lowerSegments = segments.map((segment) => segment.toLowerCase());
-  const name = lowerSegments.at(-1)!;
-  if (
-    lowerSegments.some((segment) => PRIVATE_WORKSPACE_SEGMENTS.has(segment)) ||
-    name === ".env" ||
-    name.startsWith(".env.") ||
-    PRIVATE_WORKSPACE_NAMES.has(name) ||
-    name.startsWith("service-account")
-  ) {
+  if (!isPublishableWorkspacePath(normalized)) {
     throw new ProtocolError(
       403,
-      lowerSegments.includes(".codex")
-        ? "codex_path_not_shared"
-        : "workspace_path_not_shared",
-      "This private path is not shared with the web editor",
+      "workspace_file_not_shared",
+      "This file is not available to the collaboration editor",
     );
   }
   return normalized;
@@ -275,6 +251,13 @@ function normalizeWorkspaceOperationPath(path: string): string {
 function contentSha256(content: string): string {
   return createHash("sha256").update(content).digest("hex");
 }
+
+const MAX_ACTIVE_FILE_OPERATIONS_PER_MEMBER = 8;
+const MAX_ACTIVE_FILE_OPERATIONS_PER_SESSION = 64;
+const MAX_FILE_OPERATION_AUDIT_ROWS_PER_SESSION = 500;
+const MAX_FILE_OPERATION_RESULT_CONTENT_COUNT = 20;
+const MAX_FILE_OPERATION_RESULT_CONTENT_BYTES = 10_000_000;
+const FILE_OPERATION_LEASE_MS = 30_000;
 
 function toSession(row: SessionRow): Session {
   return {
@@ -448,6 +431,8 @@ export class SessionStore {
         session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
         host_device_label TEXT NOT NULL,
         root_label TEXT NOT NULL,
+        host_token_id TEXT REFERENCES member_tokens(id) ON DELETE SET NULL,
+        host_generation TEXT,
         catalog_json TEXT NOT NULL DEFAULT '[]',
         selected_thread_id TEXT,
         history_json TEXT NOT NULL DEFAULT '[]',
@@ -469,6 +454,7 @@ export class SessionStore {
         session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
         requested_by_member_id TEXT NOT NULL REFERENCES members(id),
         requested_by_display_name TEXT NOT NULL,
+        host_generation TEXT NOT NULL,
         kind TEXT NOT NULL CHECK (kind IN ('read', 'write')),
         path TEXT NOT NULL,
         request_content TEXT,
@@ -482,6 +468,7 @@ export class SessionStore {
         error_message TEXT,
         requested_at TEXT NOT NULL,
         started_at TEXT,
+        lease_id TEXT,
         completed_at TEXT
       );
       CREATE INDEX IF NOT EXISTS members_session_idx ON members(session_id);
@@ -531,6 +518,20 @@ export class SessionStore {
       "codex_runtime_status",
       "TEXT NOT NULL DEFAULT 'unavailable'",
     );
+    this.ensureColumn("workspace_state", "host_token_id", "TEXT");
+    this.ensureColumn("workspace_state", "host_generation", "TEXT");
+    this.ensureColumn("workspace_file_operations", "host_generation", "TEXT");
+    this.ensureColumn("workspace_file_operations", "lease_id", "TEXT");
+    this.db
+      .prepare(`
+        UPDATE workspace_file_operations
+        SET status = 'failed', request_content = NULL, result_content = NULL,
+            error_code = 'host_repaired',
+            error_message = 'The host workspace changed before this operation completed',
+            completed_at = COALESCE(completed_at, ?)
+        WHERE host_generation IS NULL AND status IN ('queued', 'processing')
+      `)
+      .run(now());
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS message_attachments (
         id TEXT PRIMARY KEY,
@@ -543,6 +544,7 @@ export class SessionStore {
       CREATE INDEX IF NOT EXISTS message_attachments_message_idx
         ON message_attachments(message_id);
     `);
+    this.backfillInFlightMessageThreadIds();
   }
 
   private ensureColumn(table: string, column: string, definition: string): void {
@@ -1711,6 +1713,8 @@ export class SessionStore {
     const owner = this.memberById(pairing.session_id, session.ownerMemberId);
     const memberToken = issueToken("cch");
     const claimedAt = now();
+    const hostTokenId = randomUUID();
+    const hostGeneration = randomUUID();
 
     this.db.exec("BEGIN IMMEDIATE");
     try {
@@ -1730,29 +1734,55 @@ export class SessionStore {
           VALUES (?, ?, ?, ?, ?, ?)
         `)
         .run(
-          randomUUID(),
+          hostTokenId,
           pairing.session_id,
           owner.id,
           hashToken(memberToken),
           deviceLabel,
           claimedAt,
         );
+      const previousHost = this.workspaceState(pairing.session_id);
+      if (previousHost?.host_token_id) {
+        this.db
+          .prepare(
+            "UPDATE member_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
+          )
+          .run(claimedAt, previousHost.host_token_id);
+      }
+      this.db
+        .prepare(`
+          UPDATE workspace_file_operations
+          SET status = 'failed', request_content = NULL, result_content = NULL,
+              lease_id = NULL, error_code = 'host_repaired',
+              error_message = 'The host workspace changed before this operation completed',
+              completed_at = ?
+          WHERE session_id = ? AND status IN ('queued', 'processing')
+        `)
+        .run(claimedAt, pairing.session_id);
       this.db
         .prepare(`
           INSERT INTO workspace_state
-            (session_id, host_device_label, root_label, catalog_json, selected_thread_id,
-             history_json, codex_runtime_status, synced_at)
-          VALUES (?, ?, ?, '[]', NULL, '[]', 'unavailable', NULL)
+            (session_id, host_device_label, root_label, host_token_id, host_generation,
+             catalog_json, selected_thread_id, history_json, codex_runtime_status, synced_at)
+          VALUES (?, ?, ?, ?, ?, '[]', NULL, '[]', 'unavailable', NULL)
           ON CONFLICT(session_id) DO UPDATE SET
             host_device_label = excluded.host_device_label,
             root_label = excluded.root_label,
+            host_token_id = excluded.host_token_id,
+            host_generation = excluded.host_generation,
             catalog_json = '[]',
             selected_thread_id = NULL,
             history_json = '[]',
             codex_runtime_status = 'unavailable',
             synced_at = NULL
         `)
-        .run(pairing.session_id, deviceLabel, rootLabel);
+        .run(
+          pairing.session_id,
+          deviceLabel,
+          rootLabel,
+          hostTokenId,
+          hostGeneration,
+        );
       this.db.prepare("DELETE FROM workspace_files WHERE session_id = ?").run(pairing.session_id);
       this.db.exec("COMMIT");
     } catch (error) {
@@ -1772,7 +1802,7 @@ export class SessionStore {
       threads: CodexThreadCatalogEntry[];
     },
   ): WorkspaceSummary {
-    this.requireOwner(sessionId, memberToken);
+    const host = this.requireCurrentHost(sessionId, memberToken, true);
     const current = this.workspaceState(sessionId);
     const selectedStillExists =
       current?.selected_thread_id &&
@@ -1789,12 +1819,14 @@ export class SessionStore {
       this.db
         .prepare(`
           INSERT INTO workspace_state
-            (session_id, host_device_label, root_label, catalog_json, selected_thread_id,
-             history_json, codex_runtime_status, synced_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (session_id, host_device_label, root_label, host_token_id, host_generation,
+             catalog_json, selected_thread_id, history_json, codex_runtime_status, synced_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(session_id) DO UPDATE SET
             host_device_label = excluded.host_device_label,
             root_label = excluded.root_label,
+            host_token_id = excluded.host_token_id,
+            host_generation = excluded.host_generation,
             catalog_json = excluded.catalog_json,
             selected_thread_id = excluded.selected_thread_id,
             history_json = excluded.history_json,
@@ -1805,6 +1837,8 @@ export class SessionStore {
           sessionId,
           input.deviceLabel,
           input.rootLabel,
+          host.tokenId,
+          host.generation,
           JSON.stringify(input.threads),
           selectedThreadId,
           historyJson,
@@ -1864,7 +1898,7 @@ export class SessionStore {
       files: WorkspaceFileContent[];
     },
   ): WorkspaceSummary {
-    this.requireOwner(sessionId, memberToken);
+    this.requireCurrentHost(sessionId, memberToken);
     const state = this.workspaceState(sessionId);
     if (!state?.selected_thread_id || state.selected_thread_id !== input.threadId) {
       throw new ProtocolError(
@@ -1934,7 +1968,7 @@ export class SessionStore {
       history: CodexRecordEntry[];
     },
   ): WorkspaceSummary {
-    this.requireOwner(sessionId, memberToken);
+    this.requireCurrentHost(sessionId, memberToken);
     const state = this.workspaceState(sessionId);
     if (!state?.selected_thread_id || state.selected_thread_id !== input.threadId) {
       throw new ProtocolError(
@@ -1958,7 +1992,7 @@ export class SessionStore {
     memberToken: string,
     status: CodexRuntimeStatus,
   ): { workspace: WorkspaceSummary; changed: boolean } {
-    this.requireOwner(sessionId, memberToken);
+    this.requireCurrentHost(sessionId, memberToken);
     const state = this.workspaceState(sessionId);
     if (!state) {
       throw new ProtocolError(409, "host_not_paired", "Pair the local Codex host first");
@@ -2044,7 +2078,8 @@ export class SessionStore {
       | { kind: "write"; path: string; content: string; expectedSha256: string },
   ): WorkspaceFileOperation {
     const member = this.requireMember(sessionId, memberToken, true);
-    if (!this.workspaceState(sessionId)) {
+    const state = this.workspaceState(sessionId);
+    if (!state?.host_generation || !state.host_token_id) {
       throw new ProtocolError(409, "host_not_paired", "Pair the local Codex host first");
     }
     const path = normalizeWorkspaceOperationPath(input.path);
@@ -2072,6 +2107,13 @@ export class SessionStore {
           "The web editor supports text files only",
         );
       }
+      if (containsLikelySecret(input.content)) {
+        throw new ProtocolError(
+          403,
+          "workspace_file_not_shared",
+          "This file is not available to the collaboration editor",
+        );
+      }
       if (input.expectedSha256 !== "" && !/^[a-f0-9]{64}$/.test(input.expectedSha256)) {
         throw new ProtocolError(
           400,
@@ -2083,18 +2125,42 @@ export class SessionStore {
 
     const operationId = randomUUID();
     const requestedAt = now();
+    const activeForMember = this.db
+      .prepare(`
+        SELECT COUNT(*) AS count FROM workspace_file_operations
+        WHERE session_id = ? AND requested_by_member_id = ?
+          AND status IN ('queued', 'processing')
+      `)
+      .get(sessionId, member.id) as { count: number };
+    const activeForSession = this.db
+      .prepare(`
+        SELECT COUNT(*) AS count FROM workspace_file_operations
+        WHERE session_id = ? AND status IN ('queued', 'processing')
+      `)
+      .get(sessionId) as { count: number };
+    if (
+      activeForMember.count >= MAX_ACTIVE_FILE_OPERATIONS_PER_MEMBER ||
+      activeForSession.count >= MAX_ACTIVE_FILE_OPERATIONS_PER_SESSION
+    ) {
+      throw new ProtocolError(
+        429,
+        "workspace_operation_limit",
+        "Wait for existing workspace file operations to finish",
+      );
+    }
     this.db
       .prepare(`
         INSERT INTO workspace_file_operations
           (id, session_id, requested_by_member_id, requested_by_display_name,
-           kind, path, request_content, expected_sha256, status, requested_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)
+           host_generation, kind, path, request_content, expected_sha256, status, requested_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)
       `)
       .run(
         operationId,
         sessionId,
         member.id,
         member.displayName,
+        state.host_generation,
         input.kind,
         path,
         input.kind === "write" ? input.content : null,
@@ -2124,7 +2190,7 @@ export class SessionStore {
             ORDER BY requested_at DESC, id DESC LIMIT ?
           `)
           .all(sessionId, member.id, limit)) as unknown as WorkspaceFileOperationRow[];
-    return rows.map((row) => this.toWorkspaceFileOperation(row));
+    return rows.map((row) => this.toWorkspaceFileOperation(row, false));
   }
 
   getWorkspaceFileOperation(
@@ -2154,8 +2220,10 @@ export class SessionStore {
     operation: WorkspaceFileOperationClaim | null;
     rejected: WorkspaceFileOperation[];
   } {
-    this.requireOwner(sessionId, memberToken);
-    const staleBefore = new Date(Date.now() - 2 * 60_000).toISOString();
+    const host = this.requireCurrentHost(sessionId, memberToken);
+    // A claim is the host's bounded authorization lease. Permission and current-host
+    // generation are rechecked when claiming; a stale worker cannot later complete it.
+    const staleBefore = new Date(Date.now() - FILE_OPERATION_LEASE_MS).toISOString();
     const claimedAt = now();
     const rejected: WorkspaceFileOperation[] = [];
     this.db.exec("BEGIN IMMEDIATE");
@@ -2163,19 +2231,20 @@ export class SessionStore {
       this.db
         .prepare(`
           UPDATE workspace_file_operations
-          SET status = 'queued', started_at = NULL
-          WHERE session_id = ? AND status = 'processing' AND started_at < ?
+          SET status = 'queued', started_at = NULL, lease_id = NULL
+          WHERE session_id = ? AND host_generation = ?
+            AND status = 'processing' AND started_at < ?
         `)
-        .run(sessionId, staleBefore);
+        .run(sessionId, host.generation, staleBefore);
 
       for (;;) {
         const row = this.db
           .prepare(`
             SELECT * FROM workspace_file_operations
-            WHERE session_id = ? AND status = 'queued'
+            WHERE session_id = ? AND host_generation = ? AND status = 'queued'
             ORDER BY requested_at ASC, id ASC LIMIT 1
           `)
-          .get(sessionId) as WorkspaceFileOperationRow | undefined;
+          .get(sessionId, host.generation) as WorkspaceFileOperationRow | undefined;
         if (!row) {
           this.db.exec("COMMIT");
           return { operation: null, rejected };
@@ -2212,19 +2281,22 @@ export class SessionStore {
           rejected.push(this.workspaceFileOperationById(sessionId, row.id));
           continue;
         }
+        const leaseId = randomUUID();
         const claimed = this.db
           .prepare(`
             UPDATE workspace_file_operations
-            SET status = 'processing', started_at = ?, error_code = NULL, error_message = NULL
-            WHERE id = ? AND session_id = ? AND status = 'queued'
+            SET status = 'processing', started_at = ?, lease_id = ?,
+                error_code = NULL, error_message = NULL
+            WHERE id = ? AND session_id = ? AND host_generation = ? AND status = 'queued'
           `)
-          .run(claimedAt, row.id, sessionId);
+          .run(claimedAt, leaseId, row.id, sessionId, host.generation);
         if (claimed.changes !== 1) continue;
         const current = this.workspaceFileOperationRowById(sessionId, row.id);
         this.db.exec("COMMIT");
         return {
           operation: {
             ...this.toWorkspaceFileOperation(current),
+            leaseId,
             requestContent: current.request_content,
           },
           rejected,
@@ -2236,22 +2308,46 @@ export class SessionStore {
     }
   }
 
+  private backfillInFlightMessageThreadIds(): void {
+    this.db.exec(`
+      UPDATE messages
+      SET selected_thread_id = (
+        SELECT workspace_state.selected_thread_id
+        FROM workspace_state
+        WHERE workspace_state.session_id = messages.session_id
+      )
+      WHERE selected_thread_id IS NULL
+        AND kind IN ('codex_prompt', 'codex_stop')
+        AND delivery_status IN ('queued', 'submitted')
+        AND EXISTS (
+          SELECT 1 FROM workspace_state
+          WHERE workspace_state.session_id = messages.session_id
+            AND workspace_state.selected_thread_id IS NOT NULL
+        )
+    `);
+  }
+
   completeWorkspaceFileOperation(
     sessionId: string,
     memberToken: string,
     operationId: string,
     input:
-      | { status: "completed"; file: WorkspaceFileContent }
+      | { status: "completed"; leaseId: string; file: WorkspaceFileContent }
       | {
           status: "failed";
+          leaseId: string;
           errorCode: string;
           errorMessage: string;
           file?: WorkspaceFileContent | null;
         },
   ): WorkspaceFileOperation {
-    this.requireOwner(sessionId, memberToken);
+    const host = this.requireCurrentHost(sessionId, memberToken);
     const row = this.workspaceFileOperationRowById(sessionId, operationId);
-    if (row.status !== "processing") {
+    if (
+      row.status !== "processing" ||
+      row.host_generation !== host.generation ||
+      row.lease_id !== input.leaseId
+    ) {
       throw new ProtocolError(
         409,
         "workspace_operation_not_processing",
@@ -2282,6 +2378,13 @@ export class SessionStore {
           "Host file modification time is invalid",
         );
       }
+      if (containsLikelySecret(file.content)) {
+        throw new ProtocolError(
+          403,
+          "workspace_file_not_shared",
+          "This file is not available to the collaboration editor",
+        );
+      }
     }
     const errorCode =
       input.status === "failed" ? input.errorCode.trim().slice(0, 120) : null;
@@ -2302,8 +2405,9 @@ export class SessionStore {
           UPDATE workspace_file_operations
           SET status = ?, request_content = NULL,
               result_content = ?, result_size = ?, result_modified_at = ?, result_sha256 = ?,
-              error_code = ?, error_message = ?, completed_at = ?
-          WHERE id = ? AND session_id = ? AND status = 'processing'
+              error_code = ?, error_message = ?, completed_at = ?, lease_id = NULL
+          WHERE id = ? AND session_id = ? AND host_generation = ?
+            AND status = 'processing' AND lease_id = ?
         `)
         .run(
           input.status,
@@ -2316,6 +2420,8 @@ export class SessionStore {
           completedAt,
           operationId,
           sessionId,
+          host.generation,
+          input.leaseId,
         );
       if (updated.changes !== 1) {
         throw new ProtocolError(
@@ -2345,6 +2451,7 @@ export class SessionStore {
             file.content,
           );
       }
+      this.enforceWorkspaceFileOperationRetention(sessionId);
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");
@@ -2605,6 +2712,58 @@ export class SessionStore {
     return member;
   }
 
+  private requireCurrentHost(
+    sessionId: string,
+    memberToken: string,
+    allowInitialize = false,
+  ): { tokenId: string; generation: string } {
+    const owner = this.requireOwner(sessionId, memberToken);
+    const tokenHash = hashToken(memberToken);
+    const state = this.workspaceState(sessionId);
+    let token = this.db
+      .prepare(`
+        SELECT id FROM member_tokens
+        WHERE session_id = ? AND member_id = ? AND token_hash = ?
+          AND revoked_at IS NULL
+      `)
+      .get(sessionId, owner.id, tokenHash) as { id: string } | undefined;
+    if (state?.host_token_id && token?.id !== state.host_token_id) {
+      throw new ProtocolError(
+        403,
+        "current_host_required",
+        "Only the currently paired host can publish or process workspace data",
+      );
+    }
+    if (!state && !allowInitialize) {
+      throw new ProtocolError(409, "host_not_paired", "Pair the local Codex host first");
+    }
+    if (!token) {
+      token = { id: randomUUID() };
+      this.db
+        .prepare(`
+          INSERT INTO member_tokens
+            (id, session_id, member_id, token_hash, device_label, created_at)
+          VALUES (?, ?, ?, ?, 'Bound owner host', ?)
+        `)
+        .run(token.id, sessionId, owner.id, tokenHash, now());
+    }
+
+    if (!state) {
+      return { tokenId: token.id, generation: randomUUID() };
+    }
+
+    const generation = state.host_generation ?? randomUUID();
+    if (!state.host_token_id || !state.host_generation) {
+      this.db
+        .prepare(`
+          UPDATE workspace_state SET host_token_id = ?, host_generation = ?
+          WHERE session_id = ? AND (host_token_id IS NULL OR host_token_id = ?)
+        `)
+        .run(token.id, generation, sessionId, token.id);
+    }
+    return { tokenId: token.id, generation };
+  }
+
   private requireRoomOpen(sessionId: string): void {
     const row = this.db
       .prepare("SELECT room_status FROM sessions WHERE id = ?")
@@ -2637,6 +2796,46 @@ export class SessionStore {
     return row;
   }
 
+  private enforceWorkspaceFileOperationRetention(sessionId: string): void {
+    const rows = this.db
+      .prepare(`
+        SELECT id, LENGTH(CAST(result_content AS BLOB)) AS content_bytes
+        FROM workspace_file_operations
+        WHERE session_id = ? AND result_content IS NOT NULL
+        ORDER BY completed_at DESC, requested_at DESC, id DESC
+      `)
+      .all(sessionId) as unknown as Array<{ id: string; content_bytes: number }>;
+    let retainedCount = 0;
+    let retainedBytes = 0;
+    const clearResult = this.db.prepare(`
+      UPDATE workspace_file_operations SET result_content = NULL WHERE id = ?
+    `);
+    for (const row of rows) {
+      const nextCount = retainedCount + 1;
+      const nextBytes = retainedBytes + row.content_bytes;
+      if (
+        nextCount > MAX_FILE_OPERATION_RESULT_CONTENT_COUNT ||
+        nextBytes > MAX_FILE_OPERATION_RESULT_CONTENT_BYTES
+      ) {
+        clearResult.run(row.id);
+        continue;
+      }
+      retainedCount = nextCount;
+      retainedBytes = nextBytes;
+    }
+    this.db
+      .prepare(`
+        DELETE FROM workspace_file_operations
+        WHERE id IN (
+          SELECT id FROM workspace_file_operations
+          WHERE session_id = ? AND status IN ('completed', 'failed')
+          ORDER BY completed_at DESC, requested_at DESC, id DESC
+          LIMIT -1 OFFSET ?
+        )
+      `)
+      .run(sessionId, MAX_FILE_OPERATION_AUDIT_ROWS_PER_SESSION);
+  }
+
   private workspaceFileOperationById(
     sessionId: string,
     operationId: string,
@@ -2648,29 +2847,34 @@ export class SessionStore {
 
   private toWorkspaceFileOperation(
     row: WorkspaceFileOperationRow,
+    includeResultContent = true,
   ): WorkspaceFileOperation {
-    const resultFile =
-      row.result_content !== null &&
+    const resultFileMetadata =
       row.result_size !== null &&
       row.result_modified_at !== null &&
       row.result_sha256 !== null
         ? {
             path: row.path,
-            content: row.result_content,
             size: row.result_size,
             modifiedAt: row.result_modified_at,
             sha256: row.result_sha256,
           }
+        : null;
+    const resultFile =
+      includeResultContent && row.result_content !== null && resultFileMetadata
+        ? { ...resultFileMetadata, content: row.result_content }
         : null;
     return {
       id: row.id,
       sessionId: row.session_id,
       requestedByMemberId: row.requested_by_member_id,
       requestedByDisplayName: row.requested_by_display_name,
+      hostGeneration: row.host_generation ?? "",
       kind: row.kind,
       path: row.path,
       expectedSha256: row.expected_sha256,
       status: row.status,
+      resultFileMetadata,
       resultFile,
       errorCode: row.error_code,
       errorMessage: row.error_message,
@@ -2684,7 +2888,7 @@ export class SessionStore {
     return this.db
       .prepare(`
         SELECT session_id, host_device_label, root_label, catalog_json, selected_thread_id,
-               history_json, codex_runtime_status, synced_at
+               host_token_id, host_generation, history_json, codex_runtime_status, synced_at
         FROM workspace_state WHERE session_id = ?
       `)
       .get(sessionId) as WorkspaceStateRow | undefined;

@@ -356,19 +356,7 @@ function toWorkspaceFileOperationEvent(
   return {
     operationId: operation.id,
     requestedByMemberId: operation.requestedByMemberId,
-    kind: operation.kind,
-    path: operation.path,
     status: operation.status,
-    resultFile: operation.resultFile
-      ? {
-          path: operation.resultFile.path,
-          size: operation.resultFile.size,
-          modifiedAt: operation.resultFile.modifiedAt,
-          sha256: operation.resultFile.sha256,
-        }
-      : null,
-    errorCode: operation.errorCode,
-    errorMessage: operation.errorMessage,
   };
 }
 
@@ -1370,9 +1358,10 @@ const server = createServer(async (request, response) => {
     ) {
       const body = await readJson(request, 2_100_000);
       let input:
-        | { status: "completed"; file: WorkspaceFileContent }
+        | { status: "completed"; leaseId: string; file: WorkspaceFileContent }
         | {
             status: "failed";
+            leaseId: string;
             errorCode: string;
             errorMessage: string;
             file?: WorkspaceFileContent | null;
@@ -1380,11 +1369,13 @@ const server = createServer(async (request, response) => {
       if (body.status === "completed") {
         input = {
           status: "completed",
+          leaseId: requiredString(body.leaseId, "leaseId", 100),
           file: parseWorkspaceOperationResultFile(body.file),
         };
       } else if (body.status === "failed") {
         input = {
           status: "failed",
+          leaseId: requiredString(body.leaseId, "leaseId", 100),
           errorCode: requiredString(body.errorCode, "errorCode", 120),
           errorMessage: requiredString(body.errorMessage, "errorMessage", 1_000),
           ...(body.file === undefined || body.file === null

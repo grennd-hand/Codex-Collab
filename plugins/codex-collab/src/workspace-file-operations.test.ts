@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WorkspaceFileOperationClaim } from "@codex-collab/protocol";
@@ -28,8 +28,10 @@ function operation(
     sessionId: "session-1",
     requestedByMemberId: "member-1",
     requestedByDisplayName: "Editor",
+    hostGeneration: "generation-1",
     expectedSha256: null,
     status: "processing",
+    resultFileMetadata: null,
     resultFile: null,
     errorCode: null,
     errorMessage: null,
@@ -37,6 +39,7 @@ function operation(
     startedAt: "2026-07-27T00:00:01.000Z",
     completedAt: null,
     requestContent: null,
+    leaseId: "lease-1",
     ...input,
   };
 }
@@ -44,12 +47,12 @@ function operation(
 describe("workspace file operation host execution", () => {
   it("reads and writes through FileSandbox with an observed SHA-256", async () => {
     const root = await tempRoot();
-    await writeFile(join(root, "README.md"), "before", "utf8");
+    await writeFile(join(root, "main.ts"), "before", "utf8");
     const sandbox = await FileSandbox.create(root);
-    const original = await sandbox.read("README.md");
+    const original = await sandbox.read("main.ts");
 
     const readResult = await executeWorkspaceFileOperation(
-      operation({ kind: "read", path: "README.md" }),
+      operation({ kind: "read", path: "main.ts" }),
       sandbox,
     );
     expect(readResult).toMatchObject({
@@ -60,7 +63,7 @@ describe("workspace file operation host execution", () => {
     const writeResult = await executeWorkspaceFileOperation(
       operation({
         kind: "write",
-        path: "README.md",
+        path: "main.ts",
         requestContent: "after",
         expectedSha256: original.sha256,
       }),
@@ -73,7 +76,7 @@ describe("workspace file operation host execution", () => {
         sha256: createHash("sha256").update("after").digest("hex"),
       },
     });
-    expect(await readFile(join(root, "README.md"), "utf8")).toBe("after");
+    expect(await readFile(join(root, "main.ts"), "utf8")).toBe("after");
   });
 
   it("returns the authoritative current file on a stale-hash conflict without overwrite", async () => {
@@ -112,7 +115,80 @@ describe("workspace file operation host execution", () => {
       ),
     ).resolves.toMatchObject({
       status: "failed",
-      errorCode: "workspace_path_not_shared",
+      errorCode: "workspace_file_not_shared",
     });
+  });
+
+  it("applies ignore exact and directory-prefix rules to direct reads", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, "generated"));
+    await writeFile(
+      join(root, ".codex-collabignore"),
+      "private.ts\ngenerated/\n",
+      "utf8",
+    );
+    await writeFile(join(root, "private.ts"), "export const privateValue = 1;", "utf8");
+    await writeFile(join(root, "generated", "bundle.ts"), "export {};", "utf8");
+    const sandbox = await FileSandbox.create(root);
+
+    for (const path of ["private.ts", "generated/bundle.ts"]) {
+      await expect(
+        executeWorkspaceFileOperation(operation({ kind: "read", path }), sandbox),
+      ).resolves.toEqual({
+        status: "failed",
+        errorCode: "workspace_file_not_shared",
+        errorMessage: "This file is not available to the collaboration editor",
+      });
+    }
+  });
+
+  it("does not return guessed-key or custom-token text content", async () => {
+    const root = await tempRoot();
+    await writeFile(
+      join(root, "deploy-key.txt"),
+      "-----BEGIN PRIVATE KEY-----\nnot-a-real-key\n-----END PRIVATE KEY-----",
+      "utf8",
+    );
+    await writeFile(
+      join(root, "settings.txt"),
+      "ACCESS_TOKEN=custom-super-secret-token-123456",
+      "utf8",
+    );
+    const sandbox = await FileSandbox.create(root);
+
+    for (const path of ["deploy-key.txt", "settings.txt"]) {
+      const result = await executeWorkspaceFileOperation(
+        operation({ kind: "read", path }),
+        sandbox,
+      );
+      expect(result).toEqual({
+        status: "failed",
+        errorCode: "workspace_file_not_shared",
+        errorMessage: "This file is not available to the collaboration editor",
+      });
+      expect(result).not.toHaveProperty("file");
+    }
+  });
+
+  it("suppresses the authoritative file when a conflict reveals a secret", async () => {
+    const root = await tempRoot();
+    const path = join(root, "config.ts");
+    await writeFile(path, "export const mode = 'safe';", "utf8");
+    const sandbox = await FileSandbox.create(root);
+    const base = await sandbox.read("config.ts");
+    await writeFile(path, "ACCESS_TOKEN=custom-super-secret-token-123456", "utf8");
+
+    const result = await executeWorkspaceFileOperation(
+      operation({
+        kind: "write",
+        path: "config.ts",
+        requestContent: "export const mode = 'edited';",
+        expectedSha256: base.sha256,
+      }),
+      sandbox,
+    );
+
+    expect(result).toMatchObject({ status: "failed", errorCode: "file_conflict" });
+    expect(result).not.toHaveProperty("file");
   });
 });

@@ -318,9 +318,10 @@ export class RelayClient {
     memberToken: string,
     operationId: string,
     input:
-      | { status: "completed"; file: WorkspaceFileContent }
+      | { status: "completed"; leaseId: string; file: WorkspaceFileContent }
       | {
           status: "failed";
+          leaseId: string;
           errorCode: string;
           errorMessage: string;
           file?: WorkspaceFileContent | null;

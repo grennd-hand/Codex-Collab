@@ -334,8 +334,7 @@ try {
     guestRealtime.socket,
     (envelope) =>
       envelope.type === "file.operation.updated" &&
-      envelope.payload?.status === "queued" &&
-      envelope.payload?.path === "README.md",
+      envelope.payload?.status === "queued",
   );
   const queuedWrite = await request(
     `/v1/sessions/${created.session.id}/workspace/file-operations`,
@@ -355,8 +354,12 @@ try {
     throw new Error("A browser save must remain queued until the host writes it");
   }
   const queuedEvent = await queuedEventPromise;
-  if (queuedEvent.payload?.requestContent !== undefined || queuedEvent.payload?.content !== undefined) {
-    throw new Error("Realtime file operation events must not expose file content");
+  const eventKeys = Object.keys(queuedEvent.payload ?? {}).sort();
+  if (
+    JSON.stringify(eventKeys) !==
+    JSON.stringify(["operationId", "requestedByMemberId", "status"])
+  ) {
+    throw new Error("Realtime file operation events must contain identifiers and status only");
   }
   const relayClient = new RelayClient(origin);
   const sandbox = await FileSandbox.create(projectRoot);

@@ -3,39 +3,19 @@ import type {
   WorkspaceFileOperation,
   WorkspaceFileOperationClaim,
 } from "@codex-collab/protocol";
+import {
+  containsLikelySecret,
+  isPublishableWorkspacePath,
+  isWorkspacePathIgnored,
+} from "@codex-collab/protocol";
 import { FileConflictError, FileSandbox } from "./file-sandbox.js";
 import type { RelayClient } from "./relay-client.js";
+import { readCollabIgnore } from "./workspace-snapshot.js";
 
 type FileOperationRelay = Pick<
   RelayClient,
   "claimNextWorkspaceFileOperation" | "completeWorkspaceFileOperation"
 >;
-
-function isPrivateWebEditorPath(path: string): boolean {
-  const segments = path.replaceAll("\\", "/").toLowerCase().split("/");
-  const name = segments.at(-1) ?? "";
-  return (
-    segments.some((segment) =>
-      [".codex", ".codex-collab", ".git", ".runtime-data"].includes(segment),
-    ) ||
-    name === ".env" ||
-    name.startsWith(".env.") ||
-    [
-      ".netrc",
-      ".npmrc",
-      ".pypirc",
-      "auth.json",
-      "auth.toml",
-      "cookies.json",
-      "credentials.json",
-      "id_ed25519",
-      "id_rsa",
-      "secrets.json",
-      "tokens.json",
-    ].includes(name) ||
-    name.startsWith("service-account")
-  );
-}
 
 function asWorkspaceFile(file: Awaited<ReturnType<FileSandbox["read"]>>): WorkspaceFileContent {
   return {
@@ -83,7 +63,8 @@ async function currentFile(
   path: string,
 ): Promise<WorkspaceFileContent | null> {
   try {
-    return asWorkspaceFile(await sandbox.read(path));
+    const file = asWorkspaceFile(await sandbox.read(path));
+    return containsLikelySecret(file.content) ? null : file;
   } catch {
     return null;
   }
@@ -101,19 +82,31 @@ export async function executeWorkspaceFileOperation(
       file?: WorkspaceFileContent | null;
     }
 > {
-  if (isPrivateWebEditorPath(operation.path)) {
+  const ignoredPaths = await readCollabIgnore(sandbox);
+  if (
+    !isPublishableWorkspacePath(operation.path) ||
+    isWorkspacePathIgnored(operation.path, ignoredPaths)
+  ) {
     return {
       status: "failed",
-      errorCode: "workspace_path_not_shared",
-      errorMessage: "This private path is not shared with the web editor",
+      errorCode: "workspace_file_not_shared",
+      errorMessage: "This file is not available to the collaboration editor",
     };
   }
 
   try {
     if (operation.kind === "read") {
+      const file = asWorkspaceFile(await sandbox.read(operation.path));
+      if (containsLikelySecret(file.content)) {
+        return {
+          status: "failed",
+          errorCode: "workspace_file_not_shared",
+          errorMessage: "This file is not available to the collaboration editor",
+        };
+      }
       return {
         status: "completed",
-        file: asWorkspaceFile(await sandbox.read(operation.path)),
+        file,
       };
     }
     if (operation.requestContent === null || operation.expectedSha256 === null) {
@@ -121,6 +114,13 @@ export async function executeWorkspaceFileOperation(
         status: "failed",
         errorCode: "invalid_workspace_operation",
         errorMessage: "The queued write operation is missing required data",
+      };
+    }
+    if (containsLikelySecret(operation.requestContent)) {
+      return {
+        status: "failed",
+        errorCode: "workspace_file_not_shared",
+        errorMessage: "This file is not available to the collaboration editor",
       };
     }
     return {
@@ -168,6 +168,6 @@ export async function processNextWorkspaceFileOperation(
     sessionId,
     memberToken,
     operation.id,
-    result,
+    { ...result, leaseId: operation.leaseId },
   );
 }
