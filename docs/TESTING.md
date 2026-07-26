@@ -96,6 +96,7 @@ curl.exe --fail --silent --show-error `
 - 项目根不会隐式开放 `.codex`；只有单独显式的 `codexConfigRoot` 会加入配置快照；
 - `.codex` 快照排除 `auth.json`、其他任务 Session、历史数据库、私钥和高置信凭据；
 - 网页文件快照排除 `.env`、二进制与符号链接。
+- 网页文件快照始终排除 `.runtime-data`，并遵守项目根目录的 `.codex-collabignore` 路径前缀。
 
 ## 6. UI 回归
 

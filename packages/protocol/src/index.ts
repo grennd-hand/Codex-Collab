@@ -218,6 +218,15 @@ export interface CodexPromptOptions {
   planMode: boolean;
 }
 
+export const DEFAULT_CODEX_PROMPT_OPTIONS: CodexPromptOptions = {
+  accessMode: "follow-desktop",
+  customPermissions: null,
+  model: null,
+  reasoningEffort: "follow-desktop",
+  speed: "follow-desktop",
+  planMode: false,
+};
+
 export interface MessageAttachment {
   id: string;
   name: string;
@@ -231,6 +240,10 @@ export interface MessageAttachmentInput {
   size: number;
   dataBase64: string;
 }
+
+export const MAX_MESSAGE_ATTACHMENT_COUNT = 8;
+export const MAX_MESSAGE_ATTACHMENT_SIZE = 4_000_000;
+export const MAX_MESSAGE_ATTACHMENT_TOTAL_SIZE = 6_000_000;
 
 export interface Session {
   id: string;

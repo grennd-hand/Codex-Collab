@@ -1,8 +1,10 @@
 import { hostname } from "node:os";
 import { basename } from "node:path";
-import type {
-  CodexThreadCatalogEntry,
-  Message,
+import {
+  DEFAULT_CODEX_PROMPT_OPTIONS,
+  type CodexRuntimeStatus,
+  type CodexThreadCatalogEntry,
+  type Message,
 } from "@codex-collab/protocol";
 import {
   CodexAppServerClient,
@@ -94,8 +96,11 @@ export async function forwardNextCodexPrompt(
   >,
   profiles: Pick<LocalProfileStore, "update">,
   threadBusy = false,
+  prefetchedMessages?: Message[],
 ): Promise<string | null> {
-  const messages = await relay.listMessages(profile.sessionId, profile.memberToken);
+  const messages =
+    prefetchedMessages ??
+    (await relay.listMessages(profile.sessionId, profile.memberToken));
   const forwardedMessageIds = profile.forwardedMessageIds ?? [];
   const pendingCommand = nextPendingCodexCommand(
     messages,
@@ -143,14 +148,7 @@ export async function forwardNextCodexPrompt(
               ),
             })),
           ),
-          codexOptions: pendingPrompt.codexOptions ?? {
-            accessMode: "follow-desktop",
-            customPermissions: null,
-            model: null,
-            reasoningEffort: "follow-desktop",
-            speed: "follow-desktop",
-            planMode: false,
-          },
+          codexOptions: pendingPrompt.codexOptions ?? DEFAULT_CODEX_PROMPT_OPTIONS,
         });
   if (submission.status !== "submitted") {
     return null;
@@ -177,8 +175,11 @@ export async function reconcileCodexCommandStatuses(
   relay: Pick<RelayClient, "listMessages" | "updateMessageDeliveryStatus">,
   codex: Pick<CodexAppServerClient, "getTurnStatus">,
   threadBusy = true,
+  prefetchedMessages?: Message[],
 ): Promise<number> {
-  const messages = await relay.listMessages(profile.sessionId, profile.memberToken);
+  const messages =
+    prefetchedMessages ??
+    (await relay.listMessages(profile.sessionId, profile.memberToken));
   const tracked = messages.filter(
     (message) =>
       (message.kind === "codex_prompt" || message.kind === "codex_stop") &&
@@ -248,6 +249,7 @@ export async function reconcileCodexCommandStatuses(
       deliveryStatus,
       turnId ?? null,
     );
+    message.deliveryStatus = deliveryStatus;
     updated += 1;
   }
 
@@ -400,25 +402,34 @@ export class WorkspaceSyncService {
           workspace.selectedThreadId,
           selectedLocalThread.path,
         ));
+      const relayMessages = await relay.listMessages(
+        profile.sessionId,
+        profile.memberToken,
+      );
       await reconcileCodexCommandStatuses(
         profile,
         workspace.selectedThreadId,
         relay,
         this.codex,
         runtimeBusy,
+        relayMessages,
       );
       const forwardedCommandId = await this.forwardValidatedCommand(
         profile,
         workspace.selectedThreadId,
         relay,
         runtimeBusy,
-      );
-      await relay.publishCodexRuntimeStatus(
-        profile.sessionId,
-        profile.memberToken,
-        runtimeBusy || Boolean(forwardedCommandId) ? "running" : "idle",
+        relayMessages,
       );
       const runtimeRunning = runtimeBusy || Boolean(forwardedCommandId);
+      const runtimeStatus: CodexRuntimeStatus = runtimeRunning ? "running" : "idle";
+      if (workspace.codexRuntimeStatus !== runtimeStatus) {
+        await relay.publishCodexRuntimeStatus(
+          profile.sessionId,
+          profile.memberToken,
+          runtimeStatus,
+        );
+      }
 
       const revision = await readCodexThreadRevision(selectedLocalThread);
       const syncState = {
@@ -532,6 +543,7 @@ export class WorkspaceSyncService {
     threadId: string,
     relay: RelayClient,
     threadBusy: boolean,
+    prefetchedMessages?: Message[],
   ): Promise<string | null> {
     if (this.forwarding) return this.forwarding;
     const pending = forwardNextCodexPrompt(
@@ -541,6 +553,7 @@ export class WorkspaceSyncService {
       this.codex,
       this.profiles,
       threadBusy,
+      prefetchedMessages,
     );
     this.forwarding = pending;
     const clear = () => {

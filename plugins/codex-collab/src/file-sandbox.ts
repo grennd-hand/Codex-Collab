@@ -31,6 +31,31 @@ export class FileConflictError extends Error {
   }
 }
 
+const SKIPPED_DIRECTORY_NAMES = new Set([
+  ".codex-collab",
+  ".git",
+  ".next",
+  ".runtime-data",
+  "coverage",
+  "dist",
+  "node_modules",
+]);
+
+function normalizedIgnoredPaths(paths: readonly string[]): string[] {
+  return paths
+    .map((path) =>
+      path
+        .replaceAll("\\", "/")
+        .replace(/^\.\//, "")
+        .replace(/^\/+|\/+$/g, ""),
+    )
+    .filter(Boolean);
+}
+
+function pathIsIgnored(path: string, ignoredPaths: readonly string[]): boolean {
+  return ignoredPaths.some((ignored) => path === ignored || path.startsWith(`${ignored}/`));
+}
+
 function sha256(content: string | Buffer): string {
   return createHash("sha256").update(content).digest("hex");
 }
@@ -54,22 +79,24 @@ export class FileSandbox {
     return this.root;
   }
 
-  async list(maxFiles = 2_000): Promise<SharedFile[]> {
+  async list(maxFiles = 2_000, ignoredPaths: readonly string[] = []): Promise<SharedFile[]> {
     const files: SharedFile[] = [];
+    const ignored = normalizedIgnoredPaths(ignoredPaths);
     const visit = async (directory: string): Promise<void> => {
       if (files.length >= maxFiles) return;
       const entries = await readdir(directory, { withFileTypes: true });
       for (const entry of entries) {
         if (files.length >= maxFiles) return;
+        const absolute = resolve(directory, entry.name);
+        const relativePath = relative(this.root, absolute)
+          .split(sep)
+          .join("/");
         if (
-          entry.name === ".git" ||
-          entry.name === ".codex-collab" ||
-          entry.name === "node_modules" ||
-          entry.name === "dist"
+          (entry.isDirectory() && SKIPPED_DIRECTORY_NAMES.has(entry.name)) ||
+          pathIsIgnored(relativePath, ignored)
         ) {
           continue;
         }
-        const absolute = resolve(directory, entry.name);
         if (entry.isSymbolicLink()) {
           continue;
         }
@@ -80,7 +107,7 @@ export class FileSandbox {
         if (entry.isFile()) {
           const metadata = await stat(absolute);
           files.push({
-            path: relative(this.root, absolute).split(sep).join("/"),
+            path: relativePath,
             size: metadata.size,
             modifiedAt: metadata.mtime.toISOString(),
           });

@@ -60,4 +60,18 @@ describe("FileSandbox", () => {
       expect.objectContaining({ path: "visible.txt" }),
     ]);
   });
+
+  it("skips host runtime data and caller-provided path prefixes", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, ".runtime-data"), { recursive: true });
+    await mkdir(join(root, "public", "assets"), { recursive: true });
+    await writeFile(join(root, ".runtime-data", "deploy.ps1"), "private", "utf8");
+    await writeFile(join(root, "public", "assets", "index.js"), "generated", "utf8");
+    await writeFile(join(root, "visible.ts"), "export {};", "utf8");
+    const sandbox = await FileSandbox.create(root);
+
+    await expect(sandbox.list(2_000, ["public/assets/"])).resolves.toEqual([
+      expect.objectContaining({ path: "visible.ts" }),
+    ]);
+  });
 });

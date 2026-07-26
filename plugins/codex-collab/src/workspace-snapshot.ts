@@ -69,6 +69,25 @@ const CODEX_NON_CONFIG_DIRECTORIES = new Set([
   "tmp",
 ]);
 
+const COLLAB_IGNORE_FILE = ".codex-collabignore";
+
+export function parseCollabIgnore(content: string): string[] {
+  return content
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#") && !line.startsWith("!"));
+}
+
+async function readCollabIgnore(sandbox: FileSandbox): Promise<string[]> {
+  try {
+    return parseCollabIgnore((await sandbox.read(COLLAB_IGNORE_FILE)).content);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+}
+
 export function isPublishableWorkspacePath(path: string): boolean {
   const normalized = path.replaceAll("\\", "/").toLowerCase();
   const segments = normalized.split("/");
@@ -120,9 +139,10 @@ async function buildTextSnapshot(
     maxFiles: number;
     maxTotalBytes: number;
     pathPrefix?: string;
+    ignoredPaths?: readonly string[];
   },
 ): Promise<WorkspaceFileContent[]> {
-  const candidates = (await sandbox.list(2_000))
+  const candidates = (await sandbox.list(2_000, options.ignoredPaths))
     .filter((file) => file.size <= 256_000 && options.isAllowed(file.path))
     .slice(0, options.maxFiles);
   const files: WorkspaceFileContent[] = [];
@@ -157,6 +177,7 @@ export async function buildWorkspaceSnapshot(
     isAllowed: isPublishableWorkspacePath,
     maxFiles: 400,
     maxTotalBytes: 4_000_000,
+    ignoredPaths: await readCollabIgnore(sandbox),
   });
 }
 

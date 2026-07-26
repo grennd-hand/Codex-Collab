@@ -2,6 +2,7 @@ import {
   codexModelSupportsFast,
   codexModelSupportsImages,
   codexModelSupportsReasoningEffort,
+  DEFAULT_CODEX_PROMPT_OPTIONS,
   normalizeCodexModelId,
   ProtocolError,
   type CodexAccessMode,
@@ -116,7 +117,7 @@ export function parseCodexOptions(value: unknown): CodexPromptOptions {
     value && typeof value === "object" && !Array.isArray(value)
       ? (value as Record<string, unknown>)
       : {};
-  let accessMode: CodexAccessMode = "follow-desktop";
+  let accessMode: CodexAccessMode = DEFAULT_CODEX_PROMPT_OPTIONS.accessMode;
   if (
     record.accessMode !== undefined &&
     record.accessMode !== null &&
@@ -130,7 +131,8 @@ export function parseCodexOptions(value: unknown): CodexPromptOptions {
     }
     accessMode = record.accessMode as CodexAccessMode;
   }
-  let reasoningEffort: CodexReasoningEffort = "follow-desktop";
+  let reasoningEffort: CodexReasoningEffort =
+    DEFAULT_CODEX_PROMPT_OPTIONS.reasoningEffort;
   if (
     record.reasoningEffort !== undefined &&
     record.reasoningEffort !== null &&
@@ -150,7 +152,7 @@ export function parseCodexOptions(value: unknown): CodexPromptOptions {
     }
     reasoningEffort = record.reasoningEffort as CodexReasoningEffort;
   }
-  let speed: CodexSpeed = "follow-desktop";
+  let speed: CodexSpeed = DEFAULT_CODEX_PROMPT_OPTIONS.speed;
   if (record.speed !== undefined && record.speed !== null && record.speed !== "") {
     if (
       typeof record.speed !== "string" ||

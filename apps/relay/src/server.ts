@@ -17,6 +17,9 @@ import {
   optionalInteger,
   ProtocolError,
   requiredString,
+  MAX_MESSAGE_ATTACHMENT_COUNT,
+  MAX_MESSAGE_ATTACHMENT_SIZE,
+  MAX_MESSAGE_ATTACHMENT_TOTAL_SIZE,
   type CodexRecordEntry,
   type CodexRuntimeStatus,
   type CodexThreadCatalogEntry,
@@ -295,8 +298,12 @@ function parseMessageAttachments(value: unknown): Array<{
   content: Uint8Array;
 }> {
   if (value === undefined) return [];
-  if (!Array.isArray(value) || value.length > 8) {
-    throw new ProtocolError(400, "invalid_request", "attachments must contain at most 8 files");
+  if (!Array.isArray(value) || value.length > MAX_MESSAGE_ATTACHMENT_COUNT) {
+    throw new ProtocolError(
+      400,
+      "invalid_request",
+      `attachments must contain at most ${MAX_MESSAGE_ATTACHMENT_COUNT} files`,
+    );
   }
   let totalSize = 0;
   return value.map((item, index) => {
@@ -327,7 +334,7 @@ function parseMessageAttachments(value: unknown): Array<{
     if (
       !Number.isInteger(record.size) ||
       (record.size as number) < 0 ||
-      (record.size as number) > 4_000_000
+      (record.size as number) > MAX_MESSAGE_ATTACHMENT_SIZE
     ) {
       throw new ProtocolError(400, "invalid_request", `attachments[${index}].size is invalid`);
     }
@@ -351,8 +358,12 @@ function parseMessageAttachments(value: unknown): Array<{
       );
     }
     totalSize += content.length;
-    if (totalSize > 6_000_000) {
-      throw new ProtocolError(413, "attachments_too_large", "Attachments exceed the 6 MB limit");
+    if (totalSize > MAX_MESSAGE_ATTACHMENT_TOTAL_SIZE) {
+      throw new ProtocolError(
+        413,
+        "attachments_too_large",
+        `Attachments exceed the ${MAX_MESSAGE_ATTACHMENT_TOTAL_SIZE / 1_000_000} MB limit`,
+      );
     }
     return {
       name,

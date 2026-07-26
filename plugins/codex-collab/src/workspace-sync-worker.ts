@@ -6,11 +6,10 @@ import { localProfilePath, LocalProfileStore } from "./local-profile.js";
 import { RelayClient, RelayRequestError } from "./relay-client.js";
 import { WorkspaceSyncService } from "./workspace-sync-service.js";
 
-const fallbackIntervalMs = 1_000;
+const syncIntervalMs = 1_000;
 // Relay realtime events cover shared commands, but a turn started directly in
 // Codex Desktop has no relay event. Poll the selected local task every second so
 // short Desktop turns still publish a visible running state.
-const realtimeSafetyIntervalMs = 1_000;
 const lockPath = join(dirname(localProfilePath()), "sync-worker.json");
 
 function processIsRunning(pid: number): boolean {
@@ -83,7 +82,6 @@ let reconnectAttempt = 0;
 let realtimeConnecting = false;
 let realtimeConnectionEpoch = 0;
 let blockedRealtimeProfileKey: string | null = null;
-let lastPeriodicSyncAt = 0;
 
 async function runSync(): Promise<void> {
   if (stopping) return;
@@ -273,15 +271,8 @@ async function stop(): Promise<void> {
 }
 
 const timer = setInterval(() => {
-  const currentTime = Date.now();
-  const desiredInterval =
-    realtimeSocket?.readyState === WebSocket.OPEN
-      ? realtimeSafetyIntervalMs
-      : fallbackIntervalMs;
-  if (currentTime - lastPeriodicSyncAt < desiredInterval) return;
-  lastPeriodicSyncAt = currentTime;
   void runSync();
-}, fallbackIntervalMs);
+}, syncIntervalMs);
 process.on("SIGINT", () => void stop());
 process.on("SIGTERM", () => void stop());
 process.on("exit", () => {

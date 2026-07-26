@@ -9,6 +9,7 @@ import {
   containsLikelySecret,
   isPublishableCodexConfigPath,
   isPublishableWorkspacePath,
+  parseCollabIgnore,
 } from "./workspace-snapshot.js";
 
 const temporaryRoots: string[] = [];
@@ -44,6 +45,12 @@ describe("workspace snapshot", () => {
     expect(containsLikelySecret("API_KEY=sk-abcdefghijklmnopqrstuvwxyz123456")).toBe(true);
   });
 
+  it("parses explicit collaboration exclusions without supporting negation", () => {
+    expect(
+      parseCollabIgnore("# generated\n.runtime-data/\napps/relay/public/\n!README.md\n"),
+    ).toEqual([".runtime-data/", "apps/relay/public/"]);
+  });
+
   it("builds a view-only snapshot without secret-bearing files", async () => {
     const root = await mkdtemp(join(tmpdir(), "codex-collab-snapshot-"));
     temporaryRoots.push(root);
@@ -67,6 +74,18 @@ describe("workspace snapshot", () => {
     const files = await buildWorkspaceSnapshot(sandbox);
     expect(files.map((file) => file.path)).toEqual(["README.md"]);
     expect(files[0]?.content).toBe("# Safe project\n");
+  });
+
+  it("honors project-specific collaboration exclusions", async () => {
+    const root = await mkdtemp(join(tmpdir(), "codex-collab-ignore-"));
+    temporaryRoots.push(root);
+    await mkdir(join(root, "generated"), { recursive: true });
+    await writeFile(join(root, ".codex-collabignore"), "generated/\n", "utf8");
+    await writeFile(join(root, "generated", "bundle.js"), "generated", "utf8");
+    await writeFile(join(root, "source.ts"), "export const ready = true;\n", "utf8");
+
+    const files = await buildWorkspaceSnapshot(await FileSandbox.create(root));
+    expect(files.map((file) => file.path)).toEqual(["source.ts"]);
   });
 
   it("publishes an explicitly separate non-credential .codex configuration snapshot", async () => {

@@ -527,9 +527,9 @@ describe("workspace live history sync", () => {
         history: liveHistory,
         syncedAt: "2026-07-25T00:00:02.000Z",
       });
-    vi.spyOn(RelayClient.prototype, "publishCodexRuntimeStatus").mockResolvedValue(
-      workspace,
-    );
+    const publishRuntimeStatus = vi
+      .spyOn(RelayClient.prototype, "publishCodexRuntimeStatus")
+      .mockResolvedValue(workspace);
     const publishHistory = vi
       .spyOn(RelayClient.prototype, "publishWorkspaceHistory")
       .mockResolvedValue({
@@ -576,7 +576,8 @@ describe("workspace live history sync", () => {
         fileCount: 1,
       });
 
-      expect(listMessages).toHaveBeenCalledTimes(2);
+      expect(listMessages).toHaveBeenCalledOnce();
+      expect(publishRuntimeStatus).not.toHaveBeenCalled();
       expect(publishHistory).toHaveBeenCalledWith(
         "session-1",
         "member-token",
@@ -589,6 +590,13 @@ describe("workspace live history sync", () => {
 
       await service.sync();
 
+      expect(listMessages).toHaveBeenCalledTimes(2);
+      expect(publishRuntimeStatus).toHaveBeenCalledOnce();
+      expect(publishRuntimeStatus).toHaveBeenCalledWith(
+        "session-1",
+        "member-token",
+        "idle",
+      );
       expect(publishSnapshot).toHaveBeenCalledOnce();
       expect(publishSnapshot).toHaveBeenCalledWith(
         "session-1",

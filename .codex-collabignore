@@ -1,0 +1,5 @@
+# Host-local deployment and diagnostic artifacts.
+.runtime-data/
+
+# Rebuilt from apps/dashboard during release builds.
+apps/relay/public/

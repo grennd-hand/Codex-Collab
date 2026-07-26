@@ -91,6 +91,10 @@ import type {
 import {
   CODEX_MODEL_OPTIONS,
   DEFAULT_CODEX_CUSTOM_PERMISSIONS,
+  DEFAULT_CODEX_PROMPT_OPTIONS,
+  MAX_MESSAGE_ATTACHMENT_COUNT,
+  MAX_MESSAGE_ATTACHMENT_SIZE,
+  MAX_MESSAGE_ATTACHMENT_TOTAL_SIZE,
   codexModelSupportsFast,
   codexModelSupportsImages,
   codexModelSupportsReasoningEffort,
@@ -154,9 +158,6 @@ const brand: BrandVariants = {
 const lightTheme = createLightTheme(brand);
 const darkTheme = createDarkTheme(brand);
 const storageKey = "codexCollab";
-const maxAttachmentCount = 8;
-const maxAttachmentSize = 4_000_000;
-const maxAttachmentTotalSize = 6_000_000;
 
 type ThemeMode = "light" | "dark";
 type ConnectionState = "ready" | "connecting" | "live" | "waiting" | "error";
@@ -290,15 +291,6 @@ interface SpeechRecognitionLike {
 
 type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
 
-const defaultCodexOptions: CodexPromptOptions = {
-  accessMode: "follow-desktop",
-  customPermissions: null,
-  model: null,
-  reasoningEffort: "follow-desktop",
-  speed: "follow-desktop",
-  planMode: false,
-};
-
 const reasoningEffortOrder: Exclude<
   CodexReasoningEffort,
   "follow-desktop"
@@ -345,18 +337,18 @@ export function normalizeCodexOptionsForUi(value: unknown): CodexPromptOptions {
     typeof record.accessMode === "string" &&
     accessModes.has(record.accessMode as CodexAccessMode)
       ? (record.accessMode as CodexAccessMode)
-      : defaultCodexOptions.accessMode;
+      : DEFAULT_CODEX_PROMPT_OPTIONS.accessMode;
   const model =
     typeof record.model === "string" ? normalizeCodexModelId(record.model) : null;
   let reasoningEffort =
     typeof record.reasoningEffort === "string" &&
     reasoningEfforts.has(record.reasoningEffort as CodexReasoningEffort)
       ? (record.reasoningEffort as CodexReasoningEffort)
-      : defaultCodexOptions.reasoningEffort;
+      : DEFAULT_CODEX_PROMPT_OPTIONS.reasoningEffort;
   let speed =
     typeof record.speed === "string" && speeds.has(record.speed as CodexSpeed)
       ? (record.speed as CodexSpeed)
-      : defaultCodexOptions.speed;
+      : DEFAULT_CODEX_PROMPT_OPTIONS.speed;
 
   if (!codexModelSupportsReasoningEffort(model, reasoningEffort)) {
     const requestedIndex = reasoningEffortOrder.indexOf(
@@ -477,10 +469,11 @@ function appendPendingAttachments(
   let warning: string | null = null;
   for (const attachment of incoming) {
     const file = attachment.file;
-    if (file.size > maxAttachmentSize) {
+    if (file.size > MAX_MESSAGE_ATTACHMENT_SIZE) {
+      const sizeLimitMb = MAX_MESSAGE_ATTACHMENT_SIZE / 1_000_000;
       warning = attachment.originalSize
-        ? `${file.name} 压缩后仍超过 4 MB 单文件限制`
-        : `${file.name} 超过 4 MB 单文件限制`;
+        ? `${file.name} 压缩后仍超过 ${sizeLimitMb} MB 单文件限制`
+        : `${file.name} 超过 ${sizeLimitMb} MB 单文件限制`;
       continue;
     }
     if (
@@ -493,15 +486,17 @@ function appendPendingAttachments(
     ) {
       continue;
     }
-    if (next.length >= maxAttachmentCount) {
-      warning = "一次最多发送 8 个附件";
+    if (next.length >= MAX_MESSAGE_ATTACHMENT_COUNT) {
+      warning = `一次最多发送 ${MAX_MESSAGE_ATTACHMENT_COUNT} 个附件`;
       break;
     }
     if (
       next.reduce((sum, item) => sum + item.file.size, 0) + file.size >
-      maxAttachmentTotalSize
+      MAX_MESSAGE_ATTACHMENT_TOTAL_SIZE
     ) {
-      warning = "压缩后的附件总大小不能超过 6 MB";
+      warning = `压缩后的附件总大小不能超过 ${
+        MAX_MESSAGE_ATTACHMENT_TOTAL_SIZE / 1_000_000
+      } MB`;
       break;
     }
     next.push(attachment);
@@ -1255,7 +1250,7 @@ export function App() {
   const [preparingChatAttachments, setPreparingChatAttachments] = useState(false);
   const [preparingCodexAttachments, setPreparingCodexAttachments] = useState(false);
   const [codexOptions, setCodexOptions] =
-    useState<CodexPromptOptions>(defaultCodexOptions);
+    useState<CodexPromptOptions>(DEFAULT_CODEX_PROMPT_OPTIONS);
   const [membersExpanded, setMembersExpanded] = useState(true);
   const [dictating, setDictating] = useState(false);
   const [draggingChatFiles, setDraggingChatFiles] = useState(false);
@@ -1621,12 +1616,12 @@ export function App() {
         ) {
           setCodexOptions(normalizeCodexOptionsForUi(saved.codexOptions));
         } else {
-          setCodexOptions(defaultCodexOptions);
+          setCodexOptions(DEFAULT_CODEX_PROMPT_OPTIONS);
         }
       } catch {
         setDraft("");
         setChatDraft("");
-        setCodexOptions(defaultCodexOptions);
+        setCodexOptions(DEFAULT_CODEX_PROMPT_OPTIONS);
       }
       setPendingChatAttachments([]);
       setPendingAttachments([]);

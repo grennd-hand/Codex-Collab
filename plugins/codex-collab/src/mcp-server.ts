@@ -6,7 +6,10 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import type { MessageKind } from "@codex-collab/protocol";
+import {
+  DEFAULT_CODEX_PROMPT_OPTIONS,
+  type MessageKind,
+} from "@codex-collab/protocol";
 import { CodexAppServerClient } from "./app-server-client.js";
 import { FileSandbox } from "./file-sandbox.js";
 import { LocalProfileStore, type LocalProfile } from "./local-profile.js";
@@ -579,14 +582,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               ),
             })),
           ),
-          codexOptions: message.codexOptions ?? {
-            accessMode: "follow-desktop",
-            customPermissions: null,
-            model: null,
-            reasoningEffort: "follow-desktop",
-            speed: "follow-desktop",
-            planMode: false,
-          },
+          codexOptions: message.codexOptions ?? DEFAULT_CODEX_PROMPT_OPTIONS,
         });
         if (result.status !== "submitted") {
           throw new Error(

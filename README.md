@@ -89,6 +89,11 @@ environment files, private keys and likely embedded credentials. Project permiss
 `.codex` permission. Use `collab_refresh_workspace` to refresh the task catalog or force an
 immediate snapshot; selected-task record changes otherwise sync automatically.
 
+The project root may contain a `.codex-collabignore` file with one relative path prefix per line.
+Blank lines and `#` comments are ignored. Use it to keep generated bundles, host-only diagnostics
+and other rebuildable files out of the read-only collaboration snapshot; exclusions never grant
+access outside the approved root. Host-local `.runtime-data` is always excluded.
+
 If the browser blocks automatic clipboard access, the dashboard falls back to synchronous copy.
 When both browser copy mechanisms are unavailable, it selects the complete link and prompts the
 owner to press `Ctrl+C`.
