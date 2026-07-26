@@ -11,10 +11,10 @@ import {
   readCodexThreadRevision,
   type CodexThreadSummary,
 } from "./app-server-client.js";
-import { FileSandbox } from "./file-sandbox.js";
 import { LocalProfileStore, type LocalProfile } from "./local-profile.js";
 import { RelayClient } from "./relay-client.js";
 import { processNextWorkspaceFileOperation } from "./workspace-file-operations.js";
+import { openWorkspaceSandboxes } from "./workspace-roots.js";
 import {
   buildCodexConfigSnapshot,
   buildWorkspaceSnapshot,
@@ -290,7 +290,10 @@ export class WorkspaceSyncService {
       profile.memberToken,
     );
     if (!workspace.selectedThreadId) return null;
-    const sandbox = await FileSandbox.create(profile.projectRoot);
+    const { projectSandbox: sandbox } = await openWorkspaceSandboxes(
+      profile.projectRoot,
+      profile.codexConfigRoot,
+    );
     const localThreads = await this.codex.listThreads(sandbox.getRoot());
     const selectedLocalThread = localThreads.find(
       (thread) => thread.id === workspace.selectedThreadId,
@@ -318,12 +321,10 @@ export class WorkspaceSyncService {
       const profile = await this.profiles.read();
       if (!profile || profile.role !== "owner") return 0;
       const relay = new RelayClient(profile.relayUrl);
-      const [projectSandbox, codexConfigSandbox] = await Promise.all([
-        FileSandbox.create(profile.projectRoot),
-        profile.codexConfigRoot
-          ? FileSandbox.create(profile.codexConfigRoot)
-          : Promise.resolve(null),
-      ]);
+      const { projectSandbox, codexConfigSandbox } = await openWorkspaceSandboxes(
+        profile.projectRoot,
+        profile.codexConfigRoot,
+      );
       let processed = 0;
       while (processed < 20) {
         const operation = await processNextWorkspaceFileOperation(
@@ -363,7 +364,8 @@ export class WorkspaceSyncService {
       }
       const relay = new RelayClient(profile.relayUrl);
       let workspace = await relay.getWorkspace(profile.sessionId, profile.memberToken);
-      const sandbox = await FileSandbox.create(profile.projectRoot);
+      const { projectSandbox: sandbox, codexConfigSandbox } =
+        await openWorkspaceSandboxes(profile.projectRoot, profile.codexConfigRoot);
       const localThreads = await this.codex.listThreads(sandbox.getRoot());
       const catalog = localThreads.map(catalogEntry);
       const localThreadIds = localThreads.map((thread) => thread.id);
@@ -554,9 +556,6 @@ export class WorkspaceSyncService {
         };
       }
 
-      const codexConfigSandbox = profile.codexConfigRoot
-        ? await FileSandbox.create(profile.codexConfigRoot)
-        : null;
       const [projectFiles, codexConfigFiles] = await Promise.all([
         buildWorkspaceSnapshot(sandbox),
         codexConfigSandbox

@@ -207,7 +207,9 @@ export class FileSandbox {
     const bytes = await readFile(absolute);
     let content: string;
     try {
-      content = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      // Keep an on-disk UTF-8 BOM as U+FEFF so content, byte size and SHA-256
+      // all describe the same bytes across snapshots and direct reads.
+      content = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
     } catch {
       throw new Error("The collaboration editor supports UTF-8 text files only");
     }

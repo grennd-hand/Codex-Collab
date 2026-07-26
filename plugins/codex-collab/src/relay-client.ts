@@ -18,6 +18,7 @@ import type {
   WorkspaceFileAccess,
   WorkspaceFileOperation,
   WorkspaceFileOperationClaim,
+  WorkspaceFileOperationConfirmation,
   WorkspaceSummary,
 } from "@codex-collab/protocol";
 
@@ -214,8 +215,9 @@ export class RelayClient {
     status: MessageDeliveryStatus,
     codexTurnId?: string | null,
   ): Promise<Message> {
+    const actionRoot = memberToken.startsWith("cch_") ? "host/messages" : "messages";
     const result = await this.request<{ message: Message }>(
-      `/v1/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/${actionRoot}/${encodeURIComponent(
         messageId,
       )}/status`,
       {
@@ -345,8 +347,8 @@ export class RelayClient {
     memberToken: string,
     operationId: string,
     leaseId: string,
-  ): Promise<WorkspaceFileOperationClaim> {
-    const result = await this.request<{ operation: WorkspaceFileOperationClaim }>(
+  ): Promise<WorkspaceFileOperationConfirmation> {
+    const result = await this.request<{ operation: WorkspaceFileOperationConfirmation }>(
       `/v1/sessions/${encodeURIComponent(
         sessionId,
       )}/workspace/file-operations/${encodeURIComponent(operationId)}/lease-confirmation`,
@@ -384,8 +386,11 @@ export class RelayClient {
     memberToken: string,
     threadId: string,
   ): Promise<WorkspaceSummary> {
+    const selectionPath = memberToken.startsWith("cch_")
+      ? "host/workspace/selection"
+      : "workspace/selection";
     const result = await this.request<{ workspace: WorkspaceSummary }>(
-      `/v1/sessions/${encodeURIComponent(sessionId)}/workspace/selection`,
+      `/v1/sessions/${encodeURIComponent(sessionId)}/${selectionPath}`,
       {
         method: "PUT",
         headers: { authorization: `Bearer ${memberToken}` },

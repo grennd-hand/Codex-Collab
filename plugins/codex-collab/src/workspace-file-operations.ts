@@ -1,7 +1,7 @@
 import type {
   WorkspaceFileContent,
   WorkspaceFileOperation,
-  WorkspaceFileOperationClaim,
+  WorkspaceFileOperationConfirmation,
 } from "@codex-collab/protocol";
 import {
   codexConfigRelativePath,
@@ -78,7 +78,7 @@ async function currentFile(
 }
 
 export async function executeWorkspaceFileOperation(
-  operation: WorkspaceFileOperationClaim,
+  operation: WorkspaceFileOperationConfirmation,
   projectSandbox: FileSandbox,
   codexConfigSandbox: FileSandbox | null = null,
 ): Promise<
@@ -161,6 +161,14 @@ export async function executeWorkspaceFileOperation(
       };
     }
     if (containsLikelySecret(operation.requestContent)) {
+      return {
+        status: "failed",
+        errorCode: "workspace_file_not_shared",
+        errorMessage: "This file is not available to the collaboration editor",
+      };
+    }
+    const existing = await projectSandbox.read(operation.path);
+    if (containsLikelySecret(existing.content)) {
       return {
         status: "failed",
         errorCode: "workspace_file_not_shared",

@@ -561,9 +561,17 @@ export interface WorkspaceFileOperation {
   completedAt: string | null;
 }
 
-export interface WorkspaceFileOperationClaim extends WorkspaceFileOperation {
+export interface WorkspaceFileOperationClaim
+  extends Omit<WorkspaceFileOperation, "expectedSha256"> {
+  /** Write preconditions are withheld until the current host confirms the lease. */
+  expectedSha256: null;
   leaseId: string;
   leaseExpiresAt: string;
+}
+
+export interface WorkspaceFileOperationConfirmation
+  extends Omit<WorkspaceFileOperationClaim, "expectedSha256"> {
+  expectedSha256: string | null;
   requestContent: string | null;
 }
 
@@ -582,7 +590,7 @@ export type CreateWorkspaceFileOperationRequest =
       kind: "write";
       path: string;
       content: string;
-      /** Use an empty string only when the caller observed that the file did not exist. */
+      /** SHA-256 observed for the existing shared file. New-file creation is disabled. */
       expectedSha256: string;
     };
 

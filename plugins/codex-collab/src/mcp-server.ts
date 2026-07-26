@@ -1,5 +1,5 @@
 import { hostname } from "node:os";
-import { basename, isAbsolute } from "node:path";
+import { basename } from "node:path";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -11,9 +11,13 @@ import {
   type MessageKind,
 } from "@codex-collab/protocol";
 import { CodexAppServerClient } from "./app-server-client.js";
-import { FileSandbox } from "./file-sandbox.js";
 import { LocalProfileStore, type LocalProfile } from "./local-profile.js";
 import { RelayClient } from "./relay-client.js";
+import {
+  openProjectSandbox,
+  openBoundProjectSandbox,
+  openWorkspaceSandboxes,
+} from "./workspace-roots.js";
 import { WorkspaceSyncService } from "./workspace-sync-service.js";
 import { ensureWorkspaceSyncWorker } from "./workspace-sync-worker-control.js";
 
@@ -281,19 +285,14 @@ function rootLabel(root: string): string {
   return basename(root) || root;
 }
 
-async function createCodexConfigSandbox(root: string): Promise<FileSandbox> {
-  const sandbox = await FileSandbox.create(root);
-  if (basename(sandbox.getRoot()).toLowerCase() !== ".codex") {
-    throw new Error("codexConfigRoot must explicitly point to a .codex directory");
-  }
-  return sandbox;
-}
-
 async function publishCatalog(
   profile: LocalProfile,
   relay: RelayClient,
 ): Promise<Awaited<ReturnType<RelayClient["publishWorkspaceCatalog"]>>> {
-  const sandbox = await FileSandbox.create(profile.projectRoot);
+  const { projectSandbox: sandbox } = await openWorkspaceSandboxes(
+    profile.projectRoot,
+    profile.codexConfigRoot,
+  );
   const threads = await codex.listThreads(sandbox.getRoot());
   const workspace = await relay.publishWorkspaceCatalog(
     profile.sessionId,
@@ -325,6 +324,7 @@ async function current(): Promise<{
       "No active session. Use collab_create_session, collab_pair_host or collab_join_session first.",
     );
   }
+  await openWorkspaceSandboxes(profile.projectRoot, profile.codexConfigRoot);
   return { profile, relay: new RelayClient(profile.relayUrl) };
 }
 
@@ -349,11 +349,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           process.env.CODEX_COLLAB_RELAY_URL ??
           "http://127.0.0.1:4177";
         const projectRoot = stringArg(args, "projectRoot")!;
-        const projectSandbox = await FileSandbox.create(projectRoot);
         const codexConfigRoot = stringArg(args, "codexConfigRoot", true);
-        const codexConfigSandbox = codexConfigRoot
-          ? await createCodexConfigSandbox(codexConfigRoot)
-          : null;
+        const { projectSandbox, codexConfigSandbox } = await openWorkspaceSandboxes(
+          projectRoot,
+          codexConfigRoot,
+        );
         const relay = new RelayClient(relayUrl);
         const created = await relay.createSession({
           name: stringArg(args, "sessionName")!,
@@ -389,11 +389,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           stringArg(args, "relayUrl", true) ??
           process.env.CODEX_COLLAB_RELAY_URL ??
           "http://127.0.0.1:4177";
-        const sandbox = await FileSandbox.create(stringArg(args, "projectRoot")!);
+        const projectRoot = stringArg(args, "projectRoot")!;
         const codexConfigRoot = stringArg(args, "codexConfigRoot", true);
-        const codexConfigSandbox = codexConfigRoot
-          ? await createCodexConfigSandbox(codexConfigRoot)
-          : null;
+        const { projectSandbox: sandbox, codexConfigSandbox } =
+          await openWorkspaceSandboxes(projectRoot, codexConfigRoot);
         const relay = new RelayClient(relayUrl);
         const claimed = await relay.claimHostPairing({
           pairingToken: stringArg(args, "pairingToken")!,
@@ -433,10 +432,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
         const codexConfigRoot = stringArg(args, "codexConfigRoot", true);
         if (codexConfigRoot) {
-          const codexConfigSandbox = await createCodexConfigSandbox(codexConfigRoot);
+          const { codexConfigSandbox } = await openWorkspaceSandboxes(
+            profile.projectRoot,
+            codexConfigRoot,
+          );
           profile = await profiles.update({
-            codexConfigRoot: codexConfigSandbox.getRoot(),
+            codexConfigRoot: codexConfigSandbox!.getRoot(),
           });
+        } else {
+          await openWorkspaceSandboxes(profile.projectRoot, profile.codexConfigRoot);
         }
         const workspace = await publishCatalog(profile, relay);
         const imported = await workspaceSync.sync(true);
@@ -451,7 +455,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           process.env.CODEX_COLLAB_RELAY_URL ??
           "http://127.0.0.1:4177";
         const projectRoot = stringArg(args, "projectRoot")!;
-        await FileSandbox.create(projectRoot);
+        const projectSandbox = await openProjectSandbox(projectRoot);
         const relay = new RelayClient(relayUrl);
         const joined = await relay.joinInvite({
           inviteToken: stringArg(args, "inviteToken")!,
@@ -465,7 +469,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           displayName: joined.member.displayName,
           role: joined.member.role,
           memberToken: joined.memberToken,
-          projectRoot,
+          projectRoot: projectSandbox.getRoot(),
           forwardedMessageIds: [],
         };
         await profiles.write(profile);
@@ -525,14 +529,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return text(messages);
       }
       case "collab_bind_thread": {
-        const projectRoot = stringArg(args, "projectRoot")!;
-        if (!isAbsolute(projectRoot)) throw new Error("projectRoot must be absolute");
-        await FileSandbox.create(projectRoot);
+        const { profile } = await current();
+        const projectSandbox = await openBoundProjectSandbox(
+          profile.projectRoot,
+          stringArg(args, "projectRoot")!,
+          profile.codexConfigRoot,
+        );
         return text(
           publicProfile(
             await profiles.update({
               threadId: stringArg(args, "threadId")!,
-              projectRoot,
+              projectRoot: projectSandbox.getRoot(),
               observedThreadIds: undefined,
               threadCatalogVersion: 1,
             }),
@@ -540,7 +547,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         );
       }
       case "collab_list_codex_threads": {
-        return text(await codex.listThreads(stringArg(args, "cwd", true)));
+        const cwd = stringArg(args, "cwd", true);
+        return text(
+          await codex.listThreads(cwd ? (await openProjectSandbox(cwd)).getRoot() : undefined),
+        );
       }
       case "collab_forward_prompt": {
         const { profile, relay } = await current();
@@ -556,8 +566,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (message.kind !== "codex_prompt") {
           throw new Error("Only codex_prompt messages can be forwarded");
         }
+        const { projectSandbox } = await openWorkspaceSandboxes(
+          profile.projectRoot,
+          profile.codexConfigRoot,
+        );
         const selectedThread = (
-          await codex.listThreads(profile.projectRoot)
+          await codex.listThreads(projectSandbox.getRoot())
         ).find((thread) => thread.id === profile.threadId);
         if (!selectedThread) {
           throw new Error(
@@ -566,7 +580,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
         const result = await codex.submitPeerPrompt({
           threadId: profile.threadId,
-          projectRoot: profile.projectRoot,
+          projectRoot: projectSandbox.getRoot(),
           commandId: message.id,
           peerDisplayName: message.senderDisplayName,
           body: message.body,
@@ -602,17 +616,26 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
       case "collab_list_files": {
         const { profile } = await current();
-        const sandbox = await FileSandbox.create(profile.projectRoot);
+        const { projectSandbox: sandbox } = await openWorkspaceSandboxes(
+          profile.projectRoot,
+          profile.codexConfigRoot,
+        );
         return text({ root: sandbox.getRoot(), files: await sandbox.list() });
       }
       case "collab_read_file": {
         const { profile } = await current();
-        const sandbox = await FileSandbox.create(profile.projectRoot);
+        const { projectSandbox: sandbox } = await openWorkspaceSandboxes(
+          profile.projectRoot,
+          profile.codexConfigRoot,
+        );
         return text(await sandbox.read(stringArg(args, "path")!));
       }
       case "collab_write_file": {
         const { profile } = await current();
-        const sandbox = await FileSandbox.create(profile.projectRoot);
+        const { projectSandbox: sandbox } = await openWorkspaceSandboxes(
+          profile.projectRoot,
+          profile.codexConfigRoot,
+        );
         return text(
           await sandbox.write(
             stringArg(args, "path")!,

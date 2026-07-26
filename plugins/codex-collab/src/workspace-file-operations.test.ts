@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   isWorkspacePathIgnored,
   type WorkspaceFileOperationClaim,
+  type WorkspaceFileOperationConfirmation,
 } from "@codex-collab/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FileSandbox } from "./file-sandbox.js";
@@ -26,9 +27,9 @@ afterEach(async () => {
 });
 
 function operation(
-  input: Partial<WorkspaceFileOperationClaim> &
-    Pick<WorkspaceFileOperationClaim, "kind" | "path">,
-): WorkspaceFileOperationClaim {
+  input: Partial<WorkspaceFileOperationConfirmation> &
+    Pick<WorkspaceFileOperationConfirmation, "kind" | "path">,
+): WorkspaceFileOperationConfirmation {
   return {
     id: "operation-1",
     sessionId: "session-1",
@@ -49,6 +50,14 @@ function operation(
     leaseExpiresAt: "2026-07-27T00:01:00.000Z",
     ...input,
   };
+}
+
+function claim(
+  input: Partial<WorkspaceFileOperationClaim> &
+    Pick<WorkspaceFileOperationClaim, "kind" | "path">,
+): WorkspaceFileOperationClaim {
+  const { requestContent: _requestContent, ...confirmed } = operation(input);
+  return { ...confirmed, expectedSha256: null, ...input };
 }
 
 describe("workspace file operation host execution", () => {
@@ -282,7 +291,10 @@ describe("workspace file operation host execution", () => {
       sandbox,
     );
 
-    expect(result).toMatchObject({ status: "failed", errorCode: "file_conflict" });
+    expect(result).toMatchObject({
+      status: "failed",
+      errorCode: "workspace_file_not_shared",
+    });
     expect(result).not.toHaveProperty("file");
   });
 
@@ -293,11 +305,9 @@ describe("workspace file operation host execution", () => {
     const sandbox = await FileSandbox.create(root);
     const relay = {
       claimNextWorkspaceFileOperation: vi.fn().mockResolvedValue(
-        operation({
+        claim({
           kind: "write",
           path: "guarded.ts",
-          requestContent: "should not be written",
-          expectedSha256: createHash("sha256").update("original").digest("hex"),
         }),
       ),
       confirmWorkspaceFileOperationLease: vi

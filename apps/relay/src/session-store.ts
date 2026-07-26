@@ -24,6 +24,7 @@ import {
   type WorkspaceFileContent,
   type WorkspaceFileOperation,
   type WorkspaceFileOperationClaim,
+  type WorkspaceFileOperationConfirmation,
   type WorkspaceFileOperationKind,
   type WorkspaceFileOperationStatus,
   type WorkspaceSummary,
@@ -144,6 +145,7 @@ interface WorkspaceFileOperationRow {
   started_at: string | null;
   lease_id: string | null;
   lease_expires_at: string | null;
+  lease_confirmed_at: string | null;
   completed_at: string | null;
 }
 
@@ -327,6 +329,12 @@ export class SessionStore {
   }
 
   private migrate(): void {
+    const existingMemberTokenColumns = this.db
+      .prepare("PRAGMA table_info(member_tokens)")
+      .all() as unknown as Array<{ name: string }>;
+    const hadTokenPurposeColumn = existingMemberTokenColumns.some(
+      (column) => column.name === "token_purpose",
+    );
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
@@ -491,6 +499,7 @@ export class SessionStore {
         started_at TEXT,
         lease_id TEXT,
         lease_expires_at TEXT,
+        lease_confirmed_at TEXT,
         completed_at TEXT
       );
       CREATE INDEX IF NOT EXISTS members_session_idx ON members(session_id);
@@ -550,18 +559,56 @@ export class SessionStore {
     this.ensureColumn("workspace_file_operations", "host_generation", "TEXT");
     this.ensureColumn("workspace_file_operations", "lease_id", "TEXT");
     this.ensureColumn("workspace_file_operations", "lease_expires_at", "TEXT");
+    this.ensureColumn("workspace_file_operations", "lease_confirmed_at", "TEXT");
     this.ensureColumn("workspace_file_operations", "request_size", "INTEGER");
     this.db.exec(`
       UPDATE member_tokens
       SET token_purpose = 'account'
       WHERE account_session_id IS NOT NULL;
-      UPDATE member_tokens
-      SET token_purpose = 'host'
-      WHERE id IN (
-        SELECT host_token_id FROM workspace_state
-        WHERE host_token_id IS NOT NULL AND host_generation IS NOT NULL
-      );
     `);
+    if (!hadTokenPurposeColumn) {
+      const repairedAt = now();
+      this.db.exec("BEGIN IMMEDIATE");
+      try {
+        this.db
+          .prepare(`
+            UPDATE workspace_file_operations
+            SET status = 'failed', request_content = NULL, result_content = NULL,
+                lease_id = NULL, lease_expires_at = NULL, lease_confirmed_at = NULL,
+                error_code = 'host_repair_required',
+                error_message = 'Pair the Codex host again after upgrading',
+                completed_at = COALESCE(completed_at, ?)
+            WHERE status IN ('queued', 'processing')
+              AND session_id IN (
+                SELECT session_id FROM workspace_state
+                WHERE host_token_id IS NOT NULL OR host_generation IS NOT NULL
+              )
+          `)
+          .run(repairedAt);
+        this.db
+          .prepare(`
+            UPDATE member_tokens
+            SET revoked_at = COALESCE(revoked_at, ?)
+            WHERE account_session_id IS NULL
+          `)
+          .run(repairedAt);
+        this.db.exec(`
+          DELETE FROM workspace_files
+          WHERE session_id IN (
+            SELECT session_id FROM workspace_state
+            WHERE host_token_id IS NOT NULL OR host_generation IS NOT NULL
+          );
+          UPDATE workspace_state
+          SET host_token_id = NULL, host_generation = NULL,
+              catalog_json = '[]', selected_thread_id = NULL, history_json = '[]',
+              codex_runtime_status = 'unavailable', synced_at = NULL;
+        `);
+        this.db.exec("COMMIT");
+      } catch (error) {
+        this.db.exec("ROLLBACK");
+        throw error;
+      }
+    }
     this.db
       .prepare(`
         UPDATE member_tokens
@@ -1692,6 +1739,36 @@ export class SessionStore {
     codexTurnId?: string | null,
   ): Message {
     this.requireOwner(sessionId, memberToken);
+    return this.updateMessageDeliveryStatusAuthorized(
+      sessionId,
+      messageId,
+      status,
+      codexTurnId,
+    );
+  }
+
+  updateMessageDeliveryStatusFromHost(
+    sessionId: string,
+    memberToken: string,
+    messageId: string,
+    status: MessageDeliveryStatus,
+    codexTurnId?: string | null,
+  ): Message {
+    this.requireCurrentHost(sessionId, memberToken);
+    return this.updateMessageDeliveryStatusAuthorized(
+      sessionId,
+      messageId,
+      status,
+      codexTurnId,
+    );
+  }
+
+  private updateMessageDeliveryStatusAuthorized(
+    sessionId: string,
+    messageId: string,
+    status: MessageDeliveryStatus,
+    codexTurnId?: string | null,
+  ): Message {
     const completedAt = status === "completed" || status === "failed" ? now() : null;
     const result = this.db
       .prepare(`
@@ -1799,7 +1876,8 @@ export class SessionStore {
         .prepare(`
           UPDATE workspace_file_operations
           SET status = 'failed', request_content = NULL, result_content = NULL,
-              lease_id = NULL, lease_expires_at = NULL, error_code = 'host_repaired',
+              lease_id = NULL, lease_expires_at = NULL, lease_confirmed_at = NULL,
+              error_code = 'host_repaired',
               error_message = 'The host workspace changed before this operation completed',
               completed_at = ?
           WHERE session_id = ? AND status IN ('queued', 'processing')
@@ -1908,6 +1986,23 @@ export class SessionStore {
     threadId: string,
   ): WorkspaceSummary {
     this.requireOwner(sessionId, memberToken);
+    return this.selectWorkspaceThreadAuthorized(sessionId, memberToken, threadId);
+  }
+
+  selectWorkspaceThreadFromHost(
+    sessionId: string,
+    memberToken: string,
+    threadId: string,
+  ): WorkspaceSummary {
+    this.requireCurrentHost(sessionId, memberToken);
+    return this.selectWorkspaceThreadAuthorized(sessionId, memberToken, threadId);
+  }
+
+  private selectWorkspaceThreadAuthorized(
+    sessionId: string,
+    memberToken: string,
+    threadId: string,
+  ): WorkspaceSummary {
     const state = this.workspaceState(sessionId);
     if (!state) {
       throw new ProtocolError(409, "host_not_paired", "Pair the local Codex host first");
@@ -1954,15 +2049,24 @@ export class SessionStore {
       );
     }
     let snapshotBytes = 0;
+    const snapshotPaths = new Set<string>();
     for (const file of input.files) {
+      const normalizedPath = normalizeWorkspaceOperationPath(file.path);
       const actualSize = Buffer.byteLength(file.content);
-      if (actualSize !== file.size || contentSha256(file.content) !== file.sha256) {
+      if (
+        normalizedPath !== file.path ||
+        snapshotPaths.has(normalizedPath) ||
+        containsLikelySecret(file.content) ||
+        actualSize !== file.size ||
+        contentSha256(file.content) !== file.sha256
+      ) {
         throw new ProtocolError(
           400,
           "invalid_workspace_file",
-          "Host workspace file metadata does not match its content",
+          "Host workspace file is not eligible for the shared snapshot",
         );
       }
+      snapshotPaths.add(normalizedPath);
       snapshotBytes += actualSize;
     }
     if (
@@ -2125,7 +2229,7 @@ export class SessionStore {
     memberToken: string,
     path: string,
   ): WorkspaceFileContent {
-    this.requireMember(sessionId, memberToken, true);
+    this.requireBrowserMember(sessionId, memberToken, true);
     const row = this.db
       .prepare(`
         SELECT path, size, modified_at, sha256, content
@@ -2145,7 +2249,7 @@ export class SessionStore {
       | { kind: "read"; path: string }
       | { kind: "write"; path: string; content: string; expectedSha256: string },
   ): WorkspaceFileOperation {
-    const member = this.requireMember(sessionId, memberToken, true);
+    const member = this.requireBrowserMember(sessionId, memberToken, true);
     const state = this.workspaceState(sessionId);
     if (!state?.host_generation || !state.host_token_id) {
       throw new ProtocolError(409, "host_not_paired", "Pair the local Codex host first");
@@ -2196,11 +2300,21 @@ export class SessionStore {
           "This file is not available to the collaboration editor",
         );
       }
-      if (input.expectedSha256 !== "" && !/^[a-f0-9]{64}$/.test(input.expectedSha256)) {
+      if (!/^[a-f0-9]{64}$/.test(input.expectedSha256)) {
         throw new ProtocolError(
           400,
           "invalid_expected_sha256",
-          "expectedSha256 must be an observed SHA-256 hash or an empty string for a new file",
+          "expectedSha256 must be the observed SHA-256 hash of an existing shared file",
+        );
+      }
+      const existing = this.db
+        .prepare("SELECT 1 AS present FROM workspace_files WHERE session_id = ? AND path = ?")
+        .get(sessionId, path) as { present: number } | undefined;
+      if (!existing) {
+        throw new ProtocolError(
+          404,
+          "workspace_file_not_found",
+          "Only files already present in the shared workspace can be edited",
         );
       }
     }
@@ -2268,7 +2382,7 @@ export class SessionStore {
     memberToken: string,
     limit = 100,
   ): WorkspaceFileOperation[] {
-    const member = this.requireMember(sessionId, memberToken, true);
+    const member = this.requireBrowserMember(sessionId, memberToken, true);
     const rows = (member.role === "owner"
       ? this.db
           .prepare(`
@@ -2291,7 +2405,7 @@ export class SessionStore {
     memberToken: string,
     operationId: string,
   ): WorkspaceFileOperation {
-    const member = this.requireMember(sessionId, memberToken, true);
+    const member = this.requireBrowserMember(sessionId, memberToken, true);
     const operation = this.workspaceFileOperationById(sessionId, operationId);
     if (
       member.role !== "owner" &&
@@ -2325,7 +2439,7 @@ export class SessionStore {
         .prepare(`
           UPDATE workspace_file_operations
           SET status = 'queued', started_at = NULL, lease_id = NULL,
-              lease_expires_at = NULL
+              lease_expires_at = NULL, lease_confirmed_at = NULL
           WHERE session_id = ? AND host_generation = ?
             AND status = 'processing' AND started_at < ?
         `)
@@ -2381,7 +2495,7 @@ export class SessionStore {
           .prepare(`
             UPDATE workspace_file_operations
             SET status = 'processing', started_at = ?, lease_id = ?, lease_expires_at = ?,
-                error_code = NULL, error_message = NULL
+                lease_confirmed_at = NULL, error_code = NULL, error_message = NULL
             WHERE id = ? AND session_id = ? AND host_generation = ? AND status = 'queued'
           `)
           .run(claimedAt, leaseId, leaseExpiresAt, row.id, sessionId, host.generation);
@@ -2391,9 +2505,9 @@ export class SessionStore {
         return {
           operation: {
             ...this.toWorkspaceFileOperation(current),
+            expectedSha256: null,
             leaseId,
             leaseExpiresAt,
-            requestContent: current.request_content,
           },
           rejected,
         };
@@ -2409,55 +2523,123 @@ export class SessionStore {
     memberToken: string,
     operationId: string,
     leaseId: string,
-  ): WorkspaceFileOperationClaim {
+  ): WorkspaceFileOperationConfirmation {
     const host = this.requireCurrentHost(sessionId, memberToken);
-    const row = this.workspaceFileOperationRowById(sessionId, operationId);
-    if (
-      row.status !== "processing" ||
-      row.host_generation !== host.generation ||
-      row.lease_id !== leaseId ||
-      !row.lease_expires_at ||
-      Date.parse(row.lease_expires_at) <= Date.now()
-    ) {
-      throw new ProtocolError(
-        409,
-        "workspace_operation_lease_expired",
-        "The workspace file operation lease expired before host execution",
-      );
-    }
-    const permissionError = this.workspaceOperationPermissionError(row);
-    if (permissionError) {
-      const failedAt = now();
-      this.db
+    this.db.exec("BEGIN IMMEDIATE");
+    let transactionOpen = true;
+    try {
+      const row = this.workspaceFileOperationRowById(sessionId, operationId);
+      const confirmedAt = now();
+      if (
+        row.status !== "processing" ||
+        row.host_generation !== host.generation ||
+        row.lease_id !== leaseId ||
+        !row.lease_expires_at ||
+        Date.parse(row.lease_expires_at) <= Date.parse(confirmedAt)
+      ) {
+        throw new ProtocolError(
+          409,
+          "workspace_operation_lease_expired",
+          "The workspace file operation lease expired before host execution",
+        );
+      }
+      const permissionError = this.workspaceOperationPermissionError(row);
+      if (permissionError) {
+        this.db
+          .prepare(`
+            UPDATE workspace_file_operations
+            SET status = 'failed', request_content = NULL, lease_id = NULL,
+                lease_expires_at = NULL, lease_confirmed_at = NULL,
+                error_code = ?, error_message = ?, completed_at = ?
+            WHERE id = ? AND session_id = ? AND status = 'processing'
+              AND host_generation = ? AND lease_id = ?
+          `)
+          .run(
+            permissionError.code,
+            permissionError.message,
+            confirmedAt,
+            operationId,
+            sessionId,
+            host.generation,
+            leaseId,
+          );
+        this.db.exec("COMMIT");
+        transactionOpen = false;
+        throw new ProtocolError(403, permissionError.code, permissionError.message);
+      }
+      if (row.kind === "write") {
+        if (row.request_content === null || row.expected_sha256 === null) {
+          throw new ProtocolError(
+            409,
+            "invalid_workspace_operation",
+            "The queued write operation is missing required data",
+          );
+        }
+        const existing = this.db
+          .prepare("SELECT 1 AS present FROM workspace_files WHERE session_id = ? AND path = ?")
+          .get(sessionId, row.path) as { present: number } | undefined;
+        if (!existing) {
+          this.db
+            .prepare(`
+              UPDATE workspace_file_operations
+              SET status = 'failed', request_content = NULL, lease_id = NULL,
+                  lease_expires_at = NULL, lease_confirmed_at = NULL,
+                  error_code = 'workspace_file_not_found',
+                  error_message = 'The file is no longer present in the shared workspace',
+                  completed_at = ?
+              WHERE id = ? AND session_id = ? AND status = 'processing'
+                AND host_generation = ? AND lease_id = ?
+            `)
+            .run(confirmedAt, operationId, sessionId, host.generation, leaseId);
+          this.db.exec("COMMIT");
+          transactionOpen = false;
+          throw new ProtocolError(
+            409,
+            "workspace_file_not_found",
+            "The file is no longer present in the shared workspace",
+          );
+        }
+        this.assertWorkspaceFileCapacity(
+          sessionId,
+          row.path,
+          Buffer.byteLength(row.request_content),
+        );
+      }
+      const confirmed = this.db
         .prepare(`
           UPDATE workspace_file_operations
-          SET status = 'failed', request_content = NULL, lease_id = NULL,
-              lease_expires_at = NULL, error_code = ?, error_message = ?, completed_at = ?
-          WHERE id = ? AND session_id = ? AND status = 'processing' AND lease_id = ?
+          SET lease_confirmed_at = COALESCE(lease_confirmed_at, ?)
+          WHERE id = ? AND session_id = ? AND status = 'processing'
+            AND host_generation = ? AND lease_id = ? AND lease_expires_at > ?
         `)
         .run(
-          permissionError.code,
-          permissionError.message,
-          failedAt,
+          confirmedAt,
           operationId,
           sessionId,
+          host.generation,
           leaseId,
+          confirmedAt,
         );
-      throw new ProtocolError(403, permissionError.code, permissionError.message);
+      if (confirmed.changes !== 1) {
+        throw new ProtocolError(
+          409,
+          "workspace_operation_lease_expired",
+          "The workspace file operation lease expired before host execution",
+        );
+      }
+      const current = this.workspaceFileOperationRowById(sessionId, operationId);
+      this.db.exec("COMMIT");
+      transactionOpen = false;
+      return {
+        ...this.toWorkspaceFileOperation(current),
+        leaseId,
+        leaseExpiresAt: current.lease_expires_at!,
+        requestContent: current.request_content,
+      };
+    } catch (error) {
+      if (transactionOpen) this.db.exec("ROLLBACK");
+      throw error;
     }
-    if (row.kind === "write" && row.request_content !== null) {
-      this.assertWorkspaceFileCapacity(
-        sessionId,
-        row.path,
-        Buffer.byteLength(row.request_content),
-      );
-    }
-    return {
-      ...this.toWorkspaceFileOperation(row),
-      leaseId,
-      leaseExpiresAt: row.lease_expires_at,
-      requestContent: row.request_content,
-    };
   }
 
   private backfillInFlightMessageThreadIds(): void {
@@ -2499,7 +2681,7 @@ export class SessionStore {
         .prepare(`
           UPDATE workspace_file_operations
           SET status = 'failed', request_content = NULL, result_content = NULL,
-              lease_id = NULL, lease_expires_at = NULL,
+              lease_id = NULL, lease_expires_at = NULL, lease_confirmed_at = NULL,
               error_code = 'host_repair_required',
               error_message = 'Pair the Codex host again after upgrading',
               completed_at = COALESCE(completed_at, ?)
@@ -2558,6 +2740,7 @@ export class SessionStore {
       row.host_generation !== host.generation ||
       row.lease_id !== input.leaseId ||
       !row.lease_expires_at ||
+      !row.lease_confirmed_at ||
       Date.parse(row.lease_expires_at) <= Date.now()
     ) {
       throw new ProtocolError(
@@ -2625,9 +2808,21 @@ export class SessionStore {
           SET status = ?, request_content = NULL,
               result_content = ?, result_size = ?, result_modified_at = ?, result_sha256 = ?,
               error_code = ?, error_message = ?, completed_at = ?, lease_id = NULL,
-              lease_expires_at = NULL
+              lease_expires_at = NULL, lease_confirmed_at = NULL
           WHERE id = ? AND session_id = ? AND host_generation = ?
             AND status = 'processing' AND lease_id = ? AND lease_expires_at > ?
+            AND lease_confirmed_at IS NOT NULL
+            AND EXISTS (
+              SELECT 1 FROM members requester
+              WHERE requester.session_id = workspace_file_operations.session_id
+                AND requester.id = workspace_file_operations.requested_by_member_id
+                AND requester.status = 'approved'
+                AND (
+                  workspace_file_operations.kind = 'read'
+                  OR requester.role = 'owner'
+                  OR requester.workspace_file_access = 'workspace-write'
+                )
+            )
         `)
         .run(
           input.status,
@@ -2940,6 +3135,21 @@ export class SessionStore {
     return member;
   }
 
+  private requireBrowserMember(
+    sessionId: string,
+    memberToken: string,
+    requireApproved: boolean,
+  ): Member {
+    if (memberToken.startsWith("cch_")) {
+      throw new ProtocolError(
+        403,
+        "browser_member_required",
+        "Use a browser member session for collaboration editor access",
+      );
+    }
+    return this.requireMember(sessionId, memberToken, requireApproved);
+  }
+
   private requireCurrentHost(
     sessionId: string,
     memberToken: string,
@@ -2968,7 +3178,7 @@ export class SessionStore {
       .prepare(`
         SELECT id FROM member_tokens
         WHERE session_id = ? AND member_id = ? AND token_hash = ?
-          AND revoked_at IS NULL
+          AND revoked_at IS NULL AND token_purpose = 'host'
       `)
       .get(sessionId, owner.id, tokenHash) as { id: string } | undefined;
     if (token?.id !== state.host_token_id) {

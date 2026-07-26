@@ -76,6 +76,20 @@ describe("workspace snapshot", () => {
     expect(files[0]?.content).toBe("# Safe project\n");
   });
 
+  it("preserves an UTF-8 BOM with byte-consistent snapshot metadata", async () => {
+    const root = await mkdtemp(join(tmpdir(), "codex-collab-bom-"));
+    temporaryRoots.push(root);
+    await writeFile(join(root, "bom.ts"), Buffer.from("\uFEFFexport {};", "utf8"));
+
+    const [file] = await buildWorkspaceSnapshot(await FileSandbox.create(root));
+    expect(file?.content.startsWith("\uFEFF")).toBe(true);
+    expect(file?.size).toBe(Buffer.byteLength(file!.content));
+    expect(file?.sha256).toBe(
+      await FileSandbox.create(root).then((sandbox) => sandbox.read("bom.ts"))
+        .then((read) => read.sha256),
+    );
+  });
+
   it("honors project-specific collaboration exclusions", async () => {
     const root = await mkdtemp(join(tmpdir(), "codex-collab-ignore-"));
     temporaryRoots.push(root);

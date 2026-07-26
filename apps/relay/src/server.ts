@@ -1192,6 +1192,34 @@ const server = createServer(async (request, response) => {
     const messageStatusMatch = url.pathname.match(
       /^\/v1\/sessions\/([^/]+)\/messages\/([^/]+)\/status$/,
     );
+    const hostMessageStatusMatch = url.pathname.match(
+      /^\/v1\/sessions\/([^/]+)\/host\/messages\/([^/]+)\/status$/,
+    );
+    if (method === "PATCH" && hostMessageStatusMatch?.[1] && hostMessageStatusMatch[2]) {
+      const body = await readJson(request);
+      if (
+        body.status !== "queued" &&
+        body.status !== "submitted" &&
+        body.status !== "completed" &&
+        body.status !== "failed"
+      ) {
+        throw new ProtocolError(400, "invalid_request", "status is invalid");
+      }
+      const codexTurnId =
+        body.codexTurnId === undefined || body.codexTurnId === null
+          ? null
+          : requiredString(body.codexTurnId, "codexTurnId", 160);
+      const message = store.updateMessageDeliveryStatusFromHost(
+        hostMessageStatusMatch[1],
+        bearerToken(request),
+        hostMessageStatusMatch[2],
+        body.status as MessageDeliveryStatus,
+        codexTurnId,
+      );
+      broadcast(hostMessageStatusMatch[1], "message.created", message);
+      sendJson(response, 200, { message });
+      return;
+    }
     if (method === "PATCH" && messageStatusMatch?.[1] && messageStatusMatch[2]) {
       const body = await readJson(request);
       if (
@@ -1277,6 +1305,23 @@ const server = createServer(async (request, response) => {
     const workspaceSelectionMatch = url.pathname.match(
       /^\/v1\/sessions\/([^/]+)\/workspace\/selection$/,
     );
+    const hostWorkspaceSelectionMatch = url.pathname.match(
+      /^\/v1\/sessions\/([^/]+)\/host\/workspace\/selection$/,
+    );
+    if (method === "PUT" && hostWorkspaceSelectionMatch?.[1]) {
+      const body = await readJson(request);
+      const workspace = store.selectWorkspaceThreadFromHost(
+        hostWorkspaceSelectionMatch[1],
+        bearerToken(request),
+        requiredString(body.threadId, "threadId", 120),
+      );
+      broadcast(hostWorkspaceSelectionMatch[1], "workspace.updated", {
+        selectedThreadId: workspace.selectedThreadId,
+        syncedAt: null,
+      });
+      sendJson(response, 200, { workspace });
+      return;
+    }
     if (method === "PUT" && workspaceSelectionMatch?.[1]) {
       const body = await readJson(request);
       const workspace = store.selectWorkspaceThread(

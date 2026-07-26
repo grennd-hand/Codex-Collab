@@ -28,6 +28,30 @@ function selectIdeThread(
   store.selectWorkspaceThread(sessionId, ownerToken, "thread-ide");
 }
 
+function publishIdeFile(
+  store: SessionStore,
+  sessionId: string,
+  hostToken: string,
+  path: string,
+  content: string,
+): string {
+  const sha256 = createHash("sha256").update(content).digest("hex");
+  store.publishWorkspaceSnapshot(sessionId, hostToken, {
+    threadId: "thread-ide",
+    history: [],
+    files: [
+      {
+        path,
+        content,
+        size: Buffer.byteLength(content),
+        modifiedAt: "2026-07-27T00:00:00.000Z",
+        sha256,
+      },
+    ],
+  });
+  return sha256;
+}
+
 afterEach(() => {
   for (const store of stores.splice(0)) {
     store.close();
@@ -488,6 +512,8 @@ describe("SessionStore", () => {
         session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
         host_device_label TEXT NOT NULL,
         root_label TEXT NOT NULL,
+        host_token_id TEXT,
+        host_generation TEXT,
         catalog_json TEXT NOT NULL DEFAULT '[]',
         selected_thread_id TEXT,
         history_json TEXT NOT NULL DEFAULT '[]',
@@ -523,7 +549,8 @@ describe("SessionStore", () => {
         NULL, 'queued', '2026-07-25T00:00:02.000Z'
       );
       INSERT INTO workspace_state VALUES (
-        'session-1', 'Legacy host', 'Project', '[]', 'thread-legacy', '[]', NULL
+        'session-1', 'Legacy host', 'Project', 'legacy-host-token-id',
+        'legacy-generation', '[]', 'thread-legacy', '[]', NULL
       );
     `);
     legacy
@@ -572,10 +599,10 @@ describe("SessionStore", () => {
       };
 
       expect(message).toEqual({
-        delivery_status: "submitted",
-        codex_turn_id: null,
-        selected_thread_id: "thread-legacy",
-        completed_at: null,
+        delivery_status: "failed",
+        codex_turn_id: "migration:no-selected-workspace-task",
+        selected_thread_id: null,
+        completed_at: expect.any(String),
       });
       expect(terminal.selected_thread_id).toBeNull();
       expect(unbound).toMatchObject({
@@ -585,6 +612,11 @@ describe("SessionStore", () => {
         completed_at: expect.any(String),
       });
       expect(migrated.getWorkspace("session-1", browserToken).hostConnected).toBe(false);
+      expect(
+        migrated.db
+          .prepare("SELECT host_token_id, host_generation FROM workspace_state WHERE session_id = ?")
+          .get("session-1"),
+      ).toEqual({ host_token_id: null, host_generation: null });
       expect(() => migrated.getWorkspace("session-1", oldHostToken)).toThrowError(/invalid/i);
       expect(() =>
         migrated.publishWorkspaceCatalog("session-1", browserToken, {
@@ -699,6 +731,160 @@ describe("SessionStore", () => {
     ).toThrowError(/browser session/i);
   });
 
+  it("keeps browser-owner actions separate from current-host worker actions", () => {
+    const store = createStore();
+    const created = store.createSession("Host actions", "Owner");
+    const pairing = store.createHostPairing(created.session.id, created.memberToken, 10);
+    const host = store.claimHostPairing(pairing.pairingToken, "Owner PC", "Project");
+    store.publishWorkspaceCatalog(created.session.id, host.memberToken, {
+      deviceLabel: "Owner PC",
+      rootLabel: "Project",
+      threads: [{ id: "thread-host", name: "Host", preview: "", updatedAt: null }],
+    });
+
+    expect(() =>
+      store.selectWorkspaceThread(created.session.id, host.memberToken, "thread-host"),
+    ).toThrowError(/browser session/i);
+    expect(() =>
+      store.selectWorkspaceThreadFromHost(
+        created.session.id,
+        created.memberToken,
+        "thread-host",
+      ),
+    ).toThrowError(/host token/i);
+    expect(
+      store.selectWorkspaceThreadFromHost(
+        created.session.id,
+        host.memberToken,
+        "thread-host",
+      ).selectedThreadId,
+    ).toBe("thread-host");
+
+    const command = store.addMessage(
+      created.session.id,
+      created.memberToken,
+      "codex_prompt",
+      "Run",
+    );
+    expect(() =>
+      store.updateMessageDeliveryStatus(
+        created.session.id,
+        host.memberToken,
+        command.id,
+        "submitted",
+      ),
+    ).toThrowError(/browser session/i);
+    expect(
+      store.updateMessageDeliveryStatusFromHost(
+        created.session.id,
+        host.memberToken,
+        command.id,
+        "submitted",
+        "turn-host",
+      ),
+    ).toMatchObject({ deliveryStatus: "submitted", codexTurnId: "turn-host" });
+  });
+
+  it("withholds write capability until confirmation and rejects removed snapshot files", () => {
+    const store = createStore();
+    const created = store.createSession("Two phase", "Owner");
+    const pairing = store.createHostPairing(created.session.id, created.memberToken, 10);
+    const host = store.claimHostPairing(pairing.pairingToken, "Owner PC", "Project");
+    selectIdeThread(store, created.session.id, created.memberToken, host.memberToken);
+    const expectedSha256 = publishIdeFile(
+      store,
+      created.session.id,
+      host.memberToken,
+      "src/existing.ts",
+      "before",
+    );
+    expect(() =>
+      store.createWorkspaceFileOperation(created.session.id, created.memberToken, {
+        kind: "write",
+        path: "src/guessed.ts",
+        content: "created",
+        expectedSha256,
+      }),
+    ).toThrowError(/already present|existing shared/i);
+    const queued = store.createWorkspaceFileOperation(
+      created.session.id,
+      created.memberToken,
+      {
+        kind: "write",
+        path: "src/existing.ts",
+        content: "after",
+        expectedSha256,
+      },
+    );
+    const claim = store.claimNextWorkspaceFileOperation(
+      created.session.id,
+      host.memberToken,
+    ).operation!;
+    expect(claim).not.toHaveProperty("requestContent");
+    expect(claim.expectedSha256).toBeNull();
+    expect(() =>
+      store.getWorkspaceFileOperation(created.session.id, host.memberToken, queued.id),
+    ).toThrowError(/browser member/i);
+    expect(() =>
+      store.completeWorkspaceFileOperation(created.session.id, host.memberToken, queued.id, {
+        status: "failed",
+        leaseId: claim.leaseId,
+        errorCode: "bypass",
+        errorMessage: "bypass",
+      }),
+    ).toThrowError(/currently claimed/i);
+
+    store.publishWorkspaceSnapshot(created.session.id, host.memberToken, {
+      threadId: "thread-ide",
+      history: [],
+      files: [],
+    });
+    expect(() =>
+      store.confirmWorkspaceFileOperationLease(
+        created.session.id,
+        host.memberToken,
+        queued.id,
+        claim.leaseId,
+      ),
+    ).toThrowError(/no longer present/i);
+    expect(
+      store.db
+        .prepare("SELECT status, request_content FROM workspace_file_operations WHERE id = ?")
+        .get(queued.id),
+    ).toEqual({ status: "failed", request_content: null });
+  });
+
+  it("rejects forged secret-bearing workspace snapshots at the Relay boundary", () => {
+    const store = createStore();
+    const created = store.createSession("Snapshot policy", "Owner");
+    const pairing = store.createHostPairing(created.session.id, created.memberToken, 10);
+    const host = store.claimHostPairing(pairing.pairingToken, "Owner PC", "Project");
+    selectIdeThread(store, created.session.id, created.memberToken, host.memberToken);
+
+    for (const [path, content] of [
+      [".env", "SAFE=value"],
+      [".codex/auth.json", "{}"],
+      ["src/config.ts", "ACCESS_TOKEN=custom-super-secret-token-123456"],
+    ] as const) {
+      expect(() =>
+        store.publishWorkspaceSnapshot(created.session.id, host.memberToken, {
+          threadId: "thread-ide",
+          history: [],
+          files: [
+            {
+              path,
+              content,
+              size: Buffer.byteLength(content),
+              modifiedAt: "2026-07-27T00:00:00.000Z",
+              sha256: createHash("sha256").update(content).digest("hex"),
+            },
+          ],
+        }),
+      ).toThrow();
+    }
+    expect(store.getWorkspace(created.session.id, created.memberToken).files).toEqual([]);
+  });
+
   it("requires a selected task and queues only safe read-only Codex config paths", () => {
     const store = createStore();
     const created = store.createSession("Config IDE room", "Owner");
@@ -756,6 +942,14 @@ describe("SessionStore", () => {
     const pairing = store.createHostPairing(created.session.id, created.memberToken, 10);
     const host = store.claimHostPairing(pairing.pairingToken, "Owner PC", "Project");
     selectIdeThread(store, created.session.id, created.memberToken, host.memberToken);
+    const readContent = "export const oldValue = true;";
+    const originalSha256 = publishIdeFile(
+      store,
+      created.session.id,
+      host.memberToken,
+      "src/index.ts",
+      readContent,
+    );
     const invite = store.createInvite(created.session.id, created.memberToken, 60, 1);
     const guest = store.joinInvite(invite.inviteToken, "Editor");
     store.approveMember(created.session.id, created.memberToken, guest.member.id);
@@ -769,7 +963,7 @@ describe("SessionStore", () => {
         kind: "write",
         path: "src/index.ts",
         content: "export {};",
-        expectedSha256: "",
+        expectedSha256: originalSha256,
       }),
     ).toThrowError(/not granted/i);
 
@@ -795,19 +989,28 @@ describe("SessionStore", () => {
         kind: "write",
         path: "src/index.ts",
         content: "export {};",
-        expectedSha256: "",
+        expectedSha256: originalSha256,
       },
     );
     expect(write.status).toBe("queued");
     expect(write.completedAt).toBeNull();
+    store.db
+      .prepare("UPDATE workspace_file_operations SET requested_at = ? WHERE id = ?")
+      .run("2000-01-01T00:00:00.000Z", read.id);
 
     const firstClaim = store.claimNextWorkspaceFileOperation(
       created.session.id,
       host.memberToken,
     );
     expect(firstClaim.operation?.id).toBe(read.id);
-    expect(firstClaim.operation?.requestContent).toBeNull();
-    const readContent = "export const oldValue = true;";
+    expect(firstClaim.operation).not.toHaveProperty("requestContent");
+    expect(firstClaim.operation?.expectedSha256).toBeNull();
+    store.confirmWorkspaceFileOperationLease(
+      created.session.id,
+      host.memberToken,
+      read.id,
+      firstClaim.operation!.leaseId,
+    );
     store.completeWorkspaceFileOperation(
       created.session.id,
       host.memberToken,
@@ -829,7 +1032,16 @@ describe("SessionStore", () => {
       host.memberToken,
     );
     expect(secondClaim.operation?.id).toBe(write.id);
-    expect(secondClaim.operation?.requestContent).toBe("export {};");
+    expect(secondClaim.operation).not.toHaveProperty("requestContent");
+    expect(secondClaim.operation?.expectedSha256).toBeNull();
+    const confirmedWrite = store.confirmWorkspaceFileOperationLease(
+      created.session.id,
+      host.memberToken,
+      write.id,
+      secondClaim.operation!.leaseId,
+    );
+    expect(confirmedWrite.requestContent).toBe("export {};");
+    expect(confirmedWrite.expectedSha256).toBe(originalSha256);
     const savedContent = "export {};";
     const completed = store.completeWorkspaceFileOperation(
       created.session.id,
@@ -863,6 +1075,13 @@ describe("SessionStore", () => {
     const pairing = store.createHostPairing(created.session.id, created.memberToken, 10);
     const host = store.claimHostPairing(pairing.pairingToken, "Owner PC", "Project");
     selectIdeThread(store, created.session.id, created.memberToken, host.memberToken);
+    const readmeSha256 = publishIdeFile(
+      store,
+      created.session.id,
+      host.memberToken,
+      "README.md",
+      "original",
+    );
     const invite = store.createInvite(created.session.id, created.memberToken, 60, 1);
     const guest = store.joinInvite(invite.inviteToken, "Editor");
     store.approveMember(created.session.id, created.memberToken, guest.member.id);
@@ -879,7 +1098,7 @@ describe("SessionStore", () => {
         kind: "write",
         path: "README.md",
         content: "queued",
-        expectedSha256: "a".repeat(64),
+        expectedSha256: readmeSha256,
       },
     );
     store.updateMemberWorkspaceFileAccess(
@@ -938,7 +1157,7 @@ describe("SessionStore", () => {
         kind: "write",
         path: "src/config.ts",
         content: "ACCESS_TOKEN=custom-super-secret-token-123456",
-        expectedSha256: "",
+        expectedSha256: "a".repeat(64),
       }),
     ).toThrowError(/not available/i);
 
@@ -951,6 +1170,12 @@ describe("SessionStore", () => {
       created.session.id,
       host.memberToken,
     ).operation!;
+    store.confirmWorkspaceFileOperationLease(
+      created.session.id,
+      host.memberToken,
+      secretRead.id,
+      secretClaim.leaseId,
+    );
     const secretContent = "ACCESS_TOKEN=custom-super-secret-token-123456";
     expect(() =>
       store.completeWorkspaceFileOperation(
@@ -1140,6 +1365,12 @@ describe("SessionStore", () => {
         leaseId: firstClaim.leaseId,
       }),
     ).toThrowError(/currently claimed/i);
+    store.confirmWorkspaceFileOperationLease(
+      created.session.id,
+      host.memberToken,
+      queued.id,
+      secondClaim.leaseId,
+    );
     expect(
       store.completeWorkspaceFileOperation(created.session.id, host.memberToken, queued.id, {
         ...completion,
@@ -1200,6 +1431,13 @@ describe("SessionStore", () => {
       guest.member.id,
       "workspace-write",
     );
+    const revokedSha256 = publishIdeFile(
+      store,
+      created.session.id,
+      host.memberToken,
+      "src/revoked.ts",
+      "export const previous = true;",
+    );
     const queued = store.createWorkspaceFileOperation(
       created.session.id,
       guest.memberToken,
@@ -1207,7 +1445,7 @@ describe("SessionStore", () => {
         kind: "write",
         path: "src/revoked.ts",
         content: "export {};",
-        expectedSha256: "",
+        expectedSha256: revokedSha256,
       },
     );
     const claim = store.claimNextWorkspaceFileOperation(
@@ -1244,6 +1482,13 @@ describe("SessionStore", () => {
       guest.member.id,
       "workspace-write",
     );
+    const lateRevokedSha256 = publishIdeFile(
+      store,
+      created.session.id,
+      host.memberToken,
+      "src/late-revoked.ts",
+      "export const previous = true;",
+    );
     const lateRevoked = store.createWorkspaceFileOperation(
       created.session.id,
       guest.memberToken,
@@ -1251,7 +1496,7 @@ describe("SessionStore", () => {
         kind: "write",
         path: "src/late-revoked.ts",
         content: "export const value = 1;",
-        expectedSha256: "",
+        expectedSha256: lateRevokedSha256,
       },
     );
     const lateClaim = store.claimNextWorkspaceFileOperation(
@@ -1326,6 +1571,12 @@ describe("SessionStore", () => {
         created.session.id,
         host.memberToken,
       ).operation!;
+      store.confirmWorkspaceFileOperationLease(
+        created.session.id,
+        host.memberToken,
+        queued.id,
+        claim.leaseId,
+      );
       const content = `export const value${index} = ${index};`;
       store.completeWorkspaceFileOperation(
         created.session.id,
@@ -1408,6 +1659,12 @@ describe("SessionStore", () => {
       created.session.id,
       host.memberToken,
     ).operation!;
+    store.confirmWorkspaceFileOperationLease(
+      created.session.id,
+      host.memberToken,
+      trigger.id,
+      triggerClaim.leaseId,
+    );
     const triggerContent = "export const trigger = true;";
     store.completeWorkspaceFileOperation(created.session.id, host.memberToken, trigger.id, {
       status: "completed",
@@ -1460,9 +1717,9 @@ describe("SessionStore", () => {
         kind: "write",
         path: "src/new-file.ts",
         content: "x",
-        expectedSha256: "",
+        expectedSha256: "a".repeat(64),
       }),
-    ).toThrowError(/storage limit/i);
+    ).toThrowError(/already present|existing shared/i);
 
     const update = store.createWorkspaceFileOperation(
       created.session.id,
@@ -1516,9 +1773,9 @@ describe("SessionStore", () => {
       created.memberToken,
       {
         kind: "write",
-        path: "src/raced.ts",
+        path: "src/existing-598.ts",
         content: "raced",
-        expectedSha256: "",
+        expectedSha256: "a".repeat(64),
       },
     );
     const racedClaim = store.claimNextWorkspaceFileOperation(
@@ -1570,9 +1827,9 @@ describe("SessionStore", () => {
         kind: "write",
         path: "src/another.ts",
         content: "y",
-        expectedSha256: "",
+        expectedSha256: "a".repeat(64),
       }),
-    ).toThrowError(/storage limit/i);
+    ).toThrowError(/already present|existing shared/i);
     expect(
       store.createWorkspaceFileOperation(created.session.id, created.memberToken, {
         kind: "write",
