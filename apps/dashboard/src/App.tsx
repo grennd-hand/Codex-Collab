@@ -55,6 +55,7 @@ import {
 import {
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -116,6 +117,7 @@ import {
 } from "./member-identity.js";
 import { isCredentialRejected, requestJson } from "./api-client.js";
 import { ApiRequestError } from "./api-client.js";
+import { compressImageFile } from "./image-compression.js";
 import {
   linkAccountRoom,
   loadAccountProfile,
@@ -206,6 +208,13 @@ export function codexExecutionPhase(
   return "idle";
 }
 
+export function shouldShowExecutionStatus(
+  phase: CodexExecutionPhase,
+  hasRunningExecutionEntry: boolean,
+): boolean {
+  return phase !== "idle" && (phase !== "running" || !hasRunningExecutionEntry);
+}
+
 export function canMemberStopCodex(
   member: Pick<Member, "role" | "status"> | null,
   phase: CodexExecutionPhase,
@@ -242,6 +251,12 @@ interface ActivityItem {
 interface PendingAttachment {
   id: string;
   file: File;
+  originalSize?: number;
+}
+
+interface PreparedAttachmentBatch {
+  attachments: PendingAttachment[];
+  warnings: string[];
 }
 
 interface SpeechRecognitionResultLike {
@@ -421,6 +436,75 @@ function formatFileSize(size: number): string {
   return `${(size / 1_000_000).toFixed(1)} MB`;
 }
 
+function attachmentSizeLabel(attachment: PendingAttachment): string {
+  return attachment.originalSize && attachment.originalSize > attachment.file.size
+    ? `已压缩 ${formatFileSize(attachment.originalSize)} → ${formatFileSize(attachment.file.size)}`
+    : formatFileSize(attachment.file.size);
+}
+
+async function prepareAttachmentBatch(files: readonly File[]): Promise<PreparedAttachmentBatch> {
+  const attachments: PendingAttachment[] = [];
+  const warnings: string[] = [];
+  for (const file of files) {
+    if (file.size === 0) {
+      warnings.push(`空文件无法发送：${file.name}`);
+      continue;
+    }
+    try {
+      const prepared = await compressImageFile(file);
+      attachments.push({
+        id: crypto.randomUUID(),
+        file: prepared.file,
+        ...(prepared.compressed ? { originalSize: prepared.originalSize } : {}),
+      });
+    } catch {
+      attachments.push({ id: crypto.randomUUID(), file });
+      warnings.push(`图片压缩失败，已尝试保留原文件：${file.name}`);
+    }
+  }
+  return { attachments, warnings };
+}
+
+function appendPendingAttachments(
+  current: readonly PendingAttachment[],
+  incoming: readonly PendingAttachment[],
+): { attachments: PendingAttachment[]; warning: string | null } {
+  const next = [...current];
+  let warning: string | null = null;
+  for (const attachment of incoming) {
+    const file = attachment.file;
+    if (file.size > maxAttachmentSize) {
+      warning = attachment.originalSize
+        ? `${file.name} 压缩后仍超过 4 MB 单文件限制`
+        : `${file.name} 超过 4 MB 单文件限制`;
+      continue;
+    }
+    if (
+      next.some(
+        (item) =>
+          item.file.name === file.name &&
+          item.file.size === file.size &&
+          item.file.lastModified === file.lastModified,
+      )
+    ) {
+      continue;
+    }
+    if (next.length >= maxAttachmentCount) {
+      warning = "一次最多发送 8 个附件";
+      break;
+    }
+    if (
+      next.reduce((sum, item) => sum + item.file.size, 0) + file.size >
+      maxAttachmentTotalSize
+    ) {
+      warning = "压缩后的附件总大小不能超过 6 MB";
+      break;
+    }
+    next.push(attachment);
+  }
+  return { attachments: next, warning };
+}
+
 function renderInlineText(text: string): ReactNode[] {
   const pattern =
     /(`[^`\n]+`|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\(https?:\/\/[^\s)]+\))/g;
@@ -501,7 +585,7 @@ function ReadableOutput({ text }: { text: string }) {
 function executionStatusLabel(status: ExecutionStatus): string {
   switch (status) {
     case "running":
-      return "进行中";
+      return "正在运行";
     case "completed":
       return "已完成";
     case "failed":
@@ -511,6 +595,99 @@ function executionStatusLabel(status: ExecutionStatus): string {
   }
 }
 
+export interface ExecutionProcessPresentation {
+  status: ExecutionStatus;
+  title: string;
+  detail: string;
+  progress: string;
+  defaultExpanded: boolean;
+}
+
+export function executionProcessPresentation(
+  records: readonly Pick<ReadableExecution, "status" | "title">[],
+): ExecutionProcessPresentation {
+  const running = records.filter((record) => record.status === "running");
+  const failed = records.filter((record) => record.status === "failed");
+  const completedCount = records.filter((record) => record.status === "completed").length;
+  const latestRunning = running.at(-1);
+
+  if (running.length > 0) {
+    return {
+      status: "running",
+      title: "正在运行",
+      detail: latestRunning?.title ?? "正在等待当前步骤",
+      progress: `${completedCount} / ${records.length} 已完成`,
+      defaultExpanded: true,
+    };
+  }
+  if (failed.length > 0) {
+    return {
+      status: "failed",
+      title: "任务过程有错误",
+      detail: failed.at(-1)?.title ?? "请查看失败步骤",
+      progress: `${failed.length} 个失败`,
+      defaultExpanded: true,
+    };
+  }
+  if (records.length > 0 && completedCount === records.length) {
+    return {
+      status: "completed",
+      title: "任务过程",
+      detail: "全部步骤已完成",
+      progress: `${records.length} 个步骤`,
+      defaultExpanded: false,
+    };
+  }
+  return {
+    status: "unknown",
+    title: "任务过程",
+    detail: "已记录执行活动",
+    progress: `${records.length} 个步骤`,
+    defaultExpanded: false,
+  };
+}
+
+export function elapsedExecutionLabel(
+  startedAt: string | null,
+  currentTime = Date.now(),
+): string | null {
+  if (!startedAt) return null;
+  const started = Date.parse(startedAt);
+  if (!Number.isFinite(started) || started > currentTime) return null;
+  const totalSeconds = Math.max(0, Math.floor((currentTime - started) / 1_000));
+  if (totalSeconds < 2) return "刚刚开始";
+  if (totalSeconds < 60) return `已运行 ${totalSeconds} 秒`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 60) return `已运行 ${minutes} 分 ${seconds} 秒`;
+  const hours = Math.floor(minutes / 60);
+  return `已运行 ${hours} 小时 ${minutes % 60} 分`;
+}
+
+function ExecutionElapsedTime({ startedAt }: { startedAt: string }) {
+  const [currentTime, setCurrentTime] = useState(() => Date.now());
+  useEffect(() => {
+    setCurrentTime(Date.now());
+    const timer = window.setInterval(() => setCurrentTime(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [startedAt]);
+  const label = elapsedExecutionLabel(startedAt, currentTime);
+  return label ? <span>{label}</span> : null;
+}
+
+function ExecutionStatusIcon({
+  status,
+  fallback,
+}: {
+  status: ExecutionStatus;
+  fallback: "command" | "reasoning";
+}) {
+  if (status === "running") return <Spinner size="tiny" />;
+  if (status === "completed") return <CheckmarkCircleRegular />;
+  if (status === "failed") return <DismissRegular />;
+  return fallback === "command" ? <DocumentRegular /> : <HistoryRegular />;
+}
+
 function ExecutionStepCard({
   record,
   compact = false,
@@ -518,12 +695,20 @@ function ExecutionStepCard({
   record: ReadableExecution;
   compact?: boolean;
 }) {
+  const [detailsOpen, setDetailsOpen] = useState(
+    record.status === "running" || record.status === "failed",
+  );
+
+  useEffect(() => {
+    setDetailsOpen(record.status === "running" || record.status === "failed");
+  }, [record.status]);
+
   return (
     <article
       className={`execution-step ${record.role} ${record.status}${compact ? " compact" : ""}`}
     >
       <div className="execution-step-marker" aria-hidden="true">
-        {record.role === "command" ? <DocumentRegular /> : <HistoryRegular />}
+        <ExecutionStatusIcon status={record.status} fallback={record.role} />
       </div>
       <div className="execution-step-content">
         <header>
@@ -544,11 +729,14 @@ function ExecutionStepCard({
         {record.role === "command" && (record.input || record.output) ? (
           <details
             className="execution-details"
-            open={
-              record.status === "running" || record.status === "failed" ? true : undefined
-            }
+            open={detailsOpen}
           >
-            <summary>
+            <summary
+              onClick={(event) => {
+                event.preventDefault();
+                setDetailsOpen((current) => !current);
+              }}
+            >
               <span>
                 {record.status === "running"
                   ? "查看正在执行的内容"
@@ -581,25 +769,58 @@ function ExecutionStepCard({
   );
 }
 
-function ExecutionProcess({ entries }: { entries: CodexRecordEntry[] }) {
+export function ExecutionProcess({ entries }: { entries: CodexRecordEntry[] }) {
   const records = entries.map(presentExecutionEntry);
-  const runningCount = records.filter((record) => record.status === "running").length;
+  const presentation = executionProcessPresentation(records);
+  const [expanded, setExpanded] = useState(presentation.defaultExpanded);
+  const contentId = useId();
+  const runningStartedAt =
+    presentation.status === "running"
+      ? (records.find((record) => record.createdAt)?.createdAt ?? null)
+      : null;
+
+  useEffect(() => {
+    setExpanded(presentation.defaultExpanded);
+  }, [presentation.defaultExpanded, presentation.status]);
   return (
-    <section className="execution-process" aria-label="任务过程">
+    <section
+      className={`execution-process ${presentation.status} ${expanded ? "expanded" : "collapsed"}`}
+      aria-label="任务过程"
+    >
+      <span className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">
+        {presentation.title}：{presentation.detail}，{presentation.progress}
+      </span>
       <header className="execution-process-heading">
-        <div>
-          <HistoryRegular aria-hidden="true" />
-          <strong>任务过程</strong>
-        </div>
-        <span>
-          {runningCount > 0 ? `${runningCount} 个步骤进行中` : `${records.length} 个步骤`}
-        </span>
+        <button
+          type="button"
+          aria-controls={contentId}
+          aria-expanded={expanded}
+          aria-label={`${presentation.title}：${presentation.detail}，${presentation.progress}，${
+            expanded ? "折叠任务过程" : "展开任务过程"
+          }`}
+          onClick={() => setExpanded((current) => !current)}
+        >
+          <span className="execution-process-status-icon" aria-hidden="true">
+            <ExecutionStatusIcon status={presentation.status} fallback="reasoning" />
+          </span>
+          <span className="execution-process-title">
+            <strong>{presentation.title}</strong>
+            <span>{presentation.detail}</span>
+          </span>
+          <span className="execution-process-meta">
+            {runningStartedAt ? <ExecutionElapsedTime startedAt={runningStartedAt} /> : null}
+            <span>{presentation.progress}</span>
+          </span>
+          <ChevronDownRegular className="execution-process-chevron" aria-hidden="true" />
+        </button>
       </header>
-      <div className="execution-step-list">
-        {records.map((record) => (
-          <ExecutionStepCard key={`codex-${record.id}`} record={record} />
-        ))}
-      </div>
+      {expanded ? (
+        <div className="execution-step-list" id={contentId}>
+          {records.map((record) => (
+            <ExecutionStepCard key={`codex-${record.id}`} record={record} />
+          ))}
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -878,6 +1099,8 @@ export function App() {
     PendingAttachment[]
   >([]);
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
+  const [preparingChatAttachments, setPreparingChatAttachments] = useState(false);
+  const [preparingCodexAttachments, setPreparingCodexAttachments] = useState(false);
   const [codexOptions, setCodexOptions] =
     useState<CodexPromptOptions>(defaultCodexOptions);
   const [membersExpanded, setMembersExpanded] = useState(true);
@@ -899,6 +1122,9 @@ export function App() {
   const codexTextareaRef = useRef<HTMLTextAreaElement>(null);
   const chatAttachmentInputRef = useRef<HTMLInputElement>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
+  const attachmentPreparationEpochRef = useRef(0);
+  const chatAttachmentPreparationBusyRef = useRef(false);
+  const codexAttachmentPreparationBusyRef = useRef(false);
   const speechRecognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const loadedComposerKeyRef = useRef<string | null>(null);
   const linkedRoomKeyRef = useRef<string | null>(null);
@@ -959,6 +1185,11 @@ export function App() {
       setChatDraft("");
       setPendingChatAttachments([]);
       setPendingAttachments([]);
+      attachmentPreparationEpochRef.current += 1;
+      chatAttachmentPreparationBusyRef.current = false;
+      codexAttachmentPreparationBusyRef.current = false;
+      setPreparingChatAttachments(false);
+      setPreparingCodexAttachments(false);
       setMessageStreamPinned(true);
       messageStreamPinnedRef.current = true;
       setJoinToken("");
@@ -1629,89 +1860,62 @@ export function App() {
     void createSession();
   };
 
-  const addChatAttachments = (files: FileList | File[]) => {
-    if (!roomOpen) return;
+  const addChatAttachments = async (files: FileList | File[]) => {
+    if (!roomOpen || chatAttachmentPreparationBusyRef.current) return;
     const incoming = Array.from(files);
     if (incoming.length === 0) return;
-    const next = [...pendingChatAttachments];
-    for (const file of incoming) {
-      if (file.size === 0) {
-        setError(`空文件无法发送：${file.name}`);
-        continue;
+    const preparationEpoch = attachmentPreparationEpochRef.current;
+    chatAttachmentPreparationBusyRef.current = true;
+    setPreparingChatAttachments(true);
+    try {
+      const prepared = await prepareAttachmentBatch(incoming);
+      if (preparationEpoch !== attachmentPreparationEpochRef.current) return;
+      const merged = appendPendingAttachments(pendingChatAttachments, prepared.attachments);
+      setPendingChatAttachments(merged.attachments);
+      const warning = merged.warning ?? prepared.warnings.at(-1) ?? null;
+      setError(warning);
+    } finally {
+      if (preparationEpoch === attachmentPreparationEpochRef.current) {
+        chatAttachmentPreparationBusyRef.current = false;
+        setPreparingChatAttachments(false);
       }
-      if (file.size > maxAttachmentSize) {
-        setError(`${file.name} 超过 4 MB 单文件限制`);
-        continue;
-      }
-      if (
-        next.some(
-          (item) =>
-            item.file.name === file.name &&
-            item.file.size === file.size &&
-            item.file.lastModified === file.lastModified,
-        )
-      ) {
-        continue;
-      }
-      if (next.length >= maxAttachmentCount) {
-        setError("一次最多发送 8 个附件");
-        break;
-      }
-      if (
-        next.reduce((sum, item) => sum + item.file.size, 0) + file.size >
-        maxAttachmentTotalSize
-      ) {
-        setError("附件总大小不能超过 6 MB");
-        break;
-      }
-      next.push({ id: crypto.randomUUID(), file });
     }
-    setPendingChatAttachments(next);
   };
 
-  const addAttachments = (files: FileList | File[]) => {
-    if (!roomOpen) return;
+  const addAttachments = async (files: FileList | File[]) => {
+    if (!roomOpen || codexAttachmentPreparationBusyRef.current) return;
     const incoming = Array.from(files);
     if (incoming.length === 0) return;
-    const next = [...pendingAttachments];
-    for (const file of incoming) {
-      if (
-        file.type.startsWith("image/") &&
-        !codexModelSupportsImages(codexOptions.model)
-      ) {
-        const modelLabel = getCodexModelOption(codexOptions.model)?.label ?? "当前模型";
-        setError(`${modelLabel} 仅支持文本，不能添加图片：${file.name}`);
-        continue;
+    const modelLabel = getCodexModelOption(codexOptions.model)?.label ?? "当前模型";
+    let unsupportedWarning: string | null = null;
+    const allowed = incoming.filter((file) => {
+      if (file.type.startsWith("image/") && !codexModelSupportsImages(codexOptions.model)) {
+        unsupportedWarning = `${modelLabel} 仅支持文本，不能添加图片：${file.name}`;
+        return false;
       }
-      if (file.size === 0) {
-        setError(`空文件无法发送：${file.name}`);
-        continue;
-      }
-      if (file.size > maxAttachmentSize) {
-        setError(`${file.name} 超过 4 MB 单文件限制`);
-        continue;
-      }
-      if (
-        next.some(
-          (item) =>
-            item.file.name === file.name &&
-            item.file.size === file.size &&
-            item.file.lastModified === file.lastModified,
-        )
-      ) {
-        continue;
-      }
-      if (next.length >= maxAttachmentCount) {
-        setError("一次最多发送 8 个附件");
-        break;
-      }
-      if (next.reduce((sum, item) => sum + item.file.size, 0) + file.size > maxAttachmentTotalSize) {
-        setError("附件总大小不能超过 6 MB");
-        break;
-      }
-      next.push({ id: crypto.randomUUID(), file });
+      return true;
+    });
+    if (allowed.length === 0) {
+      setError(unsupportedWarning);
+      return;
     }
-    setPendingAttachments(next);
+    const preparationEpoch = attachmentPreparationEpochRef.current;
+    codexAttachmentPreparationBusyRef.current = true;
+    setPreparingCodexAttachments(true);
+    try {
+      const prepared = await prepareAttachmentBatch(allowed);
+      if (preparationEpoch !== attachmentPreparationEpochRef.current) return;
+      const merged = appendPendingAttachments(pendingAttachments, prepared.attachments);
+      setPendingAttachments(merged.attachments);
+      const warning =
+        merged.warning ?? prepared.warnings.at(-1) ?? unsupportedWarning ?? null;
+      setError(warning);
+    } finally {
+      if (preparationEpoch === attachmentPreparationEpochRef.current) {
+        codexAttachmentPreparationBusyRef.current = false;
+        setPreparingCodexAttachments(false);
+      }
+    }
   };
 
   const toggleDictation = () => {
@@ -1780,6 +1984,8 @@ export function App() {
       !token ||
       !body ||
       !approved ||
+      (kind === "chat" && preparingChatAttachments) ||
+      (kind === "codex_prompt" && preparingCodexAttachments) ||
       (!roomOpen && kind !== "codex_stop") ||
       kind === "system"
     ) {
@@ -2061,13 +2267,22 @@ export function App() {
   const executionEntryCount = importedHistory.filter(
     (entry) => entry.role === "reasoning" || entry.role === "command",
   ).length;
+  const latestCodexTimelineItem = codexTimeline.at(-1);
+  const hasRunningExecutionEntry =
+    latestCodexTimelineItem?.kind === "imported" &&
+    latestCodexTimelineItem.item.kind === "execution" &&
+    latestCodexTimelineItem.item.entries.some(
+      (entry) => presentExecutionEntry(entry).status === "running",
+    );
   const canStopCodex = canMemberStopCodex(member, executionPhase);
   const primaryComposerAction = composerPrimaryAction(executionPhase, "codex");
   const primaryStopsCodex = primaryComposerAction === "stop_codex";
   const canSendChat = Boolean(
-    chatDraft.trim() || pendingChatAttachments.length > 0,
+    !preparingChatAttachments && (chatDraft.trim() || pendingChatAttachments.length > 0),
   );
-  const canSendCodex = Boolean(draft.trim() || pendingAttachments.length > 0);
+  const canSendCodex = Boolean(
+    !preparingCodexAttachments && (draft.trim() || pendingAttachments.length > 0),
+  );
   const selectedModelOption = getCodexModelOption(codexOptions.model);
   const selectedModelSupportsFast = codexModelSupportsFast(codexOptions.model);
   const selectedModelSupportsImages = codexModelSupportsImages(codexOptions.model);
@@ -2397,7 +2612,7 @@ export function App() {
                   event.preventDefault();
                   setDraggingChatFiles(false);
                   if (approved && roomOpen) {
-                    addChatAttachments(event.dataTransfer.files);
+                    void addChatAttachments(event.dataTransfer.files);
                   }
                 }}
               >
@@ -2406,15 +2621,21 @@ export function App() {
                   className="visually-hidden"
                   type="file"
                   multiple
-                  disabled={!approved || submitting || !roomOpen}
+                  disabled={!approved || submitting || preparingChatAttachments || !roomOpen}
                   tabIndex={-1}
                   onChange={(event) => {
                     if (event.currentTarget.files) {
-                      addChatAttachments(event.currentTarget.files);
+                      void addChatAttachments(event.currentTarget.files);
                     }
                     event.currentTarget.value = "";
                   }}
                 />
+                {preparingChatAttachments ? (
+                  <div className="attachment-preparing" role="status">
+                    <Spinner size="tiny" />
+                    <span>正在压缩图片…</span>
+                  </div>
+                ) : null}
                 {pendingChatAttachments.length > 0 ? (
                   <div
                     className="pending-attachments peer-chat-pending-attachments"
@@ -2424,7 +2645,7 @@ export function App() {
                       <span key={attachment.id}>
                         <AttachRegular aria-hidden="true" />
                         <span title={attachment.file.name}>{attachment.file.name}</span>
-                        <small>{formatFileSize(attachment.file.size)}</small>
+                        <small>{attachmentSizeLabel(attachment)}</small>
                         <Button
                           type="button"
                           appearance="subtle"
@@ -2449,7 +2670,7 @@ export function App() {
                     icon={<AttachRegular />}
                     title="发送文件或图片"
                     aria-label="发送文件或图片"
-                    disabled={!approved || submitting || !roomOpen}
+                    disabled={!approved || submitting || preparingChatAttachments || !roomOpen}
                     onClick={() => chatAttachmentInputRef.current?.click()}
                   />
                   <Input
@@ -2468,7 +2689,7 @@ export function App() {
                     onPaste={(event) => {
                       if (event.clipboardData.files.length > 0) {
                         event.preventDefault();
-                        addChatAttachments(event.clipboardData.files);
+                        void addChatAttachments(event.clipboardData.files);
                       }
                     }}
                   />
@@ -2666,7 +2887,8 @@ export function App() {
                   跳到最新
                 </Button>
               ) : null}
-              {!conversationLoading && executionPhase !== "idle" ? (
+              {!conversationLoading &&
+              shouldShowExecutionStatus(executionPhase, hasRunningExecutionEntry) ? (
                 <div
                   className={`codex-execution-status ${executionPhase}`}
                   role="status"
@@ -2679,14 +2901,16 @@ export function App() {
                         ? "Codex 指令已排队"
                         : executionPhase === "stopping"
                           ? "正在停止 Codex"
-                          : "正在实时同步任务过程"}
+                          : "正在运行"}
                     </strong>
                     <span>
                       {executionPhase === "queued"
                         ? "等待共享任务开始执行"
                         : executionPhase === "stopping"
                           ? "停止请求已发送，请稍候"
-                          : `已显示 ${executionEntryCount} 条过程记录，新步骤约 1 秒内出现`}
+                          : executionEntryCount > 0
+                            ? `已显示 ${executionEntryCount} 条过程记录，正在等待下一步`
+                            : "首个执行步骤到达后会显示在这里"}
                     </span>
                   </div>
                 </div>
@@ -2716,7 +2940,7 @@ export function App() {
               onDrop={(event) => {
                 event.preventDefault();
                 setDraggingFiles(false);
-                if (approved) addAttachments(event.dataTransfer.files);
+                if (approved) void addAttachments(event.dataTransfer.files);
               }}
             >
               <input
@@ -2724,11 +2948,11 @@ export function App() {
                 className="visually-hidden"
                 type="file"
                 multiple
-                disabled={!roomOpen}
+                disabled={!roomOpen || preparingCodexAttachments}
                 tabIndex={-1}
                 onChange={(event) => {
                   if (event.currentTarget.files) {
-                    addAttachments(event.currentTarget.files);
+                    void addAttachments(event.currentTarget.files);
                   }
                   event.currentTarget.value = "";
                 }}
@@ -2751,7 +2975,7 @@ export function App() {
                   onPaste={(event) => {
                     if (event.clipboardData.files.length > 0) {
                       event.preventDefault();
-                      addAttachments(event.clipboardData.files);
+                      void addAttachments(event.clipboardData.files);
                     }
                   }}
                   onKeyDown={(event) => {
@@ -2769,13 +2993,19 @@ export function App() {
                     }
                   }}
                 />
+                {preparingCodexAttachments ? (
+                  <div className="attachment-preparing" role="status">
+                    <Spinner size="tiny" />
+                    <span>正在压缩图片…</span>
+                  </div>
+                ) : null}
                 {pendingAttachments.length > 0 ? (
                   <div className="pending-attachments" aria-label="待发送附件">
                     {pendingAttachments.map((attachment) => (
                       <span key={attachment.id}>
                         <AttachRegular aria-hidden="true" />
                         <span title={attachment.file.name}>{attachment.file.name}</span>
-                        <small>{formatFileSize(attachment.file.size)}</small>
+                        <small>{attachmentSizeLabel(attachment)}</small>
                         <Button
                           type="button"
                           appearance="subtle"
@@ -2825,6 +3055,7 @@ export function App() {
                       disabled={
                         !approved ||
                         submitting ||
+                        preparingCodexAttachments ||
                         !roomOpen
                       }
                       onClick={() => attachmentInputRef.current?.click()}

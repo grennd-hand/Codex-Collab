@@ -915,35 +915,117 @@ textarea {
   box-shadow: var(--shadow2);
 }
 
+.execution-process.running {
+  border-color: var(--colorBrandStroke2);
+}
+
+.execution-process.failed {
+  border-color: var(--colorStatusDangerBorder1);
+}
+
 .execution-process-heading {
-  min-height: 44px;
-  padding: 10px 13px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  border-bottom: 1px solid var(--colorNeutralStroke2);
+  min-height: 48px;
   background: var(--colorNeutralBackground1);
 }
 
-.execution-process-heading > div {
+.execution-process.expanded .execution-process-heading {
+  border-bottom: 1px solid var(--colorNeutralStroke2);
+}
+
+.execution-process-heading > button {
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 11px;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 9px;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
-.execution-process-heading svg {
+.execution-process-heading > button:hover {
+  background: var(--colorNeutralBackground2Hover);
+}
+
+.execution-process-heading > button:focus-visible {
+  outline: 2px solid var(--colorBrandStroke1);
+  outline-offset: -2px;
+}
+
+.execution-process-status-icon {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--colorNeutralForeground3);
+  background: var(--colorNeutralBackground3);
+}
+
+.execution-process-status-icon svg {
+  font-size: 15px;
+}
+
+.execution-process.running .execution-process-status-icon {
   color: var(--colorBrandForeground1);
+  background: var(--colorBrandBackground2);
 }
 
-.execution-process-heading strong {
+.execution-process.completed .execution-process-status-icon {
+  color: var(--colorStatusSuccessForeground1);
+  background: var(--colorStatusSuccessBackground1);
+}
+
+.execution-process.failed .execution-process-status-icon {
+  color: var(--colorStatusDangerForeground1);
+  background: var(--colorStatusDangerBackground1);
+}
+
+.execution-process-title {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 1px;
+}
+
+.execution-process-title strong {
   font-size: 13px;
   font-weight: 650;
 }
 
-.execution-process-heading > span {
+.execution-process-title > span {
+  overflow: hidden;
   color: var(--colorNeutralForeground3);
   font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.execution-process-meta {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--colorNeutralForeground3);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.execution-process-chevron {
+  flex: 0 0 auto;
+  color: var(--colorNeutralForeground3);
+  font-size: 16px;
+  transition: transform 160ms ease;
+}
+
+.execution-process.expanded .execution-process-chevron {
+  transform: rotate(180deg);
 }
 
 .execution-step-list {
@@ -990,6 +1072,12 @@ textarea {
   background: var(--colorBrandBackground2);
 }
 
+.execution-step.completed .execution-step-marker {
+  border-color: var(--colorStatusSuccessBorder1);
+  color: var(--colorStatusSuccessForeground1);
+  background: var(--colorStatusSuccessBackground1);
+}
+
 .execution-step.failed .execution-step-marker {
   border-color: var(--colorStatusDangerBorder1);
   color: var(--colorStatusDangerForeground1);
@@ -1002,6 +1090,14 @@ textarea {
   border: 1px solid var(--colorNeutralStroke3);
   border-radius: 8px;
   background: var(--colorNeutralBackground1);
+}
+
+.execution-step.running .execution-step-content {
+  border-color: var(--colorBrandStroke2);
+}
+
+.execution-step.failed .execution-step-content {
+  border-color: var(--colorStatusDangerBorder1);
 }
 
 .execution-step.compact {
@@ -1406,6 +1502,16 @@ textarea {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.attachment-preparing {
+  min-height: 30px;
+  padding: 2px 6px 8px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--colorNeutralForeground3);
+  font-size: 12px;
 }
 
 .pending-attachments > span {
@@ -2270,6 +2376,22 @@ textarea {
     width: 91%;
   }
 
+  .execution-process {
+    width: 100%;
+  }
+
+  .execution-process-heading > button {
+    padding-inline: 10px;
+  }
+
+  .execution-process-meta {
+    gap: 6px;
+  }
+
+  .execution-step-list {
+    padding-inline: 9px;
+  }
+
   .composer {
     padding: 12px 14px 14px;
   }
@@ -2321,6 +2443,14 @@ textarea {
 
   .message-meta span:nth-child(2) {
     display: none;
+  }
+
+  .execution-process-meta > span:first-child:not(:last-child) {
+    display: none;
+  }
+
+  .execution-step {
+    padding-left: 28px;
   }
 
   .account-room-item {

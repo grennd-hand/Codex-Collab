@@ -1,13 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Member, Message } from "@codex-collab/protocol";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import {
+  ExecutionProcess,
   canMemberStopCodex,
   chatMessageBody,
   codexExecutionPhase,
   composerPrimaryAction,
+  elapsedExecutionLabel,
+  executionProcessPresentation,
   filterUnsupportedImageAttachments,
   normalizeCodexOptionsForUi,
   restoreComposerControlFocus,
+  shouldShowExecutionStatus,
   workspaceNeedsConversationLoad,
 } from "./App.js";
 
@@ -101,6 +107,93 @@ describe("Codex execution controls", () => {
         "running",
       ),
     ).toBe("idle");
+  });
+
+  it("hides the temporary running status after a live execution step appears", () => {
+    expect(shouldShowExecutionStatus("queued", false)).toBe(true);
+    expect(shouldShowExecutionStatus("stopping", true)).toBe(true);
+    expect(shouldShowExecutionStatus("running", false)).toBe(true);
+    expect(shouldShowExecutionStatus("running", true)).toBe(false);
+    expect(shouldShowExecutionStatus("idle", false)).toBe(false);
+  });
+});
+
+describe("Codex client-style task process", () => {
+  it("keeps active and failed work open while completed work starts collapsed", () => {
+    expect(
+      executionProcessPresentation([
+        { status: "completed", title: "读取文件" },
+        { status: "running", title: "运行测试" },
+      ]),
+    ).toEqual({
+      status: "running",
+      title: "正在运行",
+      detail: "运行测试",
+      progress: "1 / 2 已完成",
+      defaultExpanded: true,
+    });
+    expect(
+      executionProcessPresentation([{ status: "failed", title: "构建项目" }]),
+    ).toMatchObject({
+      status: "failed",
+      title: "任务过程有错误",
+      progress: "1 个失败",
+      defaultExpanded: true,
+    });
+    expect(
+      executionProcessPresentation([{ status: "completed", title: "运行测试" }]),
+    ).toMatchObject({
+      status: "completed",
+      detail: "全部步骤已完成",
+      defaultExpanded: false,
+    });
+  });
+
+  it("renders an accessible collapse control with client-style defaults", () => {
+    const completed = renderToStaticMarkup(
+      createElement(ExecutionProcess, {
+        entries: [
+          {
+            id: "done",
+            role: "command",
+            text: "tool: exec_command\nstatus: completed\ninput:\n{\"cmd\":\"npm test\"}",
+            createdAt: "2026-07-26T00:00:00.000Z",
+          },
+        ],
+      }),
+    );
+    expect(completed).toContain('aria-expanded="false"');
+    expect(completed).toContain("全部步骤已完成");
+    expect(completed).toContain("展开任务过程");
+    expect(completed).not.toContain("查看执行详情");
+
+    const running = renderToStaticMarkup(
+      createElement(ExecutionProcess, {
+        entries: [
+          {
+            id: "running",
+            role: "command",
+            text: "tool: exec_command\nstatus: running\ninput:\n{\"cmd\":\"npm test\"}",
+            createdAt: null,
+          },
+        ],
+      }),
+    );
+    expect(running).toContain('aria-expanded="true"');
+    expect(running).toContain("折叠任务过程");
+    expect(running).toContain("正在运行");
+    expect(running).toContain('role="status"');
+    expect(running).toContain("查看正在执行的内容");
+  });
+
+  it("formats a compact live elapsed-time label", () => {
+    expect(elapsedExecutionLabel("2026-07-26T00:00:00.000Z", Date.parse("2026-07-26T00:00:01Z"))).toBe(
+      "刚刚开始",
+    );
+    expect(elapsedExecutionLabel("2026-07-26T00:00:00.000Z", Date.parse("2026-07-26T00:02:09Z"))).toBe(
+      "已运行 2 分 9 秒",
+    );
+    expect(elapsedExecutionLabel(null)).toBeNull();
   });
 });
 
