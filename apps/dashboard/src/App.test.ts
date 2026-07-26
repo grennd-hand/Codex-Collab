@@ -127,7 +127,7 @@ describe("Codex client-style task process", () => {
       ]),
     ).toEqual({
       status: "running",
-      title: "正在运行",
+      title: "正在执行",
       detail: "运行测试",
       progress: "1 / 2 已完成",
       defaultExpanded: true,
@@ -146,6 +146,17 @@ describe("Codex client-style task process", () => {
       status: "completed",
       detail: "全部步骤已完成",
       defaultExpanded: false,
+    });
+    expect(
+      executionProcessPresentation(
+        [{ status: "completed", title: "运行测试" }],
+        true,
+      ),
+    ).toMatchObject({
+      status: "running",
+      title: "正在执行",
+      detail: "Codex 正在继续处理",
+      defaultExpanded: true,
     });
   });
 
@@ -184,6 +195,24 @@ describe("Codex client-style task process", () => {
     expect(running).toContain("正在运行");
     expect(running).toContain('role="status"');
     expect(running).toContain("查看正在执行的内容");
+
+    const activeReasoning = renderToStaticMarkup(
+      createElement(ExecutionProcess, {
+        active: true,
+        entries: [
+          {
+            id: "reasoning",
+            role: "reasoning",
+            text: "Analyzing invite reuse behavior",
+            createdAt: "2026-07-26T00:00:00.000Z",
+          },
+        ],
+      }),
+    );
+    expect(activeReasoning).toContain("正在执行");
+    expect(activeReasoning).toContain("Codex 正在分析当前任务并规划下一步。");
+    expect(activeReasoning).toContain("查看 Codex 原始摘要");
+    expect(activeReasoning).not.toContain("全部步骤已完成");
   });
 
   it("formats a compact live elapsed-time label", () => {

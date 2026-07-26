@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { parseReadableBlocks, presentExecutionEntry } from "./readable-output.js";
+import {
+  parseReadableBlocks,
+  presentExecutionEntries,
+  presentExecutionEntry,
+} from "./readable-output.js";
 
 describe("parseReadableBlocks", () => {
   it("turns common Markdown into readable blocks", () => {
@@ -35,6 +39,42 @@ describe("parseReadableBlocks", () => {
 });
 
 describe("presentExecutionEntry", () => {
+  it("keeps English reasoning as an expandable source behind a Chinese summary", () => {
+    expect(
+      presentExecutionEntry({
+        id: "reasoning-1",
+        role: "reasoning",
+        text: "Planning session cleanup by name prefix",
+        createdAt: null,
+      }),
+    ).toMatchObject({
+      status: "completed",
+      input: "Codex 已完成本阶段的分析与计划。",
+      sourceText: "Planning session cleanup by name prefix",
+    });
+  });
+
+  it("marks the latest reasoning step as active while Codex is running", () => {
+    expect(
+      presentExecutionEntries(
+        [
+          {
+            id: "reasoning-2",
+            role: "reasoning",
+            text: "Analyzing invite reuse behavior",
+            createdAt: null,
+          },
+        ],
+        true,
+      )[0],
+    ).toMatchObject({
+      status: "running",
+      summary: "Codex 正在处理",
+      input: "Codex 正在分析当前任务并规划下一步。",
+      sourceText: "Analyzing invite reuse behavior",
+    });
+  });
+
   it("presents an in-progress command separately from its future output", () => {
     expect(
       presentExecutionEntry({

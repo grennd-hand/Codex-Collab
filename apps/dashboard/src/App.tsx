@@ -104,6 +104,7 @@ import {
 } from "./imported-timeline.js";
 import {
   parseReadableBlocks,
+  presentExecutionEntries,
   presentExecutionEntry,
   type ExecutionStatus,
   type ReadableExecution,
@@ -606,6 +607,7 @@ export interface ExecutionProcessPresentation {
 
 export function executionProcessPresentation(
   records: readonly Pick<ReadableExecution, "status" | "title">[],
+  active = false,
 ): ExecutionProcessPresentation {
   const running = records.filter((record) => record.status === "running");
   const failed = records.filter((record) => record.status === "failed");
@@ -615,9 +617,21 @@ export function executionProcessPresentation(
   if (running.length > 0) {
     return {
       status: "running",
-      title: "正在运行",
+      title: "正在执行",
       detail: latestRunning?.title ?? "正在等待当前步骤",
       progress: `${completedCount} / ${records.length} 已完成`,
+      defaultExpanded: true,
+    };
+  }
+  if (active) {
+    return {
+      status: "running",
+      title: "正在执行",
+      detail: "Codex 正在继续处理",
+      progress:
+        records.length > 0
+          ? `已同步 ${records.length} 个步骤，等待下一步`
+          : "正在等待首个执行步骤",
       defaultExpanded: true,
     };
   }
@@ -727,6 +741,20 @@ function ExecutionStepCard({
         {record.role === "reasoning" && record.input ? (
           <ReadableOutput text={record.input} />
         ) : null}
+        {record.role === "reasoning" && record.sourceText ? (
+          <details className="execution-details reasoning-source">
+            <summary>
+              <span>查看 Codex 原始摘要</span>
+              <small>内容可能为英文</small>
+            </summary>
+            <div className="execution-detail-body">
+              <div className="execution-output visible">
+                <span>原始摘要</span>
+                <pre>{record.sourceText}</pre>
+              </div>
+            </div>
+          </details>
+        ) : null}
         {record.role === "command" && (record.input || record.output) ? (
           <details
             className="execution-details"
@@ -770,9 +798,15 @@ function ExecutionStepCard({
   );
 }
 
-export function ExecutionProcess({ entries }: { entries: CodexRecordEntry[] }) {
-  const records = entries.map(presentExecutionEntry);
-  const presentation = executionProcessPresentation(records);
+export function ExecutionProcess({
+  entries,
+  active = false,
+}: {
+  entries: CodexRecordEntry[];
+  active?: boolean;
+}) {
+  const records = presentExecutionEntries(entries, active);
+  const presentation = executionProcessPresentation(records, active);
   const [expanded, setExpanded] = useState(presentation.defaultExpanded);
   const contentId = useId();
   const runningStartedAt =
@@ -2319,11 +2353,9 @@ export function App() {
   ).length;
   const latestCodexTimelineItem = codexTimeline.at(-1);
   const hasRunningExecutionEntry =
+    executionPhase === "running" &&
     latestCodexTimelineItem?.kind === "imported" &&
-    latestCodexTimelineItem.item.kind === "execution" &&
-    latestCodexTimelineItem.item.entries.some(
-      (entry) => presentExecutionEntry(entry).status === "running",
-    );
+    latestCodexTimelineItem.item.kind === "execution";
   const canStopCodex = canMemberStopCodex(member, executionPhase);
   const primaryComposerAction = composerPrimaryAction(executionPhase, "codex");
   const primaryStopsCodex = primaryComposerAction === "stop_codex";
@@ -2813,7 +2845,7 @@ export function App() {
                 </div>
               ) : (
                 <>
-                  {codexTimeline.map((timelineItem) => {
+                  {codexTimeline.map((timelineItem, timelineIndex) => {
                     if (timelineItem.kind === "shared") {
                       const item = timelineItem.message;
                       const mine = item.senderMemberId === member?.id;
@@ -2917,7 +2949,16 @@ export function App() {
                       );
                     }
 
-                    return <ExecutionProcess entries={item.entries} key={item.id} />;
+                    return (
+                      <ExecutionProcess
+                        active={
+                          executionPhase === "running" &&
+                          timelineIndex === codexTimeline.length - 1
+                        }
+                        entries={item.entries}
+                        key={item.id}
+                      />
+                    );
                   })}
                 </>
               )}

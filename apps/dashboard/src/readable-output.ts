@@ -18,8 +18,13 @@ export interface ReadableExecution {
   summary: string;
   input: string | null;
   output: string | null;
+  sourceText: string | null;
   outputLineCount: number;
   createdAt: string | null;
+}
+
+export interface PresentExecutionEntryOptions {
+  active?: boolean;
 }
 
 function isBlockStart(line: string): boolean {
@@ -447,16 +452,38 @@ function parseLegacyCommand(text: string): {
   };
 }
 
-export function presentExecutionEntry(entry: CodexRecordEntry): ReadableExecution {
+function reasoningDisplayText(text: string, active: boolean): {
+  displayText: string;
+  sourceText: string | null;
+} {
+  const normalized = text.trim();
+  if (/\p{Script=Han}/u.test(normalized)) {
+    return { displayText: normalized, sourceText: null };
+  }
+  return {
+    displayText: active
+      ? "Codex 正在分析当前任务并规划下一步。"
+      : "Codex 已完成本阶段的分析与计划。",
+    sourceText: normalized || null,
+  };
+}
+
+export function presentExecutionEntry(
+  entry: CodexRecordEntry,
+  options: PresentExecutionEntryOptions = {},
+): ReadableExecution {
   if (entry.role === "reasoning") {
+    const active = options.active === true;
+    const reasoning = reasoningDisplayText(entry.text, active);
     return {
       id: entry.id,
       role: "reasoning",
       title: "分析与计划",
-      status: "completed",
-      summary: "Codex 的当前处理思路",
-      input: entry.text,
+      status: active ? "running" : "completed",
+      summary: active ? "Codex 正在处理" : "Codex 的当前处理思路",
+      input: reasoning.displayText,
       output: null,
+      sourceText: reasoning.sourceText,
       outputLineCount: 0,
       createdAt: entry.createdAt,
     };
@@ -473,7 +500,24 @@ export function presentExecutionEntry(entry: CodexRecordEntry): ReadableExecutio
     summary: executionSummary(parsed.status, parsed.output),
     input: displayInput,
     output: displayOutput,
+    sourceText: null,
     outputLineCount: displayOutput ? displayOutput.split("\n").length : 0,
     createdAt: entry.createdAt,
   };
+}
+
+export function presentExecutionEntries(
+  entries: readonly CodexRecordEntry[],
+  active = false,
+): ReadableExecution[] {
+  const records = entries.map((entry) => presentExecutionEntry(entry));
+  if (!active || records.some((record) => record.status === "running")) {
+    return records;
+  }
+
+  const latestIndex = entries.length - 1;
+  if (latestIndex >= 0 && entries[latestIndex]?.role === "reasoning") {
+    records[latestIndex] = presentExecutionEntry(entries[latestIndex]!, { active: true });
+  }
+  return records;
 }

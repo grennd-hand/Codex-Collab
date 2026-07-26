@@ -7,7 +7,10 @@ import { RelayClient, RelayRequestError } from "./relay-client.js";
 import { WorkspaceSyncService } from "./workspace-sync-service.js";
 
 const fallbackIntervalMs = 1_000;
-const realtimeSafetyIntervalMs = 5_000;
+// Relay realtime events cover shared commands, but a turn started directly in
+// Codex Desktop has no relay event. Poll the selected local task every second so
+// short Desktop turns still publish a visible running state.
+const realtimeSafetyIntervalMs = 1_000;
 const lockPath = join(dirname(localProfilePath()), "sync-worker.json");
 
 function processIsRunning(pid: number): boolean {
