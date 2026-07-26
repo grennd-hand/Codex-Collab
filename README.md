@@ -13,7 +13,10 @@ The first working slice includes:
 - a Codex plugin exposed through MCP tools;
 - one-time web-to-local host pairing and existing Codex task selection;
 - importing visible Codex conversation records into the room;
-- approved-member read-only browsing of a filtered project-file snapshot;
+- a full-screen Monaco workspace with searchable file tree, tabs, dirty state, `Ctrl+S` and
+  explicit diff-based conflict resolution;
+- approved-member browsing of safe text files, with project writes disabled by default and enabled
+  only through an owner-controlled per-member grant;
 - forwarding approved members' queued prompts into the selected live Codex Desktop conversation
   through the same-user local IPC router without opening, focusing or switching the window;
 - remote composer support for file/image attachments, model/reasoning/speed, plan mode and stop;
@@ -76,11 +79,13 @@ attachments until the owner reopens it.
    URL, and the explicitly approved absolute project root.
 4. Return to **Codex 与文件** and select one of the Codex tasks discovered under that root.
 5. The local background sync worker imports visible user/assistant messages, app-server reasoning
-   summaries, command output and a view-only text snapshot. Relay WebSocket events wake it
+   summaries, command output and a filtered text-file catalog. Relay WebSocket events wake it
    immediately for new web prompts, which it forwards through Codex Desktop's same-user local IPC
    router so the currently open task receives the native message and continues in place. It
    republishes when the selected task changes and never opens or focuses the Desktop window.
-6. Approved members can inspect the selected task record and shared files; pending members cannot.
+6. Approved members can open shared files in the Monaco workspace. Members are read-only by
+   default; after an owner grants project write access, saves are queued to the current Host with an
+   expected SHA-256 and stale versions open an explicit diff instead of being overwritten.
 
 To share non-credential Codex configuration, pass `codexConfigRoot` as a second explicit absolute
 root when calling `collab_pair_host` or `collab_refresh_workspace`. It includes text configuration,
@@ -91,7 +96,7 @@ immediate snapshot; selected-task record changes otherwise sync automatically.
 
 The project root may contain a `.codex-collabignore` file with one relative path prefix per line.
 Blank lines and `#` comments are ignored. Use it to keep generated bundles, host-only diagnostics
-and other rebuildable files out of the read-only collaboration snapshot; exclusions never grant
+and other rebuildable files out of the collaboration workspace; exclusions never grant
 access outside the approved root. Host-local `.runtime-data` is always excluded.
 
 If the browser blocks automatic clipboard access, the dashboard falls back to synchronous copy.
@@ -145,6 +150,17 @@ sharing Codex configuration requires the owner to explicitly bind that directory
 Web prompts from approved members are consumed automatically by the local owner host. Only the
 owner can change the access mode, and peer prompts preserve the selected task's existing approval
 policy.
+
+Project file operations are durable Relay jobs, but only the currently paired Host can claim them.
+Claims expire, permissions are checked again immediately before disk access, and operation contents
+and audit rows have bounded retention. `.codex` files use their separately approved root and remain
+read-only even when a member has project write access. Phase-one direct writes require a Windows
+Host so the plugin can use the operating system's replace-with-backup primitive; unsupported Host
+platforms fail closed instead of falling back to a racy rename.
+
+The first IDE phase edits existing safe UTF-8 text files. File creation controls, rename/delete,
+terminal/debugger integration, extensions and multi-writer Git worktree merge queues remain later
+phases.
 
 ## Server deployment
 

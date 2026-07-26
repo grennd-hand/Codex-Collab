@@ -16,9 +16,9 @@ invited device ──HTTPS/WebSocket── relay ──HTTPS/WebSocket── own
 
 The public relay authenticates members and distributes messages. It never receives SSH access,
 Codex account credentials, raw hidden reasoning, private keys or authentication files. After
-explicit owner selection, it stores a bounded read-only snapshot of visible Codex messages,
-app-server reasoning summaries, command output and filtered text files so approved members can
-view them.
+explicit owner selection, it stores a bounded snapshot of visible Codex messages, app-server
+reasoning summaries, command output and a filtered text-file catalog. IDE reads and writes travel
+as bounded, expiring operations; the relay never mounts or directly accesses the owner's root.
 
 The owner host is the only component allowed to touch local files or submit a turn to Codex. It
 accepts only messages whose identity and approval state were verified by the relay.
@@ -90,15 +90,27 @@ The plugin resolves the owner-selected root with `realpath`. Reads and writes re
 and symlink escape. Writes are atomic and require the caller's expected SHA-256; a mismatched hash
 produces a conflict instead of overwriting someone else's newer work.
 
-The web file browser is deliberately narrower than the MCP file sandbox. It receives a bounded,
-read-only snapshot of allow-listed project text formats. An optional `codexConfigRoot` is resolved
-as a second explicit sandbox and contributes `.codex/`-prefixed non-credential configuration files.
-Both roots exclude environment files, credential filenames, authentication/session databases,
-private-key material, high-confidence embedded tokens and symlinks. Switching the selected Codex
-task clears the previous history and file snapshot before the new import.
+The web IDE is deliberately narrower than the MCP file sandbox. It receives a bounded catalog of
+allow-listed project text formats, then queues individual reads and authorized writes for the
+currently paired Host. Members start read-only; only the owner can grant project write access.
+Claims use a Host generation, a short lease and a second permission check immediately before disk
+access. An optional `codexConfigRoot` is resolved as a second explicit sandbox and contributes
+`.codex/`-prefixed non-credential configuration files, but that root is always read-only.
 
-For two active Codex writers, each writer gets a separate Git worktree. The relay coordinates
-messages and intent; Git remains the merge and audit mechanism.
+Both roots exclude environment files, credential filenames, authentication/session databases,
+private-key material, high-confidence embedded tokens and symlinks. The same path, ignore and
+secret-content policy runs at the Relay boundary and again on the Host. Switching the selected
+Codex task clears the previous history and file catalog before the new import.
+
+On Windows, an existing-file save uses the operating system's replace-with-backup primitive. The
+Host atomically captures the version present at replacement time, verifies its SHA-256, rolls back
+on mismatch and keeps a bounded local recovery journal. New files use no-clobber publication.
+Unsupported Host platforms fail writes closed rather than falling back to a check-then-rename
+sequence.
+
+The current IDE phase does not yet permit two Codex writers to share one checkout. The planned
+multi-writer phase assigns each writer a separate Git worktree; the relay coordinates messages and
+intent while Git remains the merge and audit mechanism.
 
 ## Next milestones
 
