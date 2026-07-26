@@ -27,6 +27,15 @@ export type UnifiedTimelineItem =
       message: Message;
     };
 
+export type ThreadAttributedMessage = Message & {
+  workspaceThreadId?: string | null;
+};
+
+export interface ThreadMessageSelection {
+  currentThreadMessages: ThreadAttributedMessage[];
+  unassignedMessages: ThreadAttributedMessage[];
+}
+
 interface CollabCommandEnvelope {
   commandId: string | null;
   member: string;
@@ -45,8 +54,31 @@ export function splitConversationMessages(messages: readonly Message[]): {
   return { chatMessages, codexMessages };
 }
 
+export function selectCodexMessagesForThread(
+  messages: readonly ThreadAttributedMessage[],
+  selectedThreadId: string | null | undefined,
+): ThreadMessageSelection {
+  const currentThreadMessages: ThreadAttributedMessage[] = [];
+  const unassignedMessages: ThreadAttributedMessage[] = [];
+
+  for (const message of messages) {
+    if (message.kind === "chat") continue;
+    const workspaceThreadId = message.workspaceThreadId?.trim() || null;
+    if (!workspaceThreadId) {
+      unassignedMessages.push(message);
+      continue;
+    }
+    if (selectedThreadId && workspaceThreadId === selectedThreadId) {
+      currentThreadMessages.push(message);
+    }
+  }
+
+  return { currentThreadMessages, unassignedMessages };
+}
+
 export function sanitizeImportedUserText(text: string): string {
-  return sanitizeCodexUserMessageText(text);
+  const envelope = parseCollabCommandEnvelope(text);
+  return sanitizeCodexUserMessageText(envelope?.body ?? text);
 }
 
 export function sanitizeImportedAssistantText(text: string): string {
@@ -119,7 +151,7 @@ export function buildImportedTimeline(history: CodexRecordEntry[]): ImportedTime
 
 export function buildUnifiedTimeline(
   history: CodexRecordEntry[],
-  messages: Message[],
+  messages: readonly Message[],
 ): UnifiedTimelineItem[] {
   const commandMessages = messages.filter(
     (message) => message.kind === "codex_prompt",
@@ -165,9 +197,15 @@ export function buildUnifiedTimeline(
 
   const candidates: Array<{
     item: UnifiedTimelineItem;
-    timestamp: number;
+    timestamp: number | null;
+    sourcePriority: number;
     order: number;
   }> = [];
+  const parseTimestamp = (value: string | null | undefined): number | null => {
+    if (!value) return null;
+    const timestamp = Date.parse(value);
+    return Number.isFinite(timestamp) ? timestamp : null;
+  };
   let order = 0;
   for (const item of buildImportedTimeline(filteredHistory)) {
     const createdAt =
@@ -176,23 +214,34 @@ export function buildUnifiedTimeline(
         : item.entries.find((entry) => entry.createdAt)?.createdAt ?? null;
     candidates.push({
       item: { kind: "imported", item },
-      timestamp: createdAt ? Date.parse(createdAt) : 0,
+      timestamp: parseTimestamp(createdAt),
+      sourcePriority: 1,
       order: order++,
     });
   }
   for (const message of messages) {
     candidates.push({
       item: { kind: "shared", message },
-      timestamp: Date.parse(message.createdAt),
+      timestamp: parseTimestamp(message.createdAt),
+      sourcePriority: 0,
       order: order++,
     });
   }
 
   return candidates
-    .sort(
-      (left, right) =>
-        left.timestamp - right.timestamp || left.order - right.order,
-    )
+    .sort((left, right) => {
+      if (left.timestamp !== null && right.timestamp !== null) {
+        const timestampDifference = left.timestamp - right.timestamp;
+        if (timestampDifference !== 0) return timestampDifference;
+      } else if (left.timestamp !== null) {
+        return -1;
+      } else if (right.timestamp !== null) {
+        return 1;
+      }
+      return (
+        left.sourcePriority - right.sourcePriority || left.order - right.order
+      );
+    })
     .map((candidate) => candidate.item);
 }
 

@@ -6,7 +6,9 @@ import {
   executionDetailLabel,
   sanitizeImportedAssistantText,
   sanitizeImportedUserText,
+  selectCodexMessagesForThread,
   splitConversationMessages,
+  type ThreadAttributedMessage,
 } from "./imported-timeline.js";
 
 function record(
@@ -117,6 +119,17 @@ describe("buildImportedTimeline", () => {
 });
 
 describe("sanitizeImportedUserText", () => {
+  it("shows only the prompt body from an imported Collab command envelope", () => {
+    const wrapped = [
+      "[Codex Collab command: legacy-prompt]",
+      "[Codex Collab member: 小米]",
+      "",
+      "你是什么模型",
+    ].join("\n");
+
+    expect(sanitizeImportedUserText(wrapped)).toBe("你是什么模型");
+  });
+
   it("keeps only the request body from a single-attachment Desktop wrapper", () => {
     const wrapped = [
       "# Files mentioned by the user:",
@@ -363,6 +376,97 @@ describe("buildUnifiedTimeline", () => {
     expect(buildUnifiedTimeline([entry], [command])).toContainEqual({
       kind: "imported",
       item: { kind: "message", entry },
+    });
+  });
+
+  it("places undated imported history after dated current-task messages", () => {
+    const command = message(
+      "prompt-current",
+      "codex_prompt",
+      "第一条房间指令",
+      "2026-07-25T00:00:00.000Z",
+    );
+    const firstImported = record("native-user", "user", "较早的本机问题");
+    const secondImported = record("native-assistant", "assistant", "较早的本机回答");
+
+    expect(buildUnifiedTimeline([firstImported, secondImported], [command])).toEqual([
+      { kind: "shared", message: command },
+      { kind: "imported", item: { kind: "message", entry: firstImported } },
+      { kind: "imported", item: { kind: "message", entry: secondImported } },
+    ]);
+  });
+
+  it("uses a deterministic source order for equal or invalid timestamps", () => {
+    const command = message(
+      "prompt-current",
+      "codex_prompt",
+      "当前任务指令",
+      "2026-07-25T00:00:00.000Z",
+    );
+    const imported = {
+      ...record("native-assistant", "assistant", "当前任务回答"),
+      createdAt: command.createdAt,
+    };
+
+    expect(buildUnifiedTimeline([imported], [command])).toEqual([
+      { kind: "shared", message: command },
+      { kind: "imported", item: { kind: "message", entry: imported } },
+    ]);
+
+    const invalidCommand = { ...command, createdAt: "not-a-date" };
+    expect(buildUnifiedTimeline([record("native-user", "user")], [invalidCommand])).toEqual([
+      { kind: "shared", message: invalidCommand },
+      {
+        kind: "imported",
+        item: { kind: "message", entry: record("native-user", "user") },
+      },
+    ]);
+  });
+});
+
+describe("selectCodexMessagesForThread", () => {
+  it("keeps only messages attributed to the selected Codex task", () => {
+    const selected = {
+      ...message("selected", "codex_prompt", "selected", "2026-07-25T00:00:00Z"),
+      workspaceThreadId: "thread-selected",
+    } satisfies ThreadAttributedMessage;
+    const other = {
+      ...message("other", "codex_prompt", "other", "2026-07-25T00:00:01Z"),
+      workspaceThreadId: "thread-other",
+    } satisfies ThreadAttributedMessage;
+    const legacyNull = {
+      ...message("legacy-null", "codex_prompt", "legacy", "2026-07-25T00:00:02Z"),
+      workspaceThreadId: null,
+    } satisfies ThreadAttributedMessage;
+    const legacyMissing = message(
+      "legacy-missing",
+      "codex_stop",
+      "stop",
+      "2026-07-25T00:00:03Z",
+    );
+
+    expect(
+      selectCodexMessagesForThread(
+        [selected, other, legacyNull, legacyMissing],
+        "thread-selected",
+      ),
+    ).toEqual({
+      currentThreadMessages: [selected],
+      unassignedMessages: [legacyNull, legacyMissing],
+    });
+  });
+
+  it("does not treat legacy unassigned commands as current without a selection", () => {
+    const legacy = message(
+      "legacy",
+      "codex_prompt",
+      "legacy",
+      "2026-07-25T00:00:00Z",
+    );
+
+    expect(selectCodexMessagesForThread([legacy], null)).toEqual({
+      currentThreadMessages: [],
+      unassignedMessages: [legacy],
     });
   });
 });

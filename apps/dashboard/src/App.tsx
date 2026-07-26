@@ -104,6 +104,7 @@ import {
 import { copyText } from "./clipboard.js";
 import {
   buildUnifiedTimeline,
+  selectCodexMessagesForThread,
   splitConversationMessages,
 } from "./imported-timeline.js";
 import {
@@ -894,10 +895,12 @@ export function ExecutionProcess({
   entries,
   active = false,
   completedAt = null,
+  sourceLabel = null,
 }: {
   entries: CodexRecordEntry[];
   active?: boolean;
   completedAt?: string | null;
+  sourceLabel?: string | null;
 }) {
   const finalized = Boolean(completedAt);
   const records = presentExecutionEntries(entries, active && !finalized, finalized);
@@ -927,7 +930,9 @@ export function ExecutionProcess({
   return (
     <section
       className={`execution-process ${presentation.status} ${expanded ? "expanded" : "collapsed"}`}
-      aria-label={presentation.status === "completed" ? "处理概要" : "任务过程"}
+      aria-label={`${sourceLabel ? `${sourceLabel}，` : ""}${
+        presentation.status === "completed" ? "处理概要" : "任务过程"
+      }`}
     >
       <span className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">
         {presentation.title}：{completedDuration ? `耗时 ${completedDuration}，` : ""}
@@ -947,7 +952,9 @@ export function ExecutionProcess({
             <ExecutionStatusIcon status={presentation.status} fallback="reasoning" />
           </span>
           <span className="execution-process-title">
-            <strong>{presentation.title}</strong>
+            <strong>
+              {sourceLabel ? `${sourceLabel}：${presentation.title}` : presentation.title}
+            </strong>
             {presentation.status !== "completed" || expanded ? (
               <span>{presentation.detail}</span>
             ) : null}
@@ -2449,8 +2456,17 @@ export function App() {
   const status = connectionPresentation(connection, Boolean(session));
   const importedHistory = workspaceSummary?.history ?? [];
   const { chatMessages, codexMessages } = splitConversationMessages(messages);
-  const codexTimeline = buildUnifiedTimeline(importedHistory, codexMessages);
-  const hasCodexContent = importedHistory.length > 0 || codexMessages.length > 0;
+  const { currentThreadMessages, unassignedMessages } =
+    selectCodexMessagesForThread(
+      codexMessages,
+      workspaceSummary?.selectedThreadId,
+    );
+  const codexTimeline = buildUnifiedTimeline(importedHistory, currentThreadMessages);
+  const hasCodexContent =
+    importedHistory.length > 0 || currentThreadMessages.length > 0;
+  const hiddenUnassignedMessageCount = workspaceSummary?.selectedThreadId
+    ? unassignedMessages.length
+    : 0;
   const pendingMemberCount = members.filter((item) => item.status === "pending").length;
   const memberIdentities = useMemo(() => buildMemberIdentityMap(members), [members]);
   const identityForMember = (memberId: string) =>
@@ -2458,7 +2474,7 @@ export function App() {
   const codexConfigFileCount =
     workspaceSummary?.files.filter((file) => file.path.startsWith(".codex/")).length ?? 0;
   const executionPhase = codexExecutionPhase(
-    messages,
+    currentThreadMessages,
     workspaceSummary?.codexRuntimeStatus,
   );
   const executionEntryCount = importedHistory.filter(
@@ -2940,25 +2956,38 @@ export function App() {
                     size="medium"
                   />
                 </div>
-              ) : !hasCodexContent ? (
-                <div className="message-empty">
-                  {member?.status === "pending" ? (
-                    <>
-                      <LockClosedRegular />
-                      <h3>等待主人批准</h3>
-                      <p>批准后，Codex 对话与执行记录会在这里实时同步。</p>
-                    </>
-                  ) : (
-                    <>
-                      <ChatMultipleRegular />
-                      <h3>Codex 对话从这里开始</h3>
-                      <p>成员聊天已独立放在左侧，这里只显示 Codex 任务。</p>
-                    </>
-                  )}
-                </div>
               ) : (
                 <>
-                  {codexTimeline.map((timelineItem, timelineIndex) => {
+                  {hiddenUnassignedMessageCount > 0 ? (
+                    <div className="timeline-provenance-notice" role="note">
+                      <HistoryRegular aria-hidden="true" />
+                      <div>
+                        <strong>
+                          已隐藏 {hiddenUnassignedMessageCount} 条未归属旧指令
+                        </strong>
+                        <span>
+                          这些消息没有 Codex 任务标识，不会作为当前任务消息显示。
+                        </span>
+                      </div>
+                    </div>
+                  ) : null}
+                  {!hasCodexContent ? (
+                    <div className="message-empty">
+                      {member?.status === "pending" ? (
+                        <>
+                          <LockClosedRegular />
+                          <h3>等待主人批准</h3>
+                          <p>批准后，Codex 对话与执行记录会在这里实时同步。</p>
+                        </>
+                      ) : (
+                        <>
+                          <ChatMultipleRegular />
+                          <h3>Codex 对话从这里开始</h3>
+                          <p>成员聊天已独立放在左侧，这里只显示当前 Codex 任务。</p>
+                        </>
+                      )}
+                    </div>
+                  ) : codexTimeline.map((timelineItem, timelineIndex) => {
                     if (timelineItem.kind === "shared") {
                       const item = timelineItem.message;
                       const mine = item.senderMemberId === member?.id;
@@ -3021,25 +3050,22 @@ export function App() {
                     const item = timelineItem.item;
                     if (item.kind === "message") {
                       const entry = item.entry;
-                      const importedMine =
-                        entry.role === "user" &&
-                        session?.ownerMemberId === member?.id;
-                      const importedIdentity =
-                        entry.role === "user" && session
-                          ? identityForMember(session.ownerMemberId)
-                          : null;
                       return (
                         <article
-                          className={`message imported-message ${entry.role} ${
-                            importedMine ? "mine" : ""
-                          } ${
-                            importedIdentity ? "identity-message" : ""
+                          aria-label={`导入自 Codex 任务，${
+                            entry.role === "user" ? "历史用户输入" : "Codex 回复"
                           }`}
-                          style={importedIdentity?.style}
+                          className={`message imported-message ${entry.role}`}
                           key={`codex-${entry.id}`}
                         >
                           <div className="message-meta">
-                            <span>{recordRoleLabel(entry.role)}</span>
+                            <span className="imported-history-source">
+                              <HistoryRegular aria-hidden="true" />
+                              导入自 Codex 任务
+                            </span>
+                            <span>
+                              {entry.role === "user" ? "历史用户输入" : "Codex 回复"}
+                            </span>
                             {entry.createdAt ? (
                               <time dateTime={entry.createdAt}>
                                 {timeLabel(entry.createdAt)}
@@ -3071,6 +3097,7 @@ export function App() {
                         entries={item.entries}
                         completedAt={item.completedAt ?? null}
                         key={item.id}
+                        sourceLabel="导入自 Codex 任务"
                       />
                     );
                   })}

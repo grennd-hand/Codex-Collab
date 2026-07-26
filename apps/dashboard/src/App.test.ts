@@ -183,6 +183,22 @@ describe("Codex client-style task process", () => {
   });
 
   it("renders an accessible collapse control with client-style defaults", () => {
+    const imported = renderToStaticMarkup(
+      createElement(ExecutionProcess, {
+        sourceLabel: "导入自 Codex 任务",
+        entries: [
+          {
+            id: "imported",
+            role: "reasoning",
+            text: "Imported reasoning",
+            createdAt: null,
+          },
+        ],
+      }),
+    );
+    expect(imported).toContain('aria-label="导入自 Codex 任务，处理概要"');
+    expect(imported).toContain("导入自 Codex 任务：已处理");
+
     const completed = renderToStaticMarkup(
       createElement(ExecutionProcess, {
         completedAt: "2026-07-26T00:03:46.000Z",
