@@ -170,6 +170,25 @@ describe("presentExecutionEntry", () => {
     });
   });
 
+  it("names a safe apply_patch summary after the edited file", () => {
+    const presented = presentExecutionEntry({
+      id: "patch-1",
+      role: "command",
+      text: [
+        "tool: apply_patch",
+        "status: completed",
+        "input:",
+        "修改 E:\\Project\\App.tsx（+3 -1）",
+      ].join("\n"),
+      createdAt: null,
+    });
+
+    expect(presented).toMatchObject({
+      title: "编辑 App.tsx",
+      input: "修改 E:\\Project\\App.tsx（+3 -1）",
+    });
+  });
+
   it("turns an orchestrated file read into a compact client-style step", () => {
     const presented = presentExecutionEntry({
       id: "call-3",

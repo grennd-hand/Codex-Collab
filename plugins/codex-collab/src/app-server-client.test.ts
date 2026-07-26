@@ -453,6 +453,41 @@ describe("Codex record import", () => {
     expect(records[0]?.text).toContain("building...");
   });
 
+  it("imports app-server file changes without exposing patch contents", () => {
+    const records = extractCodexRecordEntries([
+      {
+        id: "turn-file-change",
+        status: "completed",
+        items: [
+          { type: "reasoning", id: "reasoning-before", summary: ["Preparing the edit"] },
+          {
+            type: "fileChange",
+            id: "file-change-1",
+            status: "completed",
+            changes: [
+              {
+                path: "E:\\Project\\config.ts",
+                kind: { type: "update", move_path: null },
+                diff: "-PASSWORD=old-secret-value\n+PASSWORD=new-secret-value",
+              },
+            ],
+          },
+          { type: "reasoning", id: "reasoning-after", summary: ["Checking the edit"] },
+        ],
+      },
+    ]);
+
+    expect(records.map((record) => record.role)).toEqual([
+      "reasoning",
+      "command",
+      "reasoning",
+    ]);
+    expect(records[1]?.text).toContain("tool: apply_patch");
+    expect(records[1]?.text).toContain("修改 E:\\Project\\config.ts（+1 -1）");
+    expect(records[1]?.text).not.toContain("old-secret-value");
+    expect(records[1]?.text).not.toContain("new-secret-value");
+  });
+
   it("recovers selected-task command output from its rollout without raw reasoning", () => {
     const lines = [
       JSON.stringify({
@@ -543,6 +578,77 @@ describe("Codex record import", () => {
     ]);
   });
 
+  it("hides unfinished apply_patch contents while keeping the edited filename", () => {
+    const records = extractCodexRolloutEntries(
+      [
+        JSON.stringify({
+          timestamp: "2026-07-25T00:00:02.000Z",
+          type: "response_item",
+          payload: {
+            type: "custom_tool_call",
+            call_id: "patch-running",
+            name: "apply_patch",
+            input: "*** Begin Patch\n*** Update File: E:\\Project\\config.ts\n+PASSWORD=unredacted-secret-value",
+          },
+        }),
+      ],
+      "thread-1",
+    );
+
+    expect(records[0]?.text).toContain("修改 E:\\Project\\config.ts");
+    expect(records[0]?.text).not.toContain("unredacted-secret-value");
+  });
+
+  it("uses a safe patch summary without duplicating the apply_patch call", () => {
+    const records = extractCodexRolloutEntries(
+      [
+        JSON.stringify({
+          timestamp: "2026-07-25T00:00:02.000Z",
+          type: "response_item",
+          payload: {
+            type: "custom_tool_call",
+            call_id: "patch-call-1",
+            name: "apply_patch",
+            input: "*** Begin Patch\n-PASSWORD=old-secret-value\n+PASSWORD=new-secret-value",
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-07-25T00:00:03.000Z",
+          type: "event_msg",
+          payload: {
+            type: "patch_apply_end",
+            call_id: "patch-call-1",
+            success: true,
+            status: "completed",
+            changes: {
+              "E:\\Project\\config.ts": {
+                type: "update",
+                unified_diff: "-PASSWORD=old-secret-value\n+PASSWORD=new-secret-value",
+              },
+            },
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-07-25T00:00:04.000Z",
+          type: "response_item",
+          payload: {
+            type: "custom_tool_call_output",
+            call_id: "patch-call-1",
+            output: "Done!",
+          },
+        }),
+      ],
+      "thread-1",
+    );
+
+    expect(records).toHaveLength(1);
+    expect(records[0]?.role).toBe("command");
+    expect(records[0]?.text).toContain("修改 E:\\Project\\config.ts（+1 -1）");
+    expect(records[0]?.text).toContain("Done!");
+    expect(records[0]?.text).not.toContain("old-secret-value");
+    expect(records[0]?.text).not.toContain("new-secret-value");
+  });
+
   it("detects changes to the selected task rollout", async () => {
     const directory = await mkdtemp(join(tmpdir(), "codex-collab-revision-"));
     const path = join(directory, "rollout-thread-1.jsonl");
@@ -618,6 +724,60 @@ describe("Codex record import", () => {
         "thread/turns/list",
       ]);
     } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves recent commands from the tail of an oversized rollout", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codex-collab-large-history-"));
+    const path = join(directory, "rollout-thread-1.jsonl");
+    const client = new CodexAppServerClient();
+    const request = vi.fn(async (method: string) => {
+      throw new Error(`App-server fallback should not run: ${method}`);
+    });
+    Object.defineProperty(client, "start", { value: async () => undefined });
+    Object.defineProperty(client, "request", { value: request });
+
+    try {
+      await writeFile(path, "{}\n", "utf8");
+      await truncate(path, 20_000_001);
+      await appendFile(
+        path,
+        [
+          "",
+          JSON.stringify({
+            timestamp: "2026-07-25T00:00:02.000Z",
+            type: "response_item",
+            payload: {
+              type: "function_call",
+              id: "large-command",
+              call_id: "large-call",
+              name: "exec_command",
+              arguments: JSON.stringify({ cmd: "npm test" }),
+            },
+          }),
+          JSON.stringify({
+            timestamp: "2026-07-25T00:00:03.000Z",
+            type: "response_item",
+            payload: {
+              type: "function_call_output",
+              call_id: "large-call",
+              output: "257 command records preserved",
+            },
+          }),
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+
+      const records = await client.readThreadHistory("thread-1", path);
+      expect(records).toHaveLength(1);
+      expect(records[0]).toMatchObject({ id: "large-command", role: "command" });
+      expect(records[0]?.text).toContain("npm test");
+      expect(records[0]?.text).toContain("257 command records preserved");
+      expect(request).not.toHaveBeenCalled();
+    } finally {
+      await client.close();
       await rm(directory, { recursive: true, force: true });
     }
   });

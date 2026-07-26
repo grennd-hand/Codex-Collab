@@ -23,6 +23,7 @@ export interface LocalProfile {
   lastMessageAt?: string;
   forwardedMessageIds?: string[];
   observedThreadIds?: string[];
+  threadCatalogVersion?: number;
 }
 
 type LocalProfilePatch = Omit<Partial<LocalProfile>, "observedThreadIds"> & {

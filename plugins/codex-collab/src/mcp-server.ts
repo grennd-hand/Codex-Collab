@@ -412,6 +412,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const workspace = await publishCatalog(profile, relay);
         await profiles.update({
           observedThreadIds: workspace.threads.map((thread) => thread.id),
+          threadCatalogVersion: 1,
         });
         return text({
           session: claimed.session,
@@ -530,6 +531,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               threadId: stringArg(args, "threadId")!,
               projectRoot,
               observedThreadIds: undefined,
+              threadCatalogVersion: 1,
             }),
           ),
         );

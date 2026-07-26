@@ -619,12 +619,20 @@ export interface ExecutionProcessPresentation {
 }
 
 export function executionProcessPresentation(
-  records: readonly Pick<ReadableExecution, "status" | "title">[],
+  records: readonly (Pick<ReadableExecution, "status" | "title"> &
+    Partial<Pick<ReadableExecution, "role">>)[],
   active = false,
 ): ExecutionProcessPresentation {
   const running = records.filter((record) => record.status === "running");
   const failed = records.filter((record) => record.status === "failed");
   const completedCount = records.filter((record) => record.status === "completed").length;
+  const commandCount = records.filter((record) => record.role === "command").length;
+  const reasoningCount = records.filter((record) => record.role === "reasoning").length;
+  const hasRoleDetails = commandCount > 0 || reasoningCount > 0;
+  const stepBreakdown =
+    hasRoleDetails
+      ? `${records.length} 个步骤（${commandCount} 个操作，${reasoningCount} 条分析）`
+      : `${records.length} 个步骤`;
   const latestRunning = running.at(-1);
 
   if (running.length > 0) {
@@ -632,7 +640,9 @@ export function executionProcessPresentation(
       status: "running",
       title: "正在执行",
       detail: latestRunning?.title ?? "正在等待当前步骤",
-      progress: `${completedCount} / ${records.length} 已完成`,
+      progress: `${completedCount} / ${records.length} 已完成${
+        hasRoleDetails ? `（${commandCount} 个操作）` : ""
+      }`,
       defaultExpanded: true,
     };
   }
@@ -643,7 +653,7 @@ export function executionProcessPresentation(
       detail: "Codex 正在继续处理",
       progress:
         records.length > 0
-          ? `已同步 ${records.length} 个步骤，等待下一步`
+          ? `已同步 ${stepBreakdown}，等待下一步`
           : "正在等待首个执行步骤",
       defaultExpanded: true,
     };
@@ -653,7 +663,7 @@ export function executionProcessPresentation(
       status: "failed",
       title: "任务过程有错误",
       detail: failed.at(-1)?.title ?? "请查看失败步骤",
-      progress: `${failed.length} 个失败`,
+      progress: hasRoleDetails ? `${failed.length} 个失败；${stepBreakdown}` : `${failed.length} 个失败`,
       defaultExpanded: true,
     };
   }
@@ -662,7 +672,7 @@ export function executionProcessPresentation(
       status: "completed",
       title: "任务过程",
       detail: "全部步骤已完成",
-      progress: `${records.length} 个步骤`,
+      progress: stepBreakdown,
       defaultExpanded: false,
     };
   }
@@ -670,7 +680,7 @@ export function executionProcessPresentation(
     status: "unknown",
     title: "任务过程",
     detail: "已记录执行活动",
-    progress: `${records.length} 个步骤`,
+    progress: stepBreakdown,
     defaultExpanded: false,
   };
 }

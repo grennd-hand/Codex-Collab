@@ -190,6 +190,24 @@ export function parseReadableBlocks(text: string): ReadableBlock[] {
 }
 
 function commandTitle(tool: string, input: string | null): string {
+  if (tool === "apply_patch" && input) {
+    const paths = input
+      .split(/\r?\n/)
+      .map((line) => {
+        const withoutCounts = line.replace(/（\+\d+\s+-\d+）$/, "");
+        const summarized = withoutCounts
+          .match(/^(?:新增|删除|修改|移动)\s+(.+)$/)?.[1]
+          ?.split(/\s+→\s+/)[0];
+        const patchMarker = line.match(/^\*\*\*\s+(?:Add|Update|Delete) File:\s+(.+)$/)?.[1];
+        return (summarized ?? patchMarker)?.trim() ?? null;
+      })
+      .filter((path): path is string => Boolean(path));
+    if (paths.length === 1) {
+      const fileName = paths[0]!.split(/[\\/]/).filter(Boolean).at(-1);
+      return fileName ? `编辑 ${fileName}` : "修改文件";
+    }
+    if (paths.length > 1) return `编辑 ${paths.length} 个文件`;
+  }
   const rawCommand = extractCommandTexts(tool, input)[0] ?? "";
   const command = rawCommand.toLowerCase();
   if (/^(?:get-content|type\s|cat\s)/.test(command)) {

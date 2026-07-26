@@ -20,6 +20,7 @@ const profile: LocalProfile = {
   projectRoot: "C:\\project",
   forwardedMessageIds: [],
   observedThreadIds: ["thread-1"],
+  threadCatalogVersion: 1,
 };
 
 const ownerPrompt = {
@@ -660,6 +661,7 @@ describe("workspace live history sync", () => {
       expect(selectThread).not.toHaveBeenCalled();
       expect(update).toHaveBeenCalledWith({
         observedThreadIds: ["thread-2", "thread-1"],
+        threadCatalogVersion: 1,
       });
     } finally {
       await rm(directory, { recursive: true, force: true });
@@ -715,6 +717,101 @@ describe("workspace live history sync", () => {
       });
       expect(publishCatalog).not.toHaveBeenCalled();
       expect(update).not.toHaveBeenCalled();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("migrates an existing profile once to the newest project task", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codex-collab-thread-migration-"));
+    const newestThread = {
+      id: "thread-newest",
+      name: "Newest task",
+      preview: "Current desktop work",
+      updatedAt: 2,
+      path: null,
+    };
+    const oldThread = {
+      id: "thread-old",
+      name: "Previously selected task",
+      preview: "Old work",
+      updatedAt: 1,
+      path: null,
+    };
+    const catalog = [newestThread, oldThread].map(({ path: _path, ...thread }) => thread);
+    const initialWorkspace = {
+      hostConnected: true,
+      hostDeviceLabel: "Owner PC",
+      rootLabel: "Project",
+      threads: catalog,
+      selectedThreadId: oldThread.id,
+      selectedThread: catalog[1]!,
+      history: [],
+      files: [],
+      codexRuntimeStatus: "idle" as const,
+      syncedAt: null,
+    };
+    const selectedWorkspace = {
+      ...initialWorkspace,
+      selectedThreadId: newestThread.id,
+      selectedThread: catalog[0]!,
+    };
+    const history = [
+      {
+        id: "command-newest",
+        role: "command" as const,
+        text: "tool: exec_command\nstatus: completed\ninput:\nnpm test",
+        createdAt: null,
+      },
+    ];
+    vi.spyOn(RelayClient.prototype, "getWorkspace").mockResolvedValue(initialWorkspace);
+    const selectThread = vi
+      .spyOn(RelayClient.prototype, "selectWorkspaceThread")
+      .mockResolvedValue(selectedWorkspace);
+    vi.spyOn(RelayClient.prototype, "listMessages").mockResolvedValue([]);
+    vi.spyOn(RelayClient.prototype, "publishCodexRuntimeStatus").mockResolvedValue(
+      selectedWorkspace,
+    );
+    vi.spyOn(RelayClient.prototype, "publishWorkspaceSnapshot").mockResolvedValue({
+      ...selectedWorkspace,
+      history,
+      syncedAt: "2026-07-27T00:00:00.000Z",
+    });
+    const update = vi.fn().mockResolvedValue(profile);
+    const profiles = {
+      read: vi.fn().mockResolvedValue({
+        ...profile,
+        projectRoot: directory,
+        observedThreadIds: [newestThread.id, oldThread.id],
+        threadCatalogVersion: undefined,
+      }),
+      update,
+    };
+    const codex = {
+      listThreads: vi.fn().mockResolvedValue([newestThread, oldThread]),
+      isThreadBusyForPrompt: vi.fn().mockResolvedValue(false),
+      readThreadHistory: vi.fn().mockResolvedValue(history),
+      getTurnStatus: vi.fn(),
+      submitPeerPrompt: vi.fn(),
+      stopPeerPrompt: vi.fn(),
+    };
+
+    try {
+      const service = new WorkspaceSyncService(profiles as never, codex as never);
+      await expect(service.sync()).resolves.toMatchObject({
+        selectedThreadId: newestThread.id,
+        historyCount: 1,
+      });
+      expect(selectThread).toHaveBeenCalledWith(
+        "session-1",
+        "member-token",
+        newestThread.id,
+      );
+      expect(update).toHaveBeenCalledWith({
+        observedThreadIds: [newestThread.id, oldThread.id],
+        threadCatalogVersion: 1,
+      });
+      expect(update).toHaveBeenCalledWith({ threadId: newestThread.id });
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -852,6 +949,7 @@ describe("workspace live history sync", () => {
       );
       expect(update).toHaveBeenCalledWith({
         observedThreadIds: [newThread.id, oldThread.id],
+        threadCatalogVersion: 1,
       });
       expect(update).toHaveBeenCalledWith({ threadId: newThread.id });
     } finally {

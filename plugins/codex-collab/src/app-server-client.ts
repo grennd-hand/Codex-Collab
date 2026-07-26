@@ -347,6 +347,7 @@ export async function readCodexThreadRevision(
 interface CodexThreadItem {
   type: string;
   id?: string;
+  status?: string;
   text?: string;
   content?: Array<{ type: string; text?: string } | string>;
   summary?: string[];
@@ -355,6 +356,11 @@ interface CodexThreadItem {
   aggregatedOutput?: string | null;
   exitCode?: number | null;
   durationMs?: number | null;
+  changes?: Array<{
+    path?: string;
+    kind?: { type?: string; move_path?: string | null };
+    diff?: string;
+  }>;
 }
 
 interface CodexTurn {
@@ -487,6 +493,45 @@ function limitRecordEntries(entries: CodexRecordEntry[]): CodexRecordEntry[] {
   return selected.reverse();
 }
 
+function lineChangeCounts(diff: string): { additions: number; deletions: number } {
+  const lines = diff.split(/\r?\n/);
+  return {
+    additions: lines.filter((line) => line.startsWith("+") && !line.startsWith("+++")).length,
+    deletions: lines.filter((line) => line.startsWith("-") && !line.startsWith("---")).length,
+  };
+}
+
+function safeFileChangeSummary(
+  path: string,
+  type: string,
+  movePath: string | null,
+  diff = "",
+): string {
+  const operation =
+    type === "add" ? "新增" : type === "delete" ? "删除" : type === "move" ? "移动" : "修改";
+  const destination = movePath ? ` → ${movePath}` : "";
+  const { additions, deletions } = lineChangeCounts(diff);
+  const counts = additions > 0 || deletions > 0 ? `（+${additions} -${deletions}）` : "";
+  return `${operation} ${path}${destination}${counts}`;
+}
+
+function appServerFileChangeText(item: CodexThreadItem): string {
+  const changes = (item.changes ?? [])
+    .map((change) => {
+      if (typeof change.path !== "string" || !change.path.trim()) return null;
+      return safeFileChangeSummary(
+        change.path,
+        change.kind?.type ?? "update",
+        change.kind?.move_path ?? null,
+        change.diff ?? "",
+      );
+    })
+    .filter((change): change is string => Boolean(change));
+  if (changes.length === 0) return "";
+  const status = item.status === "failed" ? "failed" : item.status === "inProgress" ? "running" : "completed";
+  return rolloutCommandText("apply_patch", status, changes.join("\n"));
+}
+
 export function extractCodexRecordEntries(turns: CodexTurn[]): CodexRecordEntry[] {
   const entries: CodexRecordEntry[] = [];
   for (const turn of turns) {
@@ -542,6 +587,9 @@ export function extractCodexRecordEntries(turns: CodexTurn[]): CodexRecordEntry[
         ]
           .filter(Boolean)
           .join("\n");
+      } else if (item.type === "fileChange") {
+        role = "command";
+        value = appServerFileChangeText(item);
       }
       const normalized = redactSensitiveText(value.trim());
       if (!role || !normalized) continue;
@@ -585,7 +633,7 @@ function rolloutText(value: unknown): string {
 
 function rolloutCommandText(
   name: string,
-  status: "running" | "completed",
+  status: "running" | "completed" | "failed",
   input: string,
   output?: string,
 ): string {
@@ -599,6 +647,33 @@ function rolloutCommandText(
     .join("\n");
 }
 
+function rolloutPatchInput(payload: Record<string, unknown>): string {
+  if (!payload.changes || typeof payload.changes !== "object") return "";
+  const changes = Object.entries(payload.changes as Record<string, unknown>)
+    .map(([path, rawChange]) => {
+      if (!rawChange || typeof rawChange !== "object") return null;
+      const change = rawChange as Record<string, unknown>;
+      const type = typeof change.type === "string" ? change.type : "update";
+      const diff = typeof change.unified_diff === "string" ? change.unified_diff : "";
+      const movePath = typeof change.move_path === "string" ? change.move_path : null;
+      return safeFileChangeSummary(path, type, movePath, diff);
+    })
+    .filter((change): change is string => Boolean(change));
+  return changes.join("\n");
+}
+
+function safeApplyPatchCallInput(input: string): string {
+  const changes = input
+    .split(/\r?\n/)
+    .map((line) => {
+      const match = line.match(/^\*\*\*\s+(Add|Update|Delete|Move) File:\s+(.+)$/);
+      if (!match?.[1] || !match[2]) return null;
+      return safeFileChangeSummary(match[2].trim(), match[1].toLowerCase(), null);
+    })
+    .filter((change): change is string => Boolean(change));
+  return changes.length > 0 ? changes.join("\n") : "修改文件（补丁正文已隐藏）";
+}
+
 export function extractCodexRolloutEntries(
   lines: string[],
   threadId: string,
@@ -606,7 +681,14 @@ export function extractCodexRolloutEntries(
   const entries: CodexRecordEntry[] = [];
   const commandCalls = new Map<
     string,
-    { id: string; name: string; input: string; createdAt: string | null }
+    {
+      id: string;
+      name: string;
+      input: string;
+      createdAt: string | null;
+      status?: "completed" | "failed";
+      output?: string;
+    }
   >();
   const commandToolNames = new Set(["apply_patch", "exec", "exec_command", "write_stdin"]);
 
@@ -617,13 +699,41 @@ export function extractCodexRolloutEntries(
     } catch {
       continue;
     }
-    if (item.type !== "response_item" || !item.payload) continue;
+    if (!item.payload) continue;
     const payload = item.payload;
     const payloadType = payload.type;
     const createdAt =
       typeof item.timestamp === "string" && !Number.isNaN(Date.parse(item.timestamp))
         ? new Date(item.timestamp).toISOString()
         : null;
+
+    if (item.type === "event_msg" && payloadType === "patch_apply_end") {
+      const input = rolloutPatchInput(payload);
+      const callId = typeof payload.call_id === "string" ? payload.call_id : "";
+      const success = payload.success !== false && payload.status !== "failed";
+      const status = success ? "completed" : "failed";
+      const output = [rolloutText(payload.stdout), rolloutText(payload.stderr)]
+        .map((value) => value.trim())
+        .filter(Boolean)
+        .join("\n");
+      const pendingCall = callId ? commandCalls.get(callId) : null;
+      if (pendingCall && input) {
+        pendingCall.input = input;
+        pendingCall.status = status;
+        pendingCall.output = output;
+      } else if (input) {
+        const text = redactSensitiveText(rolloutCommandText("apply_patch", status, input, output));
+        entries.push({
+          id: `${threadId}-patch-${callId || entries.length}`,
+          role: "command",
+          text: text.slice(0, 50_000),
+          createdAt,
+        });
+      }
+      continue;
+    }
+
+    if (item.type !== "response_item") continue;
 
     if (payloadType === "message" && (payload.role === "user" || payload.role === "assistant")) {
       const text = redactSensitiveText(rolloutText(payload.content).trim());
@@ -662,7 +772,10 @@ export function extractCodexRolloutEntries(
       commandCalls.set(callId, {
         id: typeof payload.id === "string" ? payload.id : callId,
         name,
-        input: rolloutText(payload.arguments ?? payload.input),
+        input:
+          name === "apply_patch"
+            ? safeApplyPatchCallInput(rolloutText(payload.arguments ?? payload.input))
+            : rolloutText(payload.arguments ?? payload.input),
         createdAt,
       });
       continue;
@@ -674,7 +787,12 @@ export function extractCodexRolloutEntries(
       if (!call) continue;
       const output = rolloutText(payload.output);
       const text = redactSensitiveText(
-        rolloutCommandText(call.name, "completed", call.input, output),
+        rolloutCommandText(
+          call.name,
+          call.status ?? "completed",
+          call.input,
+          output || call.output,
+        ),
       );
       if (text) {
         entries.push({
@@ -690,7 +808,7 @@ export function extractCodexRolloutEntries(
 
   for (const call of commandCalls.values()) {
     const text = redactSensitiveText(
-      rolloutCommandText(call.name, "running", call.input),
+      rolloutCommandText(call.name, call.status ?? "running", call.input, call.output),
     );
     if (!text) continue;
     entries.push({
@@ -701,6 +819,34 @@ export function extractCodexRolloutEntries(
     });
   }
   return limitRecordEntries(entries);
+}
+
+const MAX_RECENT_ROLLOUT_BYTES = 20_000_000;
+
+async function readRecentRolloutLines(
+  path: string,
+  size: number,
+): Promise<string[]> {
+  const start = Math.max(0, size - MAX_RECENT_ROLLOUT_BYTES);
+  const length = size - start;
+  const buffer = Buffer.alloc(length);
+  const handle = await openFile(path, "r");
+  try {
+    let offset = 0;
+    while (offset < length) {
+      const result = await handle.read(buffer, offset, length - offset, start + offset);
+      if (result.bytesRead === 0) break;
+      offset += result.bytesRead;
+    }
+    let content = buffer.subarray(0, offset).toString("utf8");
+    if (start > 0) {
+      const firstLineEnd = content.indexOf("\n");
+      content = firstLineEnd < 0 ? "" : content.slice(firstLineEnd + 1);
+    }
+    return content.split(/\r?\n/);
+  } finally {
+    await handle.close();
+  }
 }
 
 function resolveCodexExecutable(): string {
@@ -806,9 +952,15 @@ export class CodexAppServerClient extends EventEmitter {
     ) {
       const resolved = await realpath(rolloutPath);
       const metadata = await stat(resolved);
-      if (metadata.isFile() && metadata.size <= 20_000_000) {
-        const content = await readFile(resolved, "utf8");
-        return extractCodexRolloutEntries(content.split(/\r?\n/), threadId);
+      if (metadata.isFile()) {
+        const lines =
+          metadata.size <= MAX_RECENT_ROLLOUT_BYTES
+            ? (await readFile(resolved, "utf8")).split(/\r?\n/)
+            : await readRecentRolloutLines(resolved, metadata.size);
+        const rolloutEntries = extractCodexRolloutEntries(lines, threadId);
+        if (metadata.size <= MAX_RECENT_ROLLOUT_BYTES || rolloutEntries.length > 0) {
+          return rolloutEntries;
+        }
       }
     }
     const turns: CodexTurn[] = [];

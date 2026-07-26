@@ -149,7 +149,7 @@ describe("Codex client-style task process", () => {
     });
     expect(
       executionProcessPresentation(
-        [{ status: "completed", title: "运行测试" }],
+        [{ status: "completed", title: "运行测试", role: "command" }],
         true,
       ),
     ).toMatchObject({
@@ -158,6 +158,12 @@ describe("Codex client-style task process", () => {
       detail: "Codex 正在继续处理",
       defaultExpanded: true,
     });
+    expect(
+      executionProcessPresentation([
+        { status: "completed", title: "运行测试", role: "command" },
+        { status: "completed", title: "分析与计划", role: "reasoning" },
+      ]).progress,
+    ).toBe("2 个步骤（1 个操作，1 条分析）");
   });
 
   it("renders an accessible collapse control with client-style defaults", () => {

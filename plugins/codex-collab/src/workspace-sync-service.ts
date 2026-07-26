@@ -314,9 +314,15 @@ export class WorkspaceSyncService {
       const localThreadIds = localThreads.map((thread) => thread.id);
       const observedThreadIds = profile.observedThreadIds;
       const observed = new Set(observedThreadIds ?? []);
-      const newestDiscoveredThread = observedThreadIds === undefined
-        ? null
-        : localThreads.find((thread) => !observed.has(thread.id)) ?? null;
+      const needsCatalogMigration = (profile.threadCatalogVersion ?? 0) < 1;
+      const migrationThread =
+        needsCatalogMigration && workspace.selectedThreadId ? localThreads[0] ?? null : null;
+      const newestDiscoveredThread =
+        migrationThread && migrationThread.id !== workspace.selectedThreadId
+          ? migrationThread
+          : observedThreadIds === undefined
+            ? null
+            : localThreads.find((thread) => !observed.has(thread.id)) ?? null;
       if (!catalogsMatch(workspace.threads, catalog)) {
         workspace = await relay.publishWorkspaceCatalog(
           profile.sessionId,
@@ -364,9 +370,13 @@ export class WorkspaceSyncService {
         }
       }
 
-      if (!selectionDeferred && !stringListsMatch(observedThreadIds, localThreadIds)) {
+      if (
+        !selectionDeferred &&
+        (needsCatalogMigration || !stringListsMatch(observedThreadIds, localThreadIds))
+      ) {
         await this.profiles.update({
           observedThreadIds: localThreadIds,
+          threadCatalogVersion: 1,
         });
       }
 
