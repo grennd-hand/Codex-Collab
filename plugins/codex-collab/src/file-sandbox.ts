@@ -294,6 +294,22 @@ export class FileSandbox {
         };
       } finally {
         if (!preserveCandidate) {
+          // A killed native helper cannot report TargetMoved back to Node. Once
+          // its exclusively-created journal exists, the target may already be
+          // in recovery (including the rename-to-journal-append crash gap), so
+          // keep the candidate as recovery evidence instead of deleting the
+          // member's requested content.
+          try {
+            await lstat(metadata);
+            preserveCandidate = true;
+          } catch (error) {
+            // Delete only when the journal is conclusively absent. Permission
+            // or transient inspection failures must retain the candidate.
+            preserveCandidate =
+              (error as NodeJS.ErrnoException).code !== "ENOENT";
+          }
+        }
+        if (!preserveCandidate) {
           await unlink(candidate).catch(() => undefined);
         }
         await this.pruneRecoveryJournal(journalRoot);

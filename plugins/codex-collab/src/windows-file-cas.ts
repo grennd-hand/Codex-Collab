@@ -407,6 +407,9 @@ namespace CodexCollabAtomicWrite
                 using (FileStream signal = new FileStream(
                     signalPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read))
                 {
+                    byte[] processId = Encoding.ASCII.GetBytes(
+                        System.Diagnostics.Process.GetCurrentProcess().Id.ToString());
+                    signal.Write(processId, 0, processId.Length);
                     signal.Flush(true);
                 }
             }

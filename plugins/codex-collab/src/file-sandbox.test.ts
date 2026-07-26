@@ -88,6 +88,24 @@ function killProcessTree(pid: number): Promise<void> {
   });
 }
 
+function killProcess(pid: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const killer = spawn("taskkill.exe", ["/PID", String(pid), "/F"], {
+      shell: false,
+      windowsHide: true,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    killer.stderr.setEncoding("utf8");
+    killer.stderr.on("data", (chunk: string) => (stderr += chunk));
+    killer.once("error", reject);
+    killer.once("exit", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`taskkill failed (${code}): ${stderr}`));
+    });
+  });
+}
+
 const decodePowerShellPaths =
   "$p=([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:CODEX_CAS_TEST_PATHS))|ConvertFrom-Json);";
 
@@ -227,7 +245,7 @@ describe("FileSandbox", () => {
     await writeFile(release, "continue", "utf8");
     await expect(write).resolves.toMatchObject({ content: "C" });
     expect(await readFile(target, "utf8")).toBe("C");
-  });
+  }, 20_000);
 
   it("never rolls back over a file created in the publication window", async () => {
     const root = await tempRoot();
@@ -341,6 +359,48 @@ describe("FileSandbox", () => {
     await rename(join(journalRoot, "recovery", recoveries[0]!), target);
     expect(await readFile(target, "utf8")).toBe("A");
     expect(childStderr).not.toMatch(/uncaught/i);
+  }, 20_000);
+
+  it("preserves the candidate when only the native helper is killed", async () => {
+    const root = await tempRoot();
+    const target = join(root, "helper-killed.ts");
+    const signal = join(root, "helper-target-moved");
+    const release = join(root, "helper-never-released");
+    await writeFile(target, "A", "utf8");
+    const sandbox = await FileSandbox.create(root, {
+      windowsCasDebug: {
+        targetMovedSignalPath: signal,
+        publishContinuePath: release,
+      },
+    });
+    const original = await sandbox.read("helper-killed.ts");
+
+    const write = sandbox.write("helper-killed.ts", "C", original.sha256);
+    await waitForPath(signal);
+    const helperPid = Number((await readFile(signal, "utf8")).trim());
+    expect(Number.isSafeInteger(helperPid)).toBe(true);
+    await killProcess(helperPid);
+    await expect(write).rejects.toThrow(/helper failed/i);
+
+    const journalRoot = join(root, ".codex-collab", "recovery");
+    const recoveries = await readdir(join(journalRoot, "recovery"));
+    const candidates = await readdir(join(journalRoot, "candidate"));
+    const journals = await readdir(join(journalRoot, "metadata"));
+    expect(recoveries).toHaveLength(1);
+    expect(candidates).toEqual(recoveries);
+    expect(journals).toEqual(recoveries);
+    await expect(readFile(target, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(join(journalRoot, "recovery", recoveries[0]!), "utf8")).toBe(
+      "A",
+    );
+    expect(await readFile(join(journalRoot, "candidate", candidates[0]!), "utf8")).toBe(
+      "C",
+    );
+    expect(
+      readJournalRecords(
+        await readFile(join(journalRoot, "metadata", journals[0]!), "utf8"),
+      ).map((record) => record.phase),
+    ).toEqual(["prepared", "target-recovered"]);
   }, 20_000);
 
   it("allows at most one of two native writers with the same expected hash", async () => {
