@@ -239,6 +239,30 @@ describe("Codex client-style task process", () => {
     expect(running).toContain('role="status"');
     expect(running).toContain("查看正在执行的内容");
 
+    const longOutput = renderToStaticMarkup(
+      createElement(ExecutionProcess, {
+        entries: [
+          {
+            id: "long-output",
+            role: "command",
+            text: [
+              "tool: exec_command",
+              "status: running",
+              "input:",
+              '{"cmd":"npm test"}',
+              "output:",
+              `first line\\n${"x".repeat(2_100)}\\nlast line`,
+            ].join("\n"),
+            createdAt: null,
+          },
+        ],
+      }),
+    );
+    expect(longOutput).toContain("execution-output-viewer long");
+    expect(longOutput).toContain('aria-label="复制完整命令输出"');
+    expect(longOutput).toContain('tabindex="0"');
+    expect(longOutput).toContain("可上下、左右滚动查看完整输出");
+
     const activeReasoning = renderToStaticMarkup(
       createElement(ExecutionProcess, {
         active: true,

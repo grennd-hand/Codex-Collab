@@ -1211,7 +1211,7 @@ textarea {
 }
 
 .execution-input,
-.execution-output {
+.execution-output-viewer {
   margin-top: 9px;
   min-width: 0;
 }
@@ -1255,7 +1255,6 @@ textarea {
 }
 
 .execution-input > span,
-.execution-output.visible > span,
 .reasoning-source-content > span {
   display: block;
   margin-bottom: 4px;
@@ -1273,10 +1272,10 @@ textarea {
   white-space: pre-wrap;
 }
 
-.execution-input pre,
-.execution-output pre {
+.execution-input pre {
   margin: 0;
   padding: 9px 10px;
+  max-height: 132px;
   overflow: auto;
   border: 1px solid var(--colorNeutralStroke3);
   border-radius: 6px;
@@ -1287,16 +1286,91 @@ textarea {
   overflow-wrap: anywhere;
 }
 
-.execution-output summary {
-  padding: 6px 0;
-  cursor: pointer;
-  color: var(--colorBrandForeground1);
+.execution-output-viewer {
+  overflow: hidden;
+  border: 1px solid var(--colorNeutralStroke2);
+  border-radius: 8px;
+  background: var(--colorNeutralBackground2);
+}
+
+.execution-output-toolbar {
+  min-height: 34px;
+  padding: 0 6px 0 11px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--colorNeutralStroke3);
+  background: var(--colorNeutralBackground3);
+}
+
+.execution-output-toolbar strong {
+  color: var(--colorNeutralForeground2);
   font-size: 11px;
   font-weight: 650;
 }
 
-.execution-output[open] summary {
-  margin-bottom: 3px;
+.execution-output-toolbar small {
+  color: var(--colorNeutralForeground3);
+  font-size: 10px;
+}
+
+.execution-output-toolbar button {
+  min-width: 58px;
+  margin-left: auto;
+}
+
+.execution-output-viewer pre {
+  margin: 0;
+  padding: 11px 12px;
+  max-height: min(38dvh, 340px);
+  overflow: auto;
+  scrollbar-gutter: stable both-edges;
+  overscroll-behavior: contain;
+  color: var(--colorNeutralForeground2);
+  background: var(--colorNeutralBackground1);
+  font: 11px/1.58 "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  white-space: pre;
+  overflow-wrap: normal;
+  tab-size: 2;
+}
+
+.execution-output-viewer.long pre {
+  height: clamp(220px, 36dvh, 360px);
+  max-height: none;
+}
+
+.execution-output-viewer pre:focus-visible {
+  outline: 2px solid var(--colorBrandStroke1);
+  outline-offset: -2px;
+}
+
+.execution-output-footer {
+  min-height: 28px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--colorNeutralStroke3);
+  color: var(--colorNeutralForeground3);
+  background: var(--colorNeutralBackground3);
+  font-size: 10px;
+}
+
+.execution-output-result {
+  font-weight: 650;
+}
+
+.execution-output-result.completed {
+  color: var(--colorStatusSuccessForeground1);
+}
+
+.execution-output-result.running {
+  color: var(--colorBrandForeground1);
+}
+
+.execution-output-result.failed {
+  color: var(--colorStatusDangerForeground1);
 }
 
 .jump-to-latest {
@@ -2445,6 +2519,18 @@ textarea {
 
   .execution-step-list {
     padding-inline: 9px;
+  }
+
+  .execution-output-viewer.long pre {
+    height: min(34dvh, 280px);
+  }
+
+  .execution-output-footer {
+    align-items: flex-start;
+    flex-direction: column;
+    justify-content: center;
+    gap: 1px;
+    padding-block: 5px;
   }
 
   .composer {

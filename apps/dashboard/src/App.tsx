@@ -104,6 +104,7 @@ import {
 } from "./imported-timeline.js";
 import {
   classifyReadableSource,
+  executionOutputNeedsViewport,
   parseReadableBlocks,
   presentExecutionEntries,
   presentExecutionEntry,
@@ -769,10 +770,16 @@ function ExecutionStepCard({
   const [detailsOpen, setDetailsOpen] = useState(
     record.status === "running" || record.status === "failed",
   );
+  const [outputCopied, setOutputCopied] = useState(false);
+  const outputNeedsViewport = executionOutputNeedsViewport(record.output);
 
   useEffect(() => {
     setDetailsOpen(record.status === "running" || record.status === "failed");
   }, [record.status]);
+
+  useEffect(() => {
+    setOutputCopied(false);
+  }, [record.output]);
 
   return (
     <article
@@ -844,9 +851,40 @@ function ExecutionStepCard({
                 </div>
               ) : null}
               {record.output ? (
-                <div className="execution-output visible">
-                  <span>输出</span>
-                  <pre>{record.output}</pre>
+                <div
+                  className={`execution-output-viewer${outputNeedsViewport ? " long" : ""}`}
+                >
+                  <div className="execution-output-toolbar">
+                    <strong>输出</strong>
+                    <small>{record.outputLineCount} 行</small>
+                    <Button
+                      appearance="subtle"
+                      size="small"
+                      icon={<CopyRegular />}
+                      aria-label="复制完整命令输出"
+                      onClick={() => {
+                        void copyText(record.output ?? "").then(setOutputCopied);
+                      }}
+                    >
+                      {outputCopied ? "已复制" : "复制"}
+                    </Button>
+                  </div>
+                  <pre
+                    tabIndex={0}
+                    aria-label="命令输出，可在框内滚动查看完整内容"
+                  >
+                    {record.output}
+                  </pre>
+                  <div className="execution-output-footer">
+                    <span className={`execution-output-result ${record.status}`}>
+                      {executionStatusLabel(record.status)}
+                    </span>
+                    <span>
+                      {outputNeedsViewport
+                        ? "可上下、左右滚动查看完整输出"
+                        : "可滚动查看完整输出"}
+                    </span>
+                  </div>
                 </div>
               ) : null}
             </div>

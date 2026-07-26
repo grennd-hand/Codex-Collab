@@ -29,6 +29,16 @@ export interface PresentExecutionEntryOptions {
 
 export type ReadableSourceKind = "markdown" | "code";
 
+export function executionOutputNeedsViewport(text: string | null): boolean {
+  if (!text) return false;
+
+  const normalized = text.replace(/\r\n?/g, "\n");
+  if (normalized.length > 2_000) return true;
+
+  const lines = normalized.split("\n");
+  return lines.length > 12 || lines.some((line) => line.length > 240);
+}
+
 export function classifyReadableSource(text: string): ReadableSourceKind {
   const normalized = text.replace(/\r\n?/g, "\n").trim();
   if (!normalized) return "markdown";

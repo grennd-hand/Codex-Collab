@@ -1,10 +1,23 @@
 import { describe, expect, it } from "vitest";
 import {
   classifyReadableSource,
+  executionOutputNeedsViewport,
   parseReadableBlocks,
   presentExecutionEntries,
   presentExecutionEntry,
 } from "./readable-output.js";
+
+describe("executionOutputNeedsViewport", () => {
+  it("uses a fixed scroll viewport for many lines or very long single lines", () => {
+    expect(executionOutputNeedsViewport(Array.from({ length: 13 }, (_, index) => `line ${index}`).join("\n"))).toBe(true);
+    expect(executionOutputNeedsViewport(`header\n${"x".repeat(24_908)}\nfooter`)).toBe(true);
+  });
+
+  it("keeps short output at its natural height", () => {
+    expect(executionOutputNeedsViewport("build complete\nexit code: 0")).toBe(false);
+    expect(executionOutputNeedsViewport(null)).toBe(false);
+  });
+});
 
 describe("classifyReadableSource", () => {
   it("keeps Markdown summaries semantic instead of showing their markers", () => {
