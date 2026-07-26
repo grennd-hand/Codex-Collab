@@ -1259,6 +1259,7 @@ export function App() {
   const [restoringRoomId, setRestoringRoomId] = useState<string | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const [workspaceEditorExpanded, setWorkspaceEditorExpanded] = useState(false);
   const [workspaceSummary, setWorkspaceSummary] = useState<WorkspaceSummary | null>(null);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const [pairingToken, setPairingToken] = useState("");
@@ -2407,6 +2408,10 @@ export function App() {
 
   const openWorkspace = async () => {
     setWorkspaceOpen(true);
+    await reloadWorkspace();
+  };
+
+  const reloadWorkspace = async () => {
     setWorkspaceLoading(true);
     try {
       await refreshWorkspace();
@@ -2417,6 +2422,14 @@ export function App() {
       setWorkspaceLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (workspaceSummary?.hostConnected) {
+      setWorkspaceOpen(false);
+    } else {
+      setWorkspaceEditorExpanded(false);
+    }
+  }, [workspaceSummary?.hostConnected]);
 
   const createHostPairing = async () => {
     if (!session || member?.role !== "owner") {
@@ -2541,6 +2554,7 @@ export function App() {
   const pendingMemberCount = members.filter((item) => item.status === "pending").length;
   const workspaceFileAccess = memberWorkspaceFileAccess(member);
   const workspaceReadOnly = workspaceFileAccess !== "workspace-write";
+  const workspaceConnected = Boolean(approved && workspaceSummary?.hostConnected);
   const memberIdentities = useMemo(() => buildMemberIdentityMap(members), [members]);
   const identityForMember = (memberId: string) =>
     memberIdentities.get(memberId) ?? fallbackMemberIdentity(memberId);
@@ -2633,15 +2647,15 @@ export function App() {
                 onChange={(_, data) => void updateRoomStatus(data.checked)}
               />
             ) : null}
-            {approved ? (
+            {approved && !workspaceSummary?.hostConnected ? (
               <Button
                 appearance="secondary"
                 icon={<FolderOpenRegular />}
                 className="workspace-button"
-                aria-label="Codex 与文件"
+                aria-label="连接工作区"
                 onClick={() => void openWorkspace()}
               >
-                <span className="workspace-button-label">Codex 与文件</span>
+                <span className="workspace-button-label">连接工作区</span>
               </Button>
             ) : null}
             {member?.role === "owner" && approved ? (
@@ -2722,7 +2736,58 @@ export function App() {
           </div>
         ) : null}
 
-        <div className="workspace">
+        <div
+          className={[
+            "workspace",
+            workspaceConnected ? "workspace-with-files" : "",
+            workspaceConnected && workspaceEditorExpanded
+              ? "workspace-editor-expanded"
+              : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+        >
+          {workspaceConnected && workspaceSummary ? (
+            <section className="workspace-file-dock" aria-label="项目文件与代码编辑器">
+              <Suspense
+                fallback={
+                  <div className="workspace-file-dock-loading" aria-label="正在加载项目文件">
+                    <Skeleton>
+                      <SkeletonItem />
+                      <SkeletonItem />
+                      <SkeletonItem />
+                    </Skeleton>
+                  </div>
+                }
+              >
+                <IdeWorkspace
+                  files={workspaceSummary.files}
+                  rootLabel={workspaceSummary.rootLabel}
+                  hostDeviceLabel={workspaceSummary.hostDeviceLabel}
+                  selectedThreadLabel={
+                    workspaceSummary.selectedThread?.name ||
+                    workspaceSummary.selectedThread?.preview ||
+                    null
+                  }
+                  syncedAt={workspaceSummary.syncedAt}
+                  themeMode={themeMode}
+                  readOnly={workspaceReadOnly}
+                  readOnlyReason={
+                    workspaceReadOnly
+                      ? "房主尚未为你开放项目文件写入权限。"
+                      : undefined
+                  }
+                  loading={workspaceLoading}
+                  embedded
+                  editorExpanded={workspaceEditorExpanded}
+                  onEditorExpandedChange={setWorkspaceEditorExpanded}
+                  onReadFile={readWorkspaceFile}
+                  onSaveFile={saveWorkspaceFile}
+                  onRefresh={reloadWorkspace}
+                />
+              </Suspense>
+            </section>
+          ) : null}
           <aside className="people-panel" aria-label="协作成员">
             <section className="member-section" aria-labelledby="member-section-title">
               <div className="panel-heading member-panel-heading">
@@ -3659,50 +3724,7 @@ export function App() {
         open={workspaceOpen}
         onOpenChange={(_, data) => setWorkspaceOpen(data.open)}
       >
-        {workspaceSummary?.hostConnected ? (
-          <DialogSurface className="ide-dialog-surface">
-            <DialogBody className="ide-dialog-body">
-              <DialogTitle className="visually-hidden">项目 IDE</DialogTitle>
-              <DialogContent className="ide-dialog-content">
-                <Suspense
-                  fallback={
-                    <div className="workspace-dialog-loading" aria-label="正在启动项目 IDE">
-                      <Skeleton>
-                        <SkeletonItem />
-                        <SkeletonItem />
-                      </Skeleton>
-                    </div>
-                  }
-                >
-                  <IdeWorkspace
-                    files={workspaceSummary.files}
-                    rootLabel={workspaceSummary.rootLabel}
-                    hostDeviceLabel={workspaceSummary.hostDeviceLabel}
-                    selectedThreadLabel={
-                      workspaceSummary.selectedThread?.name ||
-                      workspaceSummary.selectedThread?.preview ||
-                      null
-                    }
-                    syncedAt={workspaceSummary.syncedAt}
-                    themeMode={themeMode}
-                    readOnly={workspaceReadOnly}
-                    readOnlyReason={
-                      workspaceReadOnly
-                        ? "房主尚未为你开放项目文件写入权限。"
-                        : undefined
-                    }
-                    loading={workspaceLoading}
-                    onReadFile={readWorkspaceFile}
-                    onSaveFile={saveWorkspaceFile}
-                    onRefresh={openWorkspace}
-                    onClose={() => setWorkspaceOpen(false)}
-                  />
-                </Suspense>
-              </DialogContent>
-            </DialogBody>
-          </DialogSurface>
-        ) : (
-          <DialogSurface className="workspace-dialog-surface">
+        <DialogSurface className="workspace-dialog-surface">
             <DialogBody>
               <DialogTitle>连接 Codex 工作区</DialogTitle>
               <DialogContent className="workspace-dialog-content">
@@ -3780,8 +3802,7 @@ export function App() {
                 </Button>
               </DialogActions>
             </DialogBody>
-          </DialogSurface>
-        )}
+        </DialogSurface>
       </Dialog>
 
       <Dialog open={setupOpen}>

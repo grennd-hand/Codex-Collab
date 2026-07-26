@@ -47,5 +47,8 @@ export interface IdeWorkspaceProps {
   onReadFile: (path: string) => Promise<IdeFileDocument>;
   onSaveFile: (request: IdeSaveRequest) => Promise<IdeSaveResult>;
   onRefresh: () => void | Promise<void>;
-  onClose: () => void;
+  embedded?: boolean;
+  editorExpanded?: boolean;
+  onEditorExpandedChange?: (expanded: boolean) => void;
+  onClose?: () => void;
 }

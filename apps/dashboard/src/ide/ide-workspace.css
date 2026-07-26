@@ -42,6 +42,32 @@
   background: var(--ide-editor);
 }
 
+.ide-shell-embedded {
+  min-height: 0;
+  height: 100%;
+}
+
+.ide-shell-explorer-only .ide-titlebar {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px;
+}
+
+.ide-shell-explorer-only .ide-context {
+  display: none;
+}
+
+.ide-shell-explorer-only .ide-workbench {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.ide-shell-explorer-only .ide-explorer {
+  border-right: 0;
+}
+
+.ide-shell-embedded.ide-shell-editor-expanded .ide-workbench {
+  grid-template-columns: minmax(210px, 232px) minmax(0, 1fr);
+}
+
 .ide-titlebar {
   min-width: 0;
   padding: 0 8px 0 14px;
@@ -240,8 +266,28 @@
   background: var(--ide-editor);
 }
 
+.ide-tabs {
+  grid-row: 1;
+}
+
+.ide-commandbar {
+  grid-row: 2;
+}
+
+.ide-notices {
+  grid-row: 3;
+}
+
+.ide-editor-stage {
+  grid-row: 4;
+}
+
+.ide-statusbar {
+  grid-row: 5;
+}
+
 .ide-notices:empty {
-  display: none;
+  min-height: 0;
 }
 
 .ide-tabs {
@@ -539,6 +585,17 @@
 
   .ide-shell.explorer-mobile-open .ide-explorer {
     display: grid;
+  }
+
+  .ide-shell-embedded.ide-shell-editor-expanded .ide-workbench {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ide-shell-explorer-only .ide-explorer {
+    position: static;
+    width: auto;
+    display: grid;
+    box-shadow: none;
   }
 
   .ide-editor-pane {

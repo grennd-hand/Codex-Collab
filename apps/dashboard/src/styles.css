@@ -206,6 +206,44 @@ textarea {
   grid-template-columns: minmax(310px, 340px) minmax(520px, 1fr) 310px;
 }
 
+.workspace.workspace-with-files {
+  grid-template-columns:
+    minmax(224px, 244px)
+    minmax(270px, 300px)
+    minmax(460px, 1fr);
+}
+
+.workspace-file-dock {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-right: 1px solid var(--colorNeutralStroke2);
+  background: var(--colorNeutralBackground2);
+}
+
+.workspace-file-dock-loading {
+  height: 100%;
+  padding: 58px 14px 14px;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+
+.workspace-file-dock-loading .fui-Skeleton {
+  display: grid;
+  gap: 12px;
+}
+
+.workspace-with-files .activity-panel,
+.workspace-editor-expanded .people-panel,
+.workspace-editor-expanded .activity-panel {
+  display: none;
+}
+
+.workspace.workspace-editor-expanded {
+  grid-template-columns: minmax(610px, 1.35fr) minmax(420px, 0.85fr);
+}
+
 .people-panel,
 .activity-panel,
 .chat-panel {
@@ -2417,8 +2455,44 @@ textarea {
     grid-template-columns: 290px minmax(420px, 1fr);
   }
 
+  .workspace.workspace-with-files {
+    grid-template-columns:
+      minmax(214px, 232px)
+      minmax(256px, 280px)
+      minmax(420px, 1fr);
+  }
+
+  .workspace.workspace-editor-expanded {
+    grid-template-columns: minmax(510px, 1.2fr) minmax(370px, 0.8fr);
+  }
+
   .activity-panel {
     display: none;
+  }
+}
+
+@media (max-width: 980px) and (min-width: 761px) {
+  .workspace.workspace-with-files:not(.workspace-editor-expanded) {
+    grid-template-columns: minmax(220px, 242px) minmax(480px, 1fr);
+  }
+
+  .workspace-with-files:not(.workspace-editor-expanded) .people-panel {
+    display: none;
+  }
+
+  .workspace.workspace-editor-expanded {
+    height: auto;
+    display: block;
+  }
+
+  .workspace-editor-expanded .workspace-file-dock {
+    height: min(72dvh, 760px);
+    border-right: 0;
+    border-bottom: 1px solid var(--colorNeutralStroke2);
+  }
+
+  .workspace-editor-expanded .chat-panel {
+    min-height: 72dvh;
   }
 }
 
@@ -2506,6 +2580,24 @@ textarea {
     height: auto;
     min-height: 0;
     display: block;
+  }
+
+  .workspace.workspace-with-files {
+    display: block;
+  }
+
+  .workspace-file-dock {
+    height: min(42dvh, 430px);
+    border-right: 0;
+    border-bottom: 1px solid var(--colorNeutralStroke2);
+  }
+
+  .workspace-editor-expanded .workspace-file-dock {
+    height: min(72dvh, 760px);
+  }
+
+  .workspace-editor-expanded .chat-panel {
+    min-height: 72dvh;
   }
 
   .people-panel {

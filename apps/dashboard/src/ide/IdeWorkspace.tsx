@@ -1,4 +1,4 @@
-import Editor, { DiffEditor } from "@monaco-editor/react";
+import Editor, { DiffEditor, type OnMount } from "@monaco-editor/react";
 import {
   Badge,
   Button,
@@ -20,6 +20,8 @@ import {
   FolderOpenRegular,
   FolderRegular,
   LockClosedRegular,
+  PanelLeftContractRegular,
+  PanelLeftExpandRegular,
   PanelLeftRegular,
   SaveRegular,
   SearchRegular,
@@ -181,19 +183,23 @@ export default function IdeWorkspace({
   onReadFile,
   onSaveFile,
   onRefresh,
+  embedded = false,
+  editorExpanded = true,
+  onEditorExpandedChange,
   onClose,
 }: IdeWorkspaceProps) {
   const tree = useMemo(() => buildFileTree(files), [files]);
   const [query, setQuery] = useState("");
   const visibleTree = useMemo(() => filterFileTree(tree, query), [query, tree]);
   const allDirectories = useMemo(() => collectDirectoryPaths(tree), [tree]);
-  const [expanded, setExpanded] = useState<Set<string>>(allDirectories);
+  const [expandedDirectories, setExpandedDirectories] =
+    useState<Set<string>>(allDirectories);
   const [tabs, setTabs] = useState<EditorTabState[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
   const [mobileExplorerOpen, setMobileExplorerOpen] = useState(false);
 
   useEffect(() => {
-    setExpanded((current) => {
+    setExpandedDirectories((current) => {
       const next = new Set(current);
       for (const directory of allDirectories) next.add(directory);
       return next;
@@ -211,6 +217,7 @@ export default function IdeWorkspace({
 
   const loadFile = useCallback(
     async (path: string) => {
+      onEditorExpandedChange?.(true);
       setActivePath(path);
       setMobileExplorerOpen(false);
       const existing = tabs.find((tab) => tab.path === path);
@@ -260,7 +267,7 @@ export default function IdeWorkspace({
         }));
       }
     },
-    [onReadFile, tabs, updateTab],
+    [onEditorExpandedChange, onReadFile, tabs, updateTab],
   );
 
   const activeTab = tabs.find((tab) => tab.path === activePath) ?? null;
@@ -393,15 +400,27 @@ export default function IdeWorkspace({
   const forceExpanded = query.trim().length > 0;
   const lineCount = activeTab?.value.split("\n").length ?? 0;
   const language = activePath ? languageForPath(activePath) : "plaintext";
+  const showEditor = !embedded || editorExpanded;
+  const handleEditorMount: OnMount = (editor) => {
+    editor.layout();
+    window.requestAnimationFrame(() => editor.layout());
+  };
 
   return (
     <section
-      className={`ide-shell ${mobileExplorerOpen ? "explorer-mobile-open" : ""}`}
+      className={[
+        "ide-shell",
+        embedded ? "ide-shell-embedded" : "",
+        showEditor ? "ide-shell-editor-expanded" : "ide-shell-explorer-only",
+        mobileExplorerOpen ? "explorer-mobile-open" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
       aria-label="Codex Collab 项目 IDE"
     >
       <header className="ide-titlebar">
         <div className="ide-title-copy">
-          <strong>项目 IDE</strong>
+          <strong>{showEditor ? "项目 IDE" : "项目文件"}</strong>
           <span title={rootLabel ?? "未连接项目根目录"}>
             {rootLabel ?? "未连接项目根目录"}
           </span>
@@ -412,15 +431,17 @@ export default function IdeWorkspace({
           <span>{formatSyncTime(syncedAt)}</span>
         </div>
         <div className="ide-title-actions">
-          <Tooltip content="显示或隐藏文件资源管理器" relationship="label">
-            <Button
-              appearance="subtle"
-              icon={<PanelLeftRegular />}
-              className="ide-mobile-explorer-toggle"
-              aria-expanded={mobileExplorerOpen}
-              onClick={() => setMobileExplorerOpen((current) => !current)}
-            />
-          </Tooltip>
+          {showEditor ? (
+            <Tooltip content="显示或隐藏文件资源管理器" relationship="label">
+              <Button
+                appearance="subtle"
+                icon={<PanelLeftRegular />}
+                className="ide-mobile-explorer-toggle"
+                aria-expanded={mobileExplorerOpen}
+                onClick={() => setMobileExplorerOpen((current) => !current)}
+              />
+            </Tooltip>
+          ) : null}
           <Tooltip content="刷新项目文件" relationship="label">
             <Button
               appearance="subtle"
@@ -430,14 +451,31 @@ export default function IdeWorkspace({
               onClick={() => void onRefresh()}
             />
           </Tooltip>
-          <Tooltip content="关闭 IDE" relationship="label">
-            <Button
-              appearance="subtle"
-              icon={<DismissRegular />}
-              aria-label="关闭 IDE"
-              onClick={onClose}
-            />
-          </Tooltip>
+          {embedded ? (
+            <Tooltip
+              content={showEditor ? "收起编辑器，只显示目录" : "展开代码编辑器"}
+              relationship="label"
+            >
+              <Button
+                appearance="subtle"
+                icon={
+                  showEditor ? <PanelLeftContractRegular /> : <PanelLeftExpandRegular />
+                }
+                aria-label={showEditor ? "收起代码编辑器" : "展开代码编辑器"}
+                aria-expanded={showEditor}
+                onClick={() => onEditorExpandedChange?.(!showEditor)}
+              />
+            </Tooltip>
+          ) : onClose ? (
+            <Tooltip content="关闭 IDE" relationship="label">
+              <Button
+                appearance="subtle"
+                icon={<DismissRegular />}
+                aria-label="关闭 IDE"
+                onClick={onClose}
+              />
+            </Tooltip>
+          ) : null}
         </div>
       </header>
 
@@ -478,10 +516,10 @@ export default function IdeWorkspace({
                 node={node}
                 depth={0}
                 activePath={activePath}
-                expanded={expanded}
+                expanded={expandedDirectories}
                 forceExpanded={forceExpanded}
                 onToggle={(path) =>
-                  setExpanded((current) => {
+                  setExpandedDirectories((current) => {
                     const next = new Set(current);
                     if (next.has(path)) next.delete(path);
                     else next.add(path);
@@ -495,7 +533,8 @@ export default function IdeWorkspace({
           </div>
         </aside>
 
-        <main className="ide-editor-pane">
+        {showEditor ? (
+          <main className="ide-editor-pane">
           <div className="ide-tabs" role="tablist" aria-label="打开的文件">
             {tabs.length === 0 ? (
               <span className="ide-tabs-placeholder">未打开文件</span>
@@ -639,6 +678,8 @@ export default function IdeWorkspace({
             {activeTab?.status === "ready" && !activeTab.conflict ? (
               <Editor
                 path={`codex-collab://workspace/${activeTab.path}`}
+                height="100%"
+                width="100%"
                 value={activeTab.value}
                 language={language}
                 theme={themeMode === "dark" ? "vs-dark" : "vs"}
@@ -662,6 +703,7 @@ export default function IdeWorkspace({
                   tabSize: 2,
                   wordWrap: "off",
                 }}
+                onMount={handleEditorMount}
                 onChange={(value) =>
                   updateTab(activeTab.path, (tab) => ({
                     ...tab,
@@ -691,7 +733,8 @@ export default function IdeWorkspace({
               </>
             ) : null}
           </footer>
-        </main>
+          </main>
+        ) : null}
       </div>
     </section>
   );
