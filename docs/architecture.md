@@ -41,6 +41,13 @@ accepts only messages whose identity and approval state were verified by the rel
 
 Raw member tokens are never stored by the relay. SHA-256 hashes are stored in SQLite.
 
+Before opening a WebSocket, an authenticated browser or owner host requests a 30-second realtime
+ticket. The relay stores only the ticket hash in memory and deletes it before the upgrade is
+accepted, so it cannot be reused and the durable member bearer token is not placed in proxy access
+logs. Legacy `sessionId`/`token` upgrades remain available only during a rolling client upgrade and
+can be disabled with `CODEX_COLLAB_ALLOW_LEGACY_REALTIME_TOKENS=0` after every owner host has been
+updated.
+
 The dashboard-to-host handoff uses a separate ten-minute, one-time pairing capability. The relay
 stores only its hash and exchanges it for a separate owner-host token, so the browser owner's token
 is neither copied nor rotated.
@@ -101,4 +108,4 @@ messages and intent; Git remains the merge and audit mechanism.
 - a packaged Codex widget instead of the standalone web dashboard;
 - per-root permissions for read, write, execute, and Codex configuration;
 - end-to-end device-key signing and owner-visible revocation;
-- rate limits, automated backups, monitoring, and audit export.
+- finer-grained quotas, automated backups, monitoring, and audit export.

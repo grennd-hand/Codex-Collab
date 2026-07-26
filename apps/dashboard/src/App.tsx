@@ -83,6 +83,7 @@ import type {
   MessageAttachmentInput,
   MessageKind,
   RealtimeEnvelope,
+  RealtimeTicketResponse,
   Session,
   WorkspaceFileContent,
   WorkspaceSummary,
@@ -1589,16 +1590,60 @@ export function App() {
     let stopped = false;
     let socket: WebSocket | null = null;
     let reconnectTimer: number | undefined;
+    let reconnectAttempt = 0;
+    let connecting = false;
 
-    const connect = () => {
+    const scheduleReconnect = () => {
+      if (stopped || reconnectTimer !== undefined) return;
+      const base = Math.min(30_000, 1_000 * 2 ** Math.min(reconnectAttempt, 5));
+      const delay = Math.round(base * (0.8 + Math.random() * 0.4));
+      reconnectAttempt += 1;
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = undefined;
+        void connect();
+      }, delay);
+    };
+
+    const connect = async () => {
+      if (stopped || connecting) return;
+      connecting = true;
       setConnection("connecting");
+      let ticket: string;
+      try {
+        ticket = (
+          await requestJson<RealtimeTicketResponse>(
+            `/v1/sessions/${encodeURIComponent(session.id)}/realtime-tickets`,
+            {
+              method: "POST",
+              headers: authHeaders(true),
+              body: "{}",
+            },
+          )
+        ).ticket;
+      } catch (caught) {
+        connecting = false;
+        if (stopped) return;
+        if (
+          isCredentialRejected(caught) ||
+          (caught instanceof ApiRequestError && caught.status === 403)
+        ) {
+          showError(caught);
+          return;
+        }
+        setConnection("error");
+        scheduleReconnect();
+        return;
+      }
+      connecting = false;
+      if (stopped) return;
       const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-      const query = new URLSearchParams({ sessionId: session.id, token });
+      const query = new URLSearchParams({ ticket });
       socket = new WebSocket(
         `${protocol}//${location.host}/v1/realtime?${query.toString()}`,
       );
       socket.addEventListener("open", () => {
         if (!stopped) {
+          reconnectAttempt = 0;
           setConnection("live");
           setError(null);
         }
@@ -1634,10 +1679,14 @@ export function App() {
           void refreshWorkspace().catch(showError);
         }
       });
-      socket.addEventListener("close", () => {
+      socket.addEventListener("close", (event) => {
         if (!stopped) {
+          if (event.code === 4001) {
+            setConnection("error");
+            return;
+          }
           setConnection("connecting");
-          reconnectTimer = window.setTimeout(connect, 1500);
+          scheduleReconnect();
         }
       });
       socket.addEventListener("error", () => {
@@ -1647,7 +1696,7 @@ export function App() {
       });
     };
 
-    connect();
+    void connect();
     return () => {
       stopped = true;
       if (reconnectTimer !== undefined) {
@@ -1658,6 +1707,7 @@ export function App() {
   }, [
     addMessage,
     approved,
+    authHeaders,
     credentialValidated,
     member,
     pushActivity,

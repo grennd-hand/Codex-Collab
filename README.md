@@ -126,6 +126,9 @@ Start a new Codex thread after installation so the new skill and MCP tools are l
 
 An invited member cannot send messages or access files until the owner approves them. The plugin
 stores member bearer tokens only in the local profile file and the relay stores only token hashes.
+Realtime WebSockets use a short-lived, single-use ticket, keeping the durable member token out of
+the proxy request URL. Legacy URL-token upgrades can be disabled after rolling client upgrades with
+`CODEX_COLLAB_ALLOW_LEGACY_REALTIME_TOKENS=0`.
 
 Browser users can create a passwordless Passkey account. The account cookie is `HttpOnly`,
 `SameSite=Strict`, and `Secure` on HTTPS; the Relay stores only its hash. Accounts remember room

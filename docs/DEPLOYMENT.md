@@ -97,6 +97,11 @@ curl --fail --show-error \
 
 保留上一版发布目录，便于快速回滚。
 
+实时连接迁移期间，主实例的 `deploy/.env` 保持
+`CODEX_COLLAB_ALLOW_LEGACY_REALTIME_TOKENS=1`，让尚未升级的本机 Host 仍可连接。网页和新版
+Host 会自动使用 30 秒、一次性的实时票据。确认所有 Host 都已升级后，将该值改为 `0` 并只
+重建主实例 Relay；这会彻底拒绝把长期成员 token 放进 WebSocket URL 的旧客户端。
+
 ## 6. 更新第二实例
 
 第二实例使用 `deploy/docker-compose.secondary.yml`，共享主实例的 Caddy 网络，但不共享

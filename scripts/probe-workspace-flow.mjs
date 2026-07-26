@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { WebSocket } from "ws";
 
 const dataDir = await mkdtemp(join(tmpdir(), "codex-collab-flow-"));
 const port = 43_000 + Math.floor(Math.random() * 1_000);
@@ -62,6 +63,54 @@ async function waitForRelay() {
   throw new Error(`Relay did not start. Output: ${relayOutput.slice(-1_000)}`);
 }
 
+async function connectRealtime(ticket) {
+  return new Promise((resolveConnection, rejectConnection) => {
+    const url = new URL("/v1/realtime", origin);
+    url.protocol = "ws:";
+    url.searchParams.set("ticket", ticket);
+    const socket = new WebSocket(url, { origin });
+    const timer = setTimeout(() => {
+      socket.terminate();
+      rejectConnection(new Error("Realtime connection timed out"));
+    }, 5_000);
+    socket.once("message", (data) => {
+      clearTimeout(timer);
+      resolveConnection({ socket, envelope: JSON.parse(String(data)) });
+    });
+    socket.once("error", (error) => {
+      clearTimeout(timer);
+      rejectConnection(error);
+    });
+  });
+}
+
+async function expectRealtimeTicketRejected(ticket) {
+  return new Promise((resolveRejection, rejectRejection) => {
+    const url = new URL("/v1/realtime", origin);
+    url.protocol = "ws:";
+    url.searchParams.set("ticket", ticket);
+    const socket = new WebSocket(url, { origin });
+    const timer = setTimeout(() => {
+      socket.terminate();
+      rejectRejection(new Error("Reused realtime ticket was not rejected"));
+    }, 5_000);
+    socket.once("unexpected-response", (_request, response) => {
+      clearTimeout(timer);
+      response.resume();
+      if (response.statusCode === 401) {
+        resolveRejection();
+      } else {
+        rejectRejection(
+          new Error(`Reused realtime ticket returned ${response.statusCode}`),
+        );
+      }
+    });
+    socket.once("error", () => {
+      // ws also emits an error after a rejected HTTP upgrade; unexpected-response owns the result.
+    });
+  });
+}
+
 try {
   await waitForRelay();
   const created = await request("/v1/sessions", {
@@ -69,6 +118,19 @@ try {
     body: JSON.stringify({ name: "Code flow", ownerDisplayName: "Owner" }),
   });
   const ownerHeaders = { authorization: `Bearer ${created.memberToken}` };
+  const realtimeTicket = await request(
+    `/v1/sessions/${created.session.id}/realtime-tickets`,
+    { method: "POST", headers: ownerHeaders, body: "{}" },
+  );
+  const realtime = await connectRealtime(realtimeTicket.ticket);
+  if (
+    realtime.envelope.type !== "ready" ||
+    realtime.envelope.sessionId !== created.session.id
+  ) {
+    throw new Error("Realtime ticket returned an unexpected ready envelope");
+  }
+  realtime.socket.close();
+  await expectRealtimeTicketRejected(realtimeTicket.ticket);
   const pairing = await request(`/v1/sessions/${created.session.id}/host-pairings`, {
     method: "POST",
     headers: ownerHeaders,
@@ -235,6 +297,7 @@ try {
       ok: true,
       checks: [
         "owner session",
+        "one-time realtime ticket",
         "one-time host pairing",
         "task catalog",
         "pending-member denial",

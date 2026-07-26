@@ -59,12 +59,15 @@ interface MessageRow {
   created_at: string;
 }
 
-interface MessageAttachmentRow {
+interface MessageAttachmentMetadataRow {
   id: string;
   message_id: string;
   name: string;
   media_type: string;
   size: number;
+}
+
+interface MessageAttachmentRow extends MessageAttachmentMetadataRow {
   content: Uint8Array;
 }
 
@@ -95,11 +98,14 @@ interface WorkspaceStateRow {
   synced_at: string | null;
 }
 
-interface WorkspaceFileRow {
+interface WorkspaceFileMetadataRow {
   path: string;
   size: number;
   modified_at: string;
   sha256: string;
+}
+
+interface WorkspaceFileRow extends WorkspaceFileMetadataRow {
   content: string;
 }
 
@@ -206,7 +212,9 @@ export class SessionStore {
 
   constructor(filename = ":memory:") {
     this.db = new DatabaseSync(filename);
-    this.db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
+    this.db.exec(
+      "PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;",
+    );
     this.migrate();
   }
 
@@ -1397,20 +1405,24 @@ export class SessionStore {
                    m.codex_turn_id, m.completed_at, m.created_at
             FROM messages m JOIN members mb ON mb.id = m.sender_member_id
             WHERE m.session_id = ? AND m.created_at > ?
-            ORDER BY m.created_at ASC LIMIT 500
+            ORDER BY m.created_at ASC, m.id ASC LIMIT 500
           `)
           .all(sessionId, after) as unknown as MessageRow[])
       : (this.db
           .prepare(`
-            SELECT m.id, m.session_id, m.sender_member_id, mb.display_name AS sender_display_name,
-                   m.kind, m.body, m.codex_options_json, m.delivery_status,
-                   m.codex_turn_id, m.completed_at, m.created_at
-            FROM messages m JOIN members mb ON mb.id = m.sender_member_id
-            WHERE m.session_id = ?
-            ORDER BY m.created_at ASC LIMIT 500
+            SELECT * FROM (
+              SELECT m.id, m.session_id, m.sender_member_id,
+                     mb.display_name AS sender_display_name,
+                     m.kind, m.body, m.codex_options_json, m.delivery_status,
+                     m.codex_turn_id, m.completed_at, m.created_at
+              FROM messages m JOIN members mb ON mb.id = m.sender_member_id
+              WHERE m.session_id = ?
+              ORDER BY m.created_at DESC, m.id DESC LIMIT 500
+            ) AS recent
+            ORDER BY recent.created_at ASC, recent.id ASC
           `)
           .all(sessionId) as unknown as MessageRow[]);
-    return rows.map((row) => this.toMessage(row));
+    return this.toMessages(rows);
   }
 
   getMessageAttachment(
@@ -1673,14 +1685,34 @@ export class SessionStore {
     const syncedAt = now();
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      this.db.prepare("DELETE FROM workspace_files WHERE session_id = ?").run(sessionId);
-      const insertFile = this.db.prepare(`
+      const incomingPaths = new Set(input.files.map((file) => file.path));
+      const existingPaths = this.db
+        .prepare("SELECT path FROM workspace_files WHERE session_id = ?")
+        .all(sessionId) as unknown as Array<{ path: string }>;
+      const deleteFile = this.db.prepare(
+        "DELETE FROM workspace_files WHERE session_id = ? AND path = ?",
+      );
+      for (const existing of existingPaths) {
+        if (!incomingPaths.has(existing.path)) {
+          deleteFile.run(sessionId, existing.path);
+        }
+      }
+      const upsertFile = this.db.prepare(`
         INSERT INTO workspace_files
           (session_id, path, size, modified_at, sha256, content)
         VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(session_id, path) DO UPDATE SET
+          size = excluded.size,
+          modified_at = excluded.modified_at,
+          sha256 = excluded.sha256,
+          content = excluded.content
+        WHERE workspace_files.size <> excluded.size
+           OR workspace_files.modified_at <> excluded.modified_at
+           OR workspace_files.sha256 <> excluded.sha256
+           OR workspace_files.content <> excluded.content
       `);
       for (const file of input.files) {
-        insertFile.run(
+        upsertFile.run(
           sessionId,
           file.path,
           file.size,
@@ -1777,10 +1809,10 @@ export class SessionStore {
       fullCatalog.find((thread) => thread.id === state.selected_thread_id) ?? null;
     const rows = this.db
       .prepare(`
-        SELECT path, size, modified_at, sha256, content
+        SELECT path, size, modified_at, sha256
         FROM workspace_files WHERE session_id = ? ORDER BY path ASC
       `)
-      .all(sessionId) as unknown as WorkspaceFileRow[];
+      .all(sessionId) as unknown as WorkspaceFileMetadataRow[];
     return {
       hostConnected: true,
       hostDeviceLabel: state.host_device_label,
@@ -1855,22 +1887,35 @@ export class SessionStore {
     if (!row) {
       throw new ProtocolError(404, "message_not_found", "Message was not found");
     }
-    return this.toMessage(row);
+    return this.toMessages([row])[0]!;
   }
 
-  private toMessage(row: MessageRow): Message {
+  private toMessages(rows: MessageRow[]): Message[] {
+    if (rows.length === 0) return [];
+    const placeholders = rows.map(() => "?").join(", ");
     const attachmentRows = this.db
       .prepare(`
-        SELECT id, message_id, name, media_type, size, content
-        FROM message_attachments WHERE message_id = ? ORDER BY rowid ASC
+        SELECT id, message_id, name, media_type, size
+        FROM message_attachments
+        WHERE message_id IN (${placeholders})
+        ORDER BY rowid ASC
       `)
-      .all(row.id) as unknown as MessageAttachmentRow[];
-    const attachments: MessageAttachment[] = attachmentRows.map((attachment) => ({
-      id: attachment.id,
-      name: attachment.name,
-      mediaType: attachment.media_type,
-      size: attachment.size,
-    }));
+      .all(...rows.map((row) => row.id)) as unknown as MessageAttachmentMetadataRow[];
+    const attachmentsByMessage = new Map<string, MessageAttachment[]>();
+    for (const attachment of attachmentRows) {
+      const attachments = attachmentsByMessage.get(attachment.message_id) ?? [];
+      attachments.push({
+        id: attachment.id,
+        name: attachment.name,
+        mediaType: attachment.media_type,
+        size: attachment.size,
+      });
+      attachmentsByMessage.set(attachment.message_id, attachments);
+    }
+    return rows.map((row) => this.toMessage(row, attachmentsByMessage.get(row.id) ?? []));
+  }
+
+  private toMessage(row: MessageRow, attachments: MessageAttachment[]): Message {
     return {
       id: row.id,
       sessionId: row.session_id,
@@ -2080,7 +2125,7 @@ export class SessionStore {
     return JSON.parse(value) as CodexRecordEntry[];
   }
 
-  private toWorkspaceFile(row: WorkspaceFileRow): WorkspaceFile {
+  private toWorkspaceFile(row: WorkspaceFileMetadataRow): WorkspaceFile {
     return {
       path: row.path,
       size: row.size,

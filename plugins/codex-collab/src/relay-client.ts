@@ -13,6 +13,7 @@ import type {
   MessageAttachmentInput,
   MessageDeliveryStatus,
   MessageKind,
+  RealtimeTicketResponse,
   WorkspaceFileContent,
   WorkspaceSummary,
 } from "@codex-collab/protocol";
@@ -22,6 +23,17 @@ interface RelayErrorBody {
     code?: string;
     message?: string;
   };
+}
+
+export class RelayRequestError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "RelayRequestError";
+  }
 }
 
 export class RelayClient {
@@ -82,6 +94,17 @@ export class RelayClient {
       { headers: { authorization: `Bearer ${memberToken}` } },
     );
     return result.member;
+  }
+
+  async createRealtimeTicket(
+    sessionId: string,
+    memberToken: string,
+  ): Promise<RealtimeTicketResponse> {
+    return this.request(`/v1/sessions/${encodeURIComponent(sessionId)}/realtime-tickets`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${memberToken}` },
+      body: "{}",
+    });
   }
 
   async listMembers(sessionId: string, memberToken: string): Promise<Member[]> {
@@ -292,7 +315,11 @@ export class RelayClient {
     });
     const body = (await response.json()) as T & RelayErrorBody;
     if (!response.ok) {
-      throw new Error(body.error?.message ?? `Relay request failed with ${response.status}`);
+      throw new RelayRequestError(
+        response.status,
+        body.error?.code ?? "request_failed",
+        body.error?.message ?? `Relay request failed with ${response.status}`,
+      );
     }
     return body;
   }

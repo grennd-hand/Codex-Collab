@@ -3,7 +3,14 @@ services:
     build:
       context: ..
       dockerfile: apps/relay/Dockerfile
+    init: true
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    mem_limit: 512m
     environment:
       HOST: 0.0.0.0
       PORT: 4177
@@ -11,6 +18,7 @@ services:
       CODEX_COLLAB_DATA_DIR: /data
       CODEX_COLLAB_PUBLIC_URL: https://${CODEX_COLLAB_DOMAIN}
       CODEX_COLLAB_TRUST_PROXY: "1"
+      CODEX_COLLAB_ALLOW_LEGACY_REALTIME_TOKENS: ${CODEX_COLLAB_ALLOW_LEGACY_REALTIME_TOKENS:-1}
     volumes:
       - relay-data:/data
     expose:
@@ -31,6 +39,11 @@ services:
       collab:
         aliases:
           - primary-relay
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   caddy:
     image: caddy:2-alpine

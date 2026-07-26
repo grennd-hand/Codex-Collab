@@ -6,6 +6,7 @@ import {
   type ServerResponse,
 } from "node:http";
 import { dirname, join } from "node:path";
+import type { Duplex } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { WebSocket, WebSocketServer } from "ws";
 import type {
@@ -37,6 +38,10 @@ import {
   type PasskeyRequestConfig,
 } from "./account-auth.js";
 import { SessionStore, type AccountSessionIdentity } from "./session-store.js";
+import {
+  RealtimeTicketStore,
+  type RealtimeTicketIdentity,
+} from "./realtime-tickets.js";
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 const relayRoot = join(moduleDir, "..");
@@ -51,14 +56,21 @@ const configuredPasskeyOrigin =
 const configuredPasskeyRpId = process.env.CODEX_COLLAB_PASSKEY_RP_ID;
 const configuredPasskeyRpName = process.env.CODEX_COLLAB_PASSKEY_RP_NAME;
 const trustProxy = process.env.CODEX_COLLAB_TRUST_PROXY === "1";
+const allowLegacyRealtimeTokens =
+  process.env.CODEX_COLLAB_ALLOW_LEGACY_REALTIME_TOKENS !== "0";
 
 mkdirSync(dataDir, { recursive: true });
 const store = new SessionStore(databasePath);
 const accountAuth = new AccountAuthService(store);
+const realtimeTickets = new RealtimeTicketStore();
 const socketsBySession = new Map<string, Set<WebSocket>>();
 const socketsByAccountSession = new Map<string, Set<WebSocket>>();
-const webSockets = new WebSocketServer({ noServer: true });
-const passkeyAttempts = new Map<string, { count: number; resetAt: number }>();
+const webSockets = new WebSocketServer({
+  noServer: true,
+  maxPayload: 64 * 1024,
+  perMessageDeflate: false,
+});
+const requestAttempts = new Map<string, { count: number; resetAt: number }>();
 
 function sendJson(
   response: ServerResponse,
@@ -108,7 +120,10 @@ function sendAttachment(
   response.end(Buffer.from(attachment.content));
 }
 
-async function readJson(request: IncomingMessage): Promise<Record<string, unknown>> {
+async function readJson(
+  request: IncomingMessage,
+  maxBytes = 128_000,
+): Promise<Record<string, unknown>> {
   const contentType = request.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase();
   if (contentType !== "application/json") {
     throw new ProtocolError(
@@ -117,12 +132,16 @@ async function readJson(request: IncomingMessage): Promise<Record<string, unknow
       "JSON requests require Content-Type: application/json",
     );
   }
+  const contentLength = Number(request.headers["content-length"]);
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw new ProtocolError(413, "payload_too_large", "Request body is too large");
+  }
   const chunks: Buffer[] = [];
   let length = 0;
   for await (const chunk of request) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     length += buffer.length;
-    if (length > 9_000_000) {
+    if (length > maxBytes) {
       throw new ProtocolError(413, "payload_too_large", "Request body is too large");
     }
     chunks.push(buffer);
@@ -416,28 +435,43 @@ function assertAccountRequestOrigin(
   }
 }
 
-function enforcePasskeyRateLimit(
+function clientAddress(request: IncomingMessage): string {
+  const forwarded = request.headers["x-forwarded-for"];
+  return (
+    (trustProxy && typeof forwarded === "string"
+      ? forwarded.split(",", 1)[0]?.trim()
+      : request.socket.remoteAddress) || "unknown"
+  );
+}
+
+function enforceRateLimit(
   request: IncomingMessage,
   bucket: string,
   limit = 20,
+  windowMs = 5 * 60_000,
 ): void {
-  const forwarded = request.headers["x-forwarded-for"];
-  const address =
-    trustProxy && typeof forwarded === "string"
-      ? forwarded.split(",", 1)[0]?.trim()
-      : request.socket.remoteAddress;
-  const key = `${bucket}:${address || "unknown"}`;
+  const key = `${bucket}:${clientAddress(request)}`;
   const currentTime = Date.now();
-  const existing = passkeyAttempts.get(key);
+  if (requestAttempts.size >= 10_000) {
+    for (const [attemptKey, attempt] of requestAttempts) {
+      if (attempt.resetAt <= currentTime) requestAttempts.delete(attemptKey);
+    }
+    while (requestAttempts.size >= 10_000) {
+      const oldest = requestAttempts.keys().next().value as string | undefined;
+      if (!oldest) break;
+      requestAttempts.delete(oldest);
+    }
+  }
+  const existing = requestAttempts.get(key);
   if (!existing || existing.resetAt <= currentTime) {
-    passkeyAttempts.set(key, { count: 1, resetAt: currentTime + 5 * 60_000 });
+    requestAttempts.set(key, { count: 1, resetAt: currentTime + windowMs });
     return;
   }
   if (existing.count >= limit) {
     throw new ProtocolError(
       429,
       "rate_limited",
-      "Too many passkey attempts; try again later",
+      "Too many requests; try again later",
     );
   }
   existing.count += 1;
@@ -509,9 +543,23 @@ function broadcast(sessionId: string, type: RealtimeEnvelope["type"], payload: u
   const data = JSON.stringify(envelope);
   for (const socket of socketsBySession.get(sessionId) ?? []) {
     if (socket.readyState === WebSocket.OPEN) {
-      socket.send(data);
+      if (socket.bufferedAmount > 1_000_000) {
+        socket.terminate();
+        continue;
+      }
+      socket.send(data, (error) => {
+        if (error) socket.terminate();
+      });
     }
   }
+}
+
+function rejectUpgrade(socket: Duplex, statusCode: 401 | 403 | 404): void {
+  const reason =
+    statusCode === 401 ? "Unauthorized" : statusCode === 403 ? "Forbidden" : "Not Found";
+  socket.end(
+    `HTTP/1.1 ${statusCode} ${reason}\r\nConnection: close\r\nContent-Length: 0\r\nCache-Control: no-store\r\n\r\n`,
+  );
 }
 
 function closeAccountSessionSockets(accountSessionId: string): void {
@@ -589,7 +637,7 @@ const server = createServer(async (request, response) => {
     ) {
       const config = passkeyConfig(request);
       assertAccountRequestOrigin(request, config);
-      enforcePasskeyRateLimit(request, "registration-options", 10);
+      enforceRateLimit(request, "registration-options", 10);
       const body = await readJson(request);
       const result = await accountAuth.beginRegistration(
         requiredString(body.displayName, "displayName", 80),
@@ -612,7 +660,7 @@ const server = createServer(async (request, response) => {
     ) {
       const config = passkeyConfig(request);
       assertAccountRequestOrigin(request, config);
-      enforcePasskeyRateLimit(request, "registration-verify", 15);
+      enforceRateLimit(request, "registration-verify", 15);
       const body = await readJson(request);
       const ceremonyToken = cookieValue(
         request,
@@ -650,7 +698,7 @@ const server = createServer(async (request, response) => {
     ) {
       const config = passkeyConfig(request);
       assertAccountRequestOrigin(request, config);
-      enforcePasskeyRateLimit(request, "authentication-options", 20);
+      enforceRateLimit(request, "authentication-options", 20);
       await readJson(request);
       const result = await accountAuth.beginAuthentication(config);
       sendJson(
@@ -670,7 +718,7 @@ const server = createServer(async (request, response) => {
     ) {
       const config = passkeyConfig(request);
       assertAccountRequestOrigin(request, config);
-      enforcePasskeyRateLimit(request, "authentication-verify", 20);
+      enforceRateLimit(request, "authentication-verify", 20);
       const body = await readJson(request);
       const ceremonyToken = cookieValue(
         request,
@@ -772,6 +820,7 @@ const server = createServer(async (request, response) => {
     }
 
     if (method === "POST" && url.pathname === "/v1/sessions") {
+      enforceRateLimit(request, "session-create", 20, 15 * 60_000);
       const body = await readJson(request);
       const account = optionalConfiguredAccountForWrite(request);
       const result = store.createSession(
@@ -785,6 +834,7 @@ const server = createServer(async (request, response) => {
     }
 
     if (method === "POST" && url.pathname === "/v1/invites/join") {
+      enforceRateLimit(request, "invite-join", 30);
       const body = await readJson(request);
       const account = optionalConfiguredAccountForWrite(request);
       const result = store.joinInvite(
@@ -799,6 +849,7 @@ const server = createServer(async (request, response) => {
     }
 
     if (method === "POST" && url.pathname === "/v1/host-pairings/claim") {
+      enforceRateLimit(request, "host-pairing-claim", 30);
       const body = await readJson(request);
       const result = store.claimHostPairing(
         requiredString(body.pairingToken, "pairingToken", 200),
@@ -898,6 +949,25 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    const realtimeTicketMatch = url.pathname.match(
+      /^\/v1\/sessions\/([^/]+)\/realtime-tickets$/,
+    );
+    if (method === "POST" && realtimeTicketMatch?.[1]) {
+      enforceRateLimit(request, "realtime-ticket", 120, 60_000);
+      await readJson(request, 4_096);
+      const sessionId = realtimeTicketMatch[1];
+      const memberToken = bearerToken(request);
+      const member = store.authenticateRealtime(sessionId, memberToken);
+      const ticket = realtimeTickets.issue({
+        sessionId,
+        member,
+        session: store.getSession(sessionId),
+        accountSessionId: store.accountSessionForMemberToken(sessionId, memberToken),
+      });
+      sendJson(response, 201, ticket);
+      return;
+    }
+
     const membersMatch = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/members$/);
     if (method === "GET" && membersMatch?.[1]) {
       sendJson(response, 200, {
@@ -929,7 +999,8 @@ const server = createServer(async (request, response) => {
       return;
     }
     if (messagesMatch?.[1] && method === "POST") {
-      const body = await readJson(request);
+      enforceRateLimit(request, "message-create", 120, 60_000);
+      const body = await readJson(request, 9_000_000);
       const kind = body.kind ?? "chat";
       if (kind !== "chat" && kind !== "codex_prompt" && kind !== "codex_stop") {
         throw new ProtocolError(
@@ -1094,7 +1165,7 @@ const server = createServer(async (request, response) => {
       /^\/v1\/sessions\/([^/]+)\/workspace\/history$/,
     );
     if (method === "PUT" && workspaceHistoryMatch?.[1]) {
-      const body = await readJson(request);
+      const body = await readJson(request, 3_000_000);
       const workspace = store.publishWorkspaceHistory(
         workspaceHistoryMatch[1],
         bearerToken(request),
@@ -1116,7 +1187,7 @@ const server = createServer(async (request, response) => {
       /^\/v1\/sessions\/([^/]+)\/workspace\/snapshot$/,
     );
     if (method === "PUT" && workspaceSnapshotMatch?.[1]) {
-      const body = await readJson(request);
+      const body = await readJson(request, 9_000_000);
       const workspace = store.publishWorkspaceSnapshot(
         workspaceSnapshotMatch[1],
         bearerToken(request),
@@ -1161,7 +1232,7 @@ server.on("upgrade", (request, socket, head) => {
   try {
     const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
     if (url.pathname !== "/v1/realtime") {
-      socket.destroy();
+      rejectUpgrade(socket, 404);
       return;
     }
     if (request.headers.origin) {
@@ -1169,20 +1240,31 @@ server.on("upgrade", (request, socket, head) => {
         ? new URL(configuredPasskeyOrigin).origin
         : `http://${request.headers.host ?? "localhost"}`;
       if (request.headers.origin !== expectedOrigin) {
-        socket.destroy();
+        rejectUpgrade(socket, 403);
         return;
       }
     }
-    const sessionId = url.searchParams.get("sessionId");
-    const token = url.searchParams.get("token");
-    if (!sessionId || !token) {
-      socket.destroy();
-      return;
+    const ticket = url.searchParams.get("ticket");
+    let identity: RealtimeTicketIdentity;
+    if (ticket) {
+      identity = realtimeTickets.consume(ticket);
+    } else {
+      const sessionId = url.searchParams.get("sessionId");
+      const token = url.searchParams.get("token");
+      if (!allowLegacyRealtimeTokens || !sessionId || !token) {
+        rejectUpgrade(socket, 401);
+        return;
+      }
+      identity = {
+        sessionId,
+        member: store.authenticateRealtime(sessionId, token),
+        accountSessionId: store.accountSessionForMemberToken(sessionId, token),
+        session: store.getSession(sessionId),
+      };
     }
-    const member = store.authenticateRealtime(sessionId, token);
-    const accountSessionId = store.accountSessionForMemberToken(sessionId, token);
-    const session = store.getSession(sessionId);
+    const { sessionId, member, accountSessionId, session } = identity;
     webSockets.handleUpgrade(request, socket, head, (webSocket) => {
+      let alive = true;
       const set = socketsBySession.get(sessionId) ?? new Set<WebSocket>();
       set.add(webSocket);
       socketsBySession.set(sessionId, set);
@@ -1200,6 +1282,12 @@ server.on("upgrade", (request, socket, head) => {
           sentAt: new Date().toISOString(),
         } satisfies RealtimeEnvelope),
       );
+      webSocket.on("pong", () => {
+        alive = true;
+      });
+      webSocket.on("error", () => {
+        webSocket.terminate();
+      });
       webSocket.on("close", () => {
         set.delete(webSocket);
         if (set.size === 0) {
@@ -1213,9 +1301,24 @@ server.on("upgrade", (request, socket, head) => {
           }
         }
       });
+      const heartbeat = setInterval(() => {
+        if (!alive) {
+          webSocket.terminate();
+          return;
+        }
+        alive = false;
+        webSocket.ping();
+      }, 30_000);
+      heartbeat.unref();
+      webSocket.once("close", () => clearInterval(heartbeat));
     });
-  } catch {
-    socket.destroy();
+  } catch (error) {
+    const statusCode =
+      error instanceof ProtocolError &&
+      (error.statusCode === 401 || error.statusCode === 403 || error.statusCode === 404)
+        ? error.statusCode
+        : 401;
+    rejectUpgrade(socket, statusCode);
   }
 });
 

@@ -3,9 +3,11 @@ import { dirname, join } from "node:path";
 import type { RealtimeEnvelope } from "@codex-collab/protocol";
 import { CodexAppServerClient } from "./app-server-client.js";
 import { localProfilePath, LocalProfileStore } from "./local-profile.js";
+import { RelayClient, RelayRequestError } from "./relay-client.js";
 import { WorkspaceSyncService } from "./workspace-sync-service.js";
 
-const intervalMs = 1_000;
+const fallbackIntervalMs = 1_000;
+const realtimeSafetyIntervalMs = 5_000;
 const lockPath = join(dirname(localProfilePath()), "sync-worker.json");
 
 function processIsRunning(pid: number): boolean {
@@ -74,6 +76,11 @@ let syncRequested = false;
 let realtimeSocket: WebSocket | null = null;
 let realtimeProfileKey: string | null = null;
 let reconnectTimer: NodeJS.Timeout | null = null;
+let reconnectAttempt = 0;
+let realtimeConnecting = false;
+let realtimeConnectionEpoch = 0;
+let blockedRealtimeProfileKey: string | null = null;
+let lastPeriodicSyncAt = 0;
 
 async function runSync(): Promise<void> {
   if (stopping) return;
@@ -112,6 +119,8 @@ async function forwardRealtimeCommand(): Promise<void> {
 }
 
 function closeRealtimeConnection(): void {
+  realtimeConnectionEpoch += 1;
+  realtimeConnecting = false;
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
@@ -127,29 +136,95 @@ function closeRealtimeConnection(): void {
   }
 }
 
+function reconnectDelay(attempt: number): number {
+  const base = Math.min(30_000, 1_000 * 2 ** Math.min(attempt, 5));
+  return Math.round(base * (0.8 + Math.random() * 0.4));
+}
+
+function scheduleRealtimeReconnect(profileKey: string): void {
+  if (stopping || realtimeProfileKey !== profileKey || reconnectTimer) return;
+  const delay = reconnectDelay(reconnectAttempt);
+  reconnectAttempt += 1;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    void ensureRealtimeConnection();
+  }, delay);
+  reconnectTimer.unref();
+}
+
 async function ensureRealtimeConnection(): Promise<void> {
   const profile = await profiles.read();
   if (!profile || profile.role !== "owner") {
     realtimeProfileKey = null;
+    blockedRealtimeProfileKey = null;
+    reconnectAttempt = 0;
     closeRealtimeConnection();
     return;
   }
-  const profileKey = `${profile.relayUrl}\n${profile.sessionId}`;
+  const profileKey = `${profile.relayUrl}\n${profile.sessionId}\n${profile.memberToken}`;
+  if (blockedRealtimeProfileKey === profileKey) return;
   if (
     realtimeProfileKey === profileKey &&
-    realtimeSocket &&
-    realtimeSocket.readyState < WebSocket.CLOSING
+    ((realtimeSocket && realtimeSocket.readyState < WebSocket.CLOSING) ||
+      realtimeConnecting ||
+      reconnectTimer)
   ) {
     return;
   }
-  closeRealtimeConnection();
+  if (realtimeProfileKey !== profileKey) {
+    closeRealtimeConnection();
+    reconnectAttempt = 0;
+    blockedRealtimeProfileKey = null;
+  }
   realtimeProfileKey = profileKey;
+  const connectionEpoch = realtimeConnectionEpoch;
+  realtimeConnecting = true;
+  let ticket: string | null = null;
+  let useLegacyRealtime = false;
+  try {
+    ticket = (
+      await new RelayClient(profile.relayUrl).createRealtimeTicket(
+        profile.sessionId,
+        profile.memberToken,
+      )
+    ).ticket;
+  } catch (error) {
+    realtimeConnecting = false;
+    if (connectionEpoch !== realtimeConnectionEpoch || realtimeProfileKey !== profileKey) return;
+    if (error instanceof RelayRequestError && error.status === 404) {
+      useLegacyRealtime = true;
+    } else if (
+      error instanceof RelayRequestError &&
+      (error.status === 401 || error.status === 403)
+    ) {
+      blockedRealtimeProfileKey = profileKey;
+      console.error(
+        "[codex-collab realtime] Credentials were rejected; pair the host again to reconnect",
+      );
+      return;
+    } else {
+      scheduleRealtimeReconnect(profileKey);
+      return;
+    }
+  }
+  realtimeConnecting = false;
+  if (connectionEpoch !== realtimeConnectionEpoch || realtimeProfileKey !== profileKey) return;
   const url = new URL("/v1/realtime", profile.relayUrl);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  url.searchParams.set("sessionId", profile.sessionId);
-  url.searchParams.set("token", profile.memberToken);
+  if (useLegacyRealtime) {
+    url.searchParams.set("sessionId", profile.sessionId);
+    url.searchParams.set("token", profile.memberToken);
+  } else if (ticket) {
+    url.searchParams.set("ticket", ticket);
+  } else {
+    scheduleRealtimeReconnect(profileKey);
+    return;
+  }
   const socket = new WebSocket(url);
   realtimeSocket = socket;
+  socket.addEventListener("open", () => {
+    reconnectAttempt = 0;
+  });
   socket.addEventListener("message", (event) => {
     try {
       const envelope = JSON.parse(String(event.data)) as RealtimeEnvelope;
@@ -163,16 +238,16 @@ async function ensureRealtimeConnection(): Promise<void> {
       // Ignore malformed realtime payloads and retain polling as fallback.
     }
   });
-  socket.addEventListener("close", () => {
+  socket.addEventListener("close", (event) => {
     if (realtimeSocket === socket) {
       realtimeSocket = null;
     }
+    if (event.code === 4001) {
+      blockedRealtimeProfileKey = profileKey;
+      return;
+    }
     if (!stopping && realtimeProfileKey === profileKey) {
-      reconnectTimer = setTimeout(() => {
-        reconnectTimer = null;
-        void ensureRealtimeConnection();
-      }, 1_500);
-      reconnectTimer.unref();
+      scheduleRealtimeReconnect(profileKey);
     }
   });
   socket.addEventListener("error", () => {
@@ -195,8 +270,15 @@ async function stop(): Promise<void> {
 }
 
 const timer = setInterval(() => {
+  const currentTime = Date.now();
+  const desiredInterval =
+    realtimeSocket?.readyState === WebSocket.OPEN
+      ? realtimeSafetyIntervalMs
+      : fallbackIntervalMs;
+  if (currentTime - lastPeriodicSyncAt < desiredInterval) return;
+  lastPeriodicSyncAt = currentTime;
   void runSync();
-}, intervalMs);
+}, fallbackIntervalMs);
 process.on("SIGINT", () => void stop());
 process.on("SIGTERM", () => void stop());
 process.on("exit", () => {

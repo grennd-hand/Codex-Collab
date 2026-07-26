@@ -3,17 +3,30 @@ services:
     build:
       context: .
       dockerfile: apps/relay/Dockerfile
+    init: true
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    mem_limit: 512m
     environment:
       HOST: 0.0.0.0
       PORT: 4177
       CODEX_COLLAB_DATA_DIR: /data
       CODEX_COLLAB_PUBLIC_URL: ${CODEX_COLLAB_PUBLIC_URL:-}
       CODEX_COLLAB_TRUST_PROXY: ${CODEX_COLLAB_TRUST_PROXY:-0}
+      CODEX_COLLAB_ALLOW_LEGACY_REALTIME_TOKENS: ${CODEX_COLLAB_ALLOW_LEGACY_REALTIME_TOKENS:-1}
     volumes:
       - relay-data:/data
     ports:
       - "127.0.0.1:4177:4177"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   relay-data:

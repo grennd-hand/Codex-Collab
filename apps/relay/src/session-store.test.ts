@@ -20,6 +20,15 @@ afterEach(() => {
 });
 
 describe("SessionStore", () => {
+  it("configures SQLite to wait briefly for concurrent writers", () => {
+    const store = createStore();
+    const pragma = store.db.prepare("PRAGMA busy_timeout").get() as {
+      timeout: number;
+    };
+
+    expect(pragma.timeout).toBe(5_000);
+  });
+
   it("requires owner approval before an invited member can collaborate", () => {
     const store = createStore();
     const created = store.createSession("Launch room", "Owner");
@@ -288,6 +297,40 @@ describe("SessionStore", () => {
     expect(completed.completedAt).not.toBeNull();
   });
 
+  it("returns the most recent 500 messages in chronological order", () => {
+    const store = createStore();
+    const created = store.createSession("Long room", "Owner");
+    const insert = store.db.prepare(`
+      INSERT INTO messages
+        (id, session_id, sender_member_id, kind, body, codex_options_json,
+         delivery_status, codex_turn_id, completed_at, created_at)
+      VALUES (?, ?, ?, 'chat', ?, NULL, NULL, NULL, NULL, ?)
+    `);
+
+    store.db.exec("BEGIN IMMEDIATE");
+    try {
+      for (let index = 0; index < 501; index += 1) {
+        const suffix = index.toString().padStart(3, "0");
+        insert.run(
+          `message-${suffix}`,
+          created.session.id,
+          created.session.ownerMemberId,
+          `body-${suffix}`,
+          new Date(Date.UTC(2026, 6, 25, 0, 0, index)).toISOString(),
+        );
+      }
+      store.db.exec("COMMIT");
+    } catch (error) {
+      store.db.exec("ROLLBACK");
+      throw error;
+    }
+
+    const messages = store.listMessages(created.session.id, created.memberToken);
+    expect(messages).toHaveLength(500);
+    expect(messages[0]?.id).toBe("message-001");
+    expect(messages.at(-1)?.id).toBe("message-500");
+  });
+
   it("stores member chat files and rejects attachments on stop commands", () => {
     const store = createStore();
     const created = store.createSession("Chat files", "Owner");
@@ -553,6 +596,38 @@ describe("SessionStore", () => {
         },
       ],
     });
+
+    const rowBefore = store.db
+      .prepare(
+        "SELECT rowid FROM workspace_files WHERE session_id = ? AND path = 'README.md'",
+      )
+      .get(created.session.id) as { rowid: number };
+    store.publishWorkspaceSnapshot(created.session.id, host.memberToken, {
+      threadId: "thread-1",
+      history: [
+        {
+          id: "entry-1",
+          role: "user",
+          text: "Run the full test suite",
+          createdAt: "2026-07-25T00:00:00.000Z",
+        },
+      ],
+      files: [
+        {
+          path: "README.md",
+          content: "# Codex Collab",
+          size: 14,
+          modifiedAt: "2026-07-25T00:00:00.000Z",
+          sha256: "a".repeat(64),
+        },
+      ],
+    });
+    const rowAfter = store.db
+      .prepare(
+        "SELECT rowid FROM workspace_files WHERE session_id = ? AND path = 'README.md'",
+      )
+      .get(created.session.id) as { rowid: number };
+    expect(rowAfter.rowid).toBe(rowBefore.rowid);
 
     store.approveMember(created.session.id, created.memberToken, guest.member.id);
     const workspace = store.getWorkspace(created.session.id, guest.memberToken);

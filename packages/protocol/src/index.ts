@@ -316,6 +316,11 @@ export interface RealtimeEnvelope {
   sentAt: string;
 }
 
+export interface RealtimeTicketResponse {
+  ticket: string;
+  expiresAt: string;
+}
+
 export class ProtocolError extends Error {
   constructor(
     public readonly statusCode: number,
