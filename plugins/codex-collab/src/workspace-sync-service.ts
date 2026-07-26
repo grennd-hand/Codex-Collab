@@ -14,6 +14,7 @@ import {
 import { FileSandbox } from "./file-sandbox.js";
 import { LocalProfileStore, type LocalProfile } from "./local-profile.js";
 import { RelayClient } from "./relay-client.js";
+import { processNextWorkspaceFileOperation } from "./workspace-file-operations.js";
 import {
   buildCodexConfigSnapshot,
   buildWorkspaceSnapshot,
@@ -101,21 +102,27 @@ export async function forwardNextCodexPrompt(
   const messages =
     prefetchedMessages ??
     (await relay.listMessages(profile.sessionId, profile.memberToken));
+  const threadMessages = messages.filter(
+    (message) =>
+      message.kind !== "codex_prompt" && message.kind !== "codex_stop"
+        ? true
+        : message.workspaceThreadId === threadId,
+  );
   const forwardedMessageIds = profile.forwardedMessageIds ?? [];
   const pendingCommand = nextPendingCodexCommand(
-    messages,
+    threadMessages,
     forwardedMessageIds,
   );
   if (!pendingCommand) {
     return null;
   }
   const forwarded = new Set(forwardedMessageIds);
-  const submittedCommand = messages.some(
+  const submittedCommand = threadMessages.some(
     (message) =>
       (message.kind === "codex_prompt" || message.kind === "codex_stop") &&
       message.deliveryStatus === "submitted",
   );
-  const pendingStop = messages.find(
+  const pendingStop = threadMessages.find(
     (message) =>
       message.kind === "codex_stop" &&
       message.deliveryStatus === "queued" &&
@@ -180,7 +187,13 @@ export async function reconcileCodexCommandStatuses(
   const messages =
     prefetchedMessages ??
     (await relay.listMessages(profile.sessionId, profile.memberToken));
-  const tracked = messages.filter(
+  const threadMessages = messages.filter(
+    (message) =>
+      message.kind !== "codex_prompt" && message.kind !== "codex_stop"
+        ? true
+        : message.workspaceThreadId === threadId,
+  );
+  const tracked = threadMessages.filter(
     (message) =>
       (message.kind === "codex_prompt" || message.kind === "codex_stop") &&
       message.deliveryStatus === "submitted",
@@ -190,7 +203,7 @@ export async function reconcileCodexCommandStatuses(
   const latestTrackedPromptId =
     tracked.findLast((message) => message.kind === "codex_prompt")?.id ?? null;
   const stoppedTurnIds = new Set(
-    messages
+    threadMessages
       .filter(
         (message) =>
           message.kind === "codex_stop" &&
@@ -261,6 +274,7 @@ export class WorkspaceSyncService {
   private forwarding: Promise<string | null> | null = null;
   private marker: WorkspaceSyncMarker | null = null;
   private filesDirty = false;
+  private processingFileOperations: Promise<number> | null = null;
 
   constructor(
     private readonly profiles: LocalProfileStore,
@@ -296,6 +310,39 @@ export class WorkspaceSyncService {
       relay,
       runtimeBusy,
     );
+  }
+
+  async processPendingFileOperations(): Promise<number> {
+    if (this.processingFileOperations) return this.processingFileOperations;
+    const pending = (async () => {
+      const profile = await this.profiles.read();
+      if (!profile || profile.role !== "owner") return 0;
+      const relay = new RelayClient(profile.relayUrl);
+      const sandbox = await FileSandbox.create(profile.projectRoot);
+      let processed = 0;
+      while (processed < 20) {
+        const operation = await processNextWorkspaceFileOperation(
+          profile.sessionId,
+          profile.memberToken,
+          relay,
+          sandbox,
+        );
+        if (!operation) break;
+        processed += 1;
+        if (operation.kind === "write" && operation.status === "completed") {
+          this.filesDirty = true;
+        }
+      }
+      return processed;
+    })();
+    this.processingFileOperations = pending;
+    const clear = () => {
+      if (this.processingFileOperations === pending) {
+        this.processingFileOperations = null;
+      }
+    };
+    void pending.then(clear, clear);
+    return pending;
   }
 
   async sync(force = false): Promise<WorkspaceSyncResult> {

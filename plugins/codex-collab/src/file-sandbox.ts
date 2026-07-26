@@ -7,6 +7,7 @@ import {
   realpath,
   rename,
   stat,
+  unlink,
   writeFile,
 } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
@@ -20,6 +21,7 @@ export interface SharedFile {
 export interface ReadSharedFile {
   path: string;
   content: string;
+  size: number;
   sha256: string;
   modifiedAt: string;
 }
@@ -127,11 +129,21 @@ export class FileSandbox {
     if (metadata.size > 2_000_000) {
       throw new Error("File exceeds the 2 MB collaboration read limit");
     }
-    const content = await readFile(absolute, "utf8");
+    const bytes = await readFile(absolute);
+    let content: string;
+    try {
+      content = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch {
+      throw new Error("The collaboration editor supports UTF-8 text files only");
+    }
+    if (content.includes("\0")) {
+      throw new Error("The collaboration editor supports text files only");
+    }
     return {
       path: relative(this.root, absolute).split(sep).join("/"),
       content,
-      sha256: sha256(content),
+      size: metadata.size,
+      sha256: sha256(bytes),
       modifiedAt: metadata.mtime.toISOString(),
     };
   }
@@ -141,16 +153,15 @@ export class FileSandbox {
     content: string,
     expectedSha256?: string,
   ): Promise<ReadSharedFile> {
+    if (Buffer.byteLength(content) > 2_000_000) {
+      throw new Error("File exceeds the 2 MB collaboration write limit");
+    }
     const absolute = resolve(this.root, relativePath);
     if (isAbsolute(relativePath) || !isInside(this.root, absolute)) {
       throw new Error("Path is outside the approved shared root");
     }
 
-    await mkdir(dirname(absolute), { recursive: true });
-    const parentRealPath = await realpath(dirname(absolute));
-    if (!isInside(this.root, parentRealPath)) {
-      throw new Error("Path escapes the approved root through a symbolic link");
-    }
+    await this.ensureWritableParent(absolute);
 
     let currentHash: string | undefined;
     try {
@@ -177,9 +188,48 @@ export class FileSandbox {
     }
 
     const temporary = `${absolute}.${process.pid}.${Date.now()}.tmp`;
-    await writeFile(temporary, content, "utf8");
-    await rename(temporary, absolute);
+    try {
+      await writeFile(temporary, content, "utf8");
+      await rename(temporary, absolute);
+    } finally {
+      await unlink(temporary).catch(() => undefined);
+    }
     return this.read(relativePath);
+  }
+
+  private async ensureWritableParent(absolute: string): Promise<void> {
+    const parent = dirname(absolute);
+    let nearestExisting = parent;
+    for (;;) {
+      if (!isInside(this.root, nearestExisting)) {
+        throw new Error("Path is outside the approved shared root");
+      }
+      try {
+        const metadata = await lstat(nearestExisting);
+        if (metadata.isSymbolicLink()) {
+          const target = await realpath(nearestExisting);
+          if (!isInside(this.root, target)) {
+            throw new Error("Path escapes the approved root through a symbolic link");
+          }
+        } else if (!metadata.isDirectory()) {
+          throw new Error("A parent path is not a directory");
+        }
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        const next = dirname(nearestExisting);
+        if (next === nearestExisting) {
+          throw new Error("No writable parent exists inside the approved root");
+        }
+        nearestExisting = next;
+      }
+    }
+
+    await mkdir(parent, { recursive: true });
+    const parentRealPath = await realpath(parent);
+    if (!isInside(this.root, parentRealPath)) {
+      throw new Error("Path escapes the approved root through a symbolic link");
+    }
   }
 
   private async resolveExisting(relativePath: string): Promise<string> {

@@ -82,6 +82,7 @@ export function sanitizeCodexAssistantMessageText(text: string): string {
 
 export type MemberRole = "owner" | "editor";
 export type MemberStatus = "pending" | "approved" | "rejected" | "revoked";
+export type WorkspaceFileAccess = "read-only" | "workspace-write";
 export type RoomStatus = "open" | "closed";
 export type MessageKind = "chat" | "codex_prompt" | "codex_stop" | "system";
 export type MessageDeliveryStatus = "queued" | "submitted" | "completed" | "failed";
@@ -268,6 +269,7 @@ export interface Member {
   deviceLabel: string | null;
   role: MemberRole;
   status: MemberStatus;
+  workspaceFileAccess: WorkspaceFileAccess;
   createdAt: string;
   approvedAt: string | null;
 }
@@ -307,6 +309,7 @@ export interface Message {
   codexOptions: CodexPromptOptions | null;
   deliveryStatus: MessageDeliveryStatus | null;
   codexTurnId: string | null;
+  workspaceThreadId: string | null;
   completedAt: string | null;
   createdAt: string;
 }
@@ -373,6 +376,62 @@ export interface WorkspaceFileContent extends WorkspaceFile {
   content: string;
 }
 
+export type WorkspaceFileOperationKind = "read" | "write";
+export type WorkspaceFileOperationStatus =
+  | "queued"
+  | "processing"
+  | "completed"
+  | "failed";
+
+export interface WorkspaceFileOperation {
+  id: string;
+  sessionId: string;
+  requestedByMemberId: string;
+  requestedByDisplayName: string;
+  kind: WorkspaceFileOperationKind;
+  path: string;
+  expectedSha256: string | null;
+  status: WorkspaceFileOperationStatus;
+  resultFile: WorkspaceFileContent | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  requestedAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+export interface WorkspaceFileOperationClaim extends WorkspaceFileOperation {
+  requestContent: string | null;
+}
+
+export interface WorkspaceFileOperationEvent {
+  operationId: string;
+  requestedByMemberId: string;
+  kind: WorkspaceFileOperationKind;
+  path: string;
+  status: WorkspaceFileOperationStatus;
+  resultFile: WorkspaceFile | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+}
+
+export type CreateWorkspaceFileOperationRequest =
+  | {
+      kind: "read";
+      path: string;
+    }
+  | {
+      kind: "write";
+      path: string;
+      content: string;
+      /** Use an empty string only when the caller observed that the file did not exist. */
+      expectedSha256: string;
+    };
+
+export interface UpdateMemberWorkspaceFileAccessRequest {
+  workspaceFileAccess: WorkspaceFileAccess;
+}
+
 export interface WorkspaceSummary {
   hostConnected: boolean;
   hostDeviceLabel: string | null;
@@ -404,7 +463,8 @@ export interface RealtimeEnvelope {
     | "session.updated"
     | "member.updated"
     | "message.created"
-    | "workspace.updated";
+    | "workspace.updated"
+    | "file.operation.updated";
   sessionId: string;
   payload: unknown;
   sentAt: string;

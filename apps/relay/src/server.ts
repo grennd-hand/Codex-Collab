@@ -29,6 +29,8 @@ import {
   type RealtimeEnvelope,
   type RoomStatus,
   type WorkspaceFileContent,
+  type WorkspaceFileOperation,
+  type WorkspaceFileOperationEvent,
 } from "@codex-collab/protocol";
 import {
   parseCodexOptions,
@@ -289,6 +291,85 @@ function parseWorkspaceFiles(value: unknown): WorkspaceFileContent[] {
       modifiedAt: new Date(modifiedAt).toISOString(),
     };
   });
+}
+
+function parseWorkspaceFileOperationRequest(
+  body: Record<string, unknown>,
+):
+  | { kind: "read"; path: string }
+  | { kind: "write"; path: string; content: string; expectedSha256: string } {
+  const path = requiredString(body.path, "path", 500);
+  if (body.kind === "read") {
+    if (body.content !== undefined || body.expectedSha256 !== undefined) {
+      throw new ProtocolError(
+        400,
+        "invalid_request",
+        "Read operations do not accept content or expectedSha256",
+      );
+    }
+    return { kind: "read", path };
+  }
+  if (body.kind !== "write") {
+    throw new ProtocolError(400, "invalid_request", "kind must be read or write");
+  }
+  if (typeof body.content !== "string") {
+    throw new ProtocolError(400, "invalid_request", "content must be a string");
+  }
+  if (typeof body.expectedSha256 !== "string") {
+    throw new ProtocolError(
+      400,
+      "invalid_request",
+      "expectedSha256 is required for every write",
+    );
+  }
+  return {
+    kind: "write",
+    path,
+    content: body.content,
+    expectedSha256: body.expectedSha256,
+  };
+}
+
+function parseWorkspaceOperationResultFile(value: unknown): WorkspaceFileContent {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ProtocolError(400, "invalid_request", "file must be an object");
+  }
+  const record = value as Record<string, unknown>;
+  if (typeof record.content !== "string") {
+    throw new ProtocolError(400, "invalid_request", "file.content must be a string");
+  }
+  if (!Number.isInteger(record.size) || (record.size as number) < 0) {
+    throw new ProtocolError(400, "invalid_request", "file.size is invalid");
+  }
+  return {
+    path: requiredString(record.path, "file.path", 500),
+    content: record.content,
+    size: record.size as number,
+    modifiedAt: requiredString(record.modifiedAt, "file.modifiedAt", 40),
+    sha256: requiredString(record.sha256, "file.sha256", 64),
+  };
+}
+
+function toWorkspaceFileOperationEvent(
+  operation: WorkspaceFileOperation,
+): WorkspaceFileOperationEvent {
+  return {
+    operationId: operation.id,
+    requestedByMemberId: operation.requestedByMemberId,
+    kind: operation.kind,
+    path: operation.path,
+    status: operation.status,
+    resultFile: operation.resultFile
+      ? {
+          path: operation.resultFile.path,
+          size: operation.resultFile.size,
+          modifiedAt: operation.resultFile.modifiedAt,
+          sha256: operation.resultFile.sha256,
+        }
+      : null,
+    errorCode: operation.errorCode,
+    errorMessage: operation.errorMessage,
+  };
 }
 
 function parseMessageAttachments(value: unknown): Array<{
@@ -1007,6 +1088,36 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    const workspaceAccessMatch = url.pathname.match(
+      /^\/v1\/sessions\/([^/]+)\/members\/([^/]+)\/workspace-file-access$/,
+    );
+    if (
+      method === "PATCH" &&
+      workspaceAccessMatch?.[1] &&
+      workspaceAccessMatch[2]
+    ) {
+      const body = await readJson(request);
+      if (
+        body.workspaceFileAccess !== "read-only" &&
+        body.workspaceFileAccess !== "workspace-write"
+      ) {
+        throw new ProtocolError(
+          400,
+          "invalid_request",
+          "workspaceFileAccess must be read-only or workspace-write",
+        );
+      }
+      const member = store.updateMemberWorkspaceFileAccess(
+        workspaceAccessMatch[1],
+        bearerToken(request),
+        workspaceAccessMatch[2],
+        body.workspaceFileAccess,
+      );
+      broadcast(workspaceAccessMatch[1], "member.updated", member);
+      sendJson(response, 200, { member });
+      return;
+    }
+
     const messagesMatch = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/messages$/);
     if (messagesMatch?.[1] && method === "GET") {
       const after = url.searchParams.get("after") ?? undefined;
@@ -1219,6 +1330,149 @@ const server = createServer(async (request, response) => {
         syncedAt: workspace.syncedAt,
       });
       sendJson(response, 200, { workspace });
+      return;
+    }
+
+    const workspaceFileOperationClaimMatch = url.pathname.match(
+      /^\/v1\/sessions\/([^/]+)\/workspace\/file-operations\/claim$/,
+    );
+    if (method === "POST" && workspaceFileOperationClaimMatch?.[1]) {
+      await readJson(request, 4_096);
+      const result = store.claimNextWorkspaceFileOperation(
+        workspaceFileOperationClaimMatch[1],
+        bearerToken(request),
+      );
+      for (const rejected of result.rejected) {
+        broadcast(
+          workspaceFileOperationClaimMatch[1],
+          "file.operation.updated",
+          toWorkspaceFileOperationEvent(rejected),
+        );
+      }
+      if (result.operation) {
+        broadcast(
+          workspaceFileOperationClaimMatch[1],
+          "file.operation.updated",
+          toWorkspaceFileOperationEvent(result.operation),
+        );
+      }
+      sendJson(response, 200, { operation: result.operation });
+      return;
+    }
+
+    const workspaceFileOperationResultMatch = url.pathname.match(
+      /^\/v1\/sessions\/([^/]+)\/workspace\/file-operations\/([^/]+)\/result$/,
+    );
+    if (
+      method === "PATCH" &&
+      workspaceFileOperationResultMatch?.[1] &&
+      workspaceFileOperationResultMatch[2]
+    ) {
+      const body = await readJson(request, 2_100_000);
+      let input:
+        | { status: "completed"; file: WorkspaceFileContent }
+        | {
+            status: "failed";
+            errorCode: string;
+            errorMessage: string;
+            file?: WorkspaceFileContent | null;
+          };
+      if (body.status === "completed") {
+        input = {
+          status: "completed",
+          file: parseWorkspaceOperationResultFile(body.file),
+        };
+      } else if (body.status === "failed") {
+        input = {
+          status: "failed",
+          errorCode: requiredString(body.errorCode, "errorCode", 120),
+          errorMessage: requiredString(body.errorMessage, "errorMessage", 1_000),
+          ...(body.file === undefined || body.file === null
+            ? {}
+            : { file: parseWorkspaceOperationResultFile(body.file) }),
+        };
+      } else {
+        throw new ProtocolError(
+          400,
+          "invalid_request",
+          "status must be completed or failed",
+        );
+      }
+      const operation = store.completeWorkspaceFileOperation(
+        workspaceFileOperationResultMatch[1],
+        bearerToken(request),
+        workspaceFileOperationResultMatch[2],
+        input,
+      );
+      broadcast(
+        workspaceFileOperationResultMatch[1],
+        "file.operation.updated",
+        toWorkspaceFileOperationEvent(operation),
+      );
+      if (operation.resultFile) {
+        broadcast(workspaceFileOperationResultMatch[1], "workspace.updated", {
+          path: operation.resultFile.path,
+          sha256: operation.resultFile.sha256,
+          modifiedAt: operation.resultFile.modifiedAt,
+        });
+      }
+      sendJson(response, 200, { operation });
+      return;
+    }
+
+    const workspaceFileOperationMatch = url.pathname.match(
+      /^\/v1\/sessions\/([^/]+)\/workspace\/file-operations\/([^/]+)$/,
+    );
+    if (
+      method === "GET" &&
+      workspaceFileOperationMatch?.[1] &&
+      workspaceFileOperationMatch[2]
+    ) {
+      sendJson(response, 200, {
+        operation: store.getWorkspaceFileOperation(
+          workspaceFileOperationMatch[1],
+          bearerToken(request),
+          workspaceFileOperationMatch[2],
+        ),
+      });
+      return;
+    }
+
+    const workspaceFileOperationsMatch = url.pathname.match(
+      /^\/v1\/sessions\/([^/]+)\/workspace\/file-operations$/,
+    );
+    if (workspaceFileOperationsMatch?.[1] && method === "GET") {
+      const rawLimit = url.searchParams.get("limit");
+      const limit = optionalInteger(
+        rawLimit === null ? undefined : Number(rawLimit),
+        100,
+        "limit",
+        1,
+        200,
+      );
+      sendJson(response, 200, {
+        operations: store.listWorkspaceFileOperations(
+          workspaceFileOperationsMatch[1],
+          bearerToken(request),
+          limit,
+        ),
+      });
+      return;
+    }
+    if (workspaceFileOperationsMatch?.[1] && method === "POST") {
+      enforceRateLimit(request, "workspace-file-operation", 120, 60_000);
+      const body = await readJson(request, 2_100_000);
+      const operation = store.createWorkspaceFileOperation(
+        workspaceFileOperationsMatch[1],
+        bearerToken(request),
+        parseWorkspaceFileOperationRequest(body),
+      );
+      broadcast(
+        workspaceFileOperationsMatch[1],
+        "file.operation.updated",
+        toWorkspaceFileOperationEvent(operation),
+      );
+      sendJson(response, 202, { operation });
       return;
     }
 

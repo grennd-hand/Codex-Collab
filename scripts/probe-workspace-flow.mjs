@@ -1,10 +1,17 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { WebSocket } from "ws";
+import { FileSandbox } from "../plugins/codex-collab/dist/file-sandbox.js";
+import { RelayClient } from "../plugins/codex-collab/dist/relay-client.js";
+import { processNextWorkspaceFileOperation } from "../plugins/codex-collab/dist/workspace-file-operations.js";
 
 const dataDir = await mkdtemp(join(tmpdir(), "codex-collab-flow-"));
+const projectRoot = join(dataDir, "project");
+await mkdir(projectRoot, { recursive: true });
+await writeFile(join(projectRoot, "README.md"), "# initial\n", "utf8");
 const port = 43_000 + Math.floor(Math.random() * 1_000);
 const origin = `http://127.0.0.1:${port}`;
 const relayEntry = resolve("apps/relay/dist/server.js");
@@ -108,6 +115,23 @@ async function expectRealtimeTicketRejected(ticket) {
     socket.once("error", () => {
       // ws also emits an error after a rejected HTTP upgrade; unexpected-response owns the result.
     });
+  });
+}
+
+async function waitForRealtime(socket, predicate) {
+  return new Promise((resolveEvent, rejectEvent) => {
+    const timer = setTimeout(() => {
+      socket.off("message", onMessage);
+      rejectEvent(new Error("Expected realtime event was not received"));
+    }, 5_000);
+    const onMessage = (data) => {
+      const envelope = JSON.parse(String(data));
+      if (!predicate(envelope)) return;
+      clearTimeout(timer);
+      socket.off("message", onMessage);
+      resolveEvent(envelope);
+    };
+    socket.on("message", onMessage);
   });
 }
 
@@ -275,6 +299,127 @@ try {
   });
 
   const guestHeaders = { authorization: `Bearer ${guest.memberToken}` };
+  const readonlyWrite = await request(
+    `/v1/sessions/${created.session.id}/workspace/file-operations`,
+    {
+      method: "POST",
+      headers: guestHeaders,
+      body: JSON.stringify({
+        kind: "write",
+        path: "README.md",
+        content: "# denied\n",
+        expectedSha256: createHash("sha256").update("# initial\n").digest("hex"),
+      }),
+    },
+    403,
+  );
+  if (readonlyWrite.error?.code !== "workspace_read_only") {
+    throw new Error("Approved members must remain read-only until the owner grants access");
+  }
+  await request(
+    `/v1/sessions/${created.session.id}/members/${guest.member.id}/workspace-file-access`,
+    {
+      method: "PATCH",
+      headers: ownerHeaders,
+      body: JSON.stringify({ workspaceFileAccess: "workspace-write" }),
+    },
+  );
+  const guestRealtimeTicket = await request(
+    `/v1/sessions/${created.session.id}/realtime-tickets`,
+    { method: "POST", headers: guestHeaders, body: "{}" },
+  );
+  const guestRealtime = await connectRealtime(guestRealtimeTicket.ticket);
+  const originalHash = createHash("sha256").update("# initial\n").digest("hex");
+  const queuedEventPromise = waitForRealtime(
+    guestRealtime.socket,
+    (envelope) =>
+      envelope.type === "file.operation.updated" &&
+      envelope.payload?.status === "queued" &&
+      envelope.payload?.path === "README.md",
+  );
+  const queuedWrite = await request(
+    `/v1/sessions/${created.session.id}/workspace/file-operations`,
+    {
+      method: "POST",
+      headers: guestHeaders,
+      body: JSON.stringify({
+        kind: "write",
+        path: "README.md",
+        content: "# saved by IDE\n",
+        expectedSha256: originalHash,
+      }),
+    },
+    202,
+  );
+  if (queuedWrite.operation.status !== "queued" || queuedWrite.operation.completedAt !== null) {
+    throw new Error("A browser save must remain queued until the host writes it");
+  }
+  const queuedEvent = await queuedEventPromise;
+  if (queuedEvent.payload?.requestContent !== undefined || queuedEvent.payload?.content !== undefined) {
+    throw new Error("Realtime file operation events must not expose file content");
+  }
+  const relayClient = new RelayClient(origin);
+  const sandbox = await FileSandbox.create(projectRoot);
+  const completedWrite = await processNextWorkspaceFileOperation(
+    created.session.id,
+    claimed.memberToken,
+    relayClient,
+    sandbox,
+  );
+  if (
+    completedWrite?.id !== queuedWrite.operation.id ||
+    completedWrite.status !== "completed" ||
+    (await readFile(join(projectRoot, "README.md"), "utf8")) !== "# saved by IDE\n"
+  ) {
+    throw new Error("Host sandbox did not complete the queued IDE save");
+  }
+
+  const savedHash = completedWrite.resultFile.sha256;
+  await writeFile(join(projectRoot, "README.md"), "# host changed\n", "utf8");
+  const staleWrite = await request(
+    `/v1/sessions/${created.session.id}/workspace/file-operations`,
+    {
+      method: "POST",
+      headers: guestHeaders,
+      body: JSON.stringify({
+        kind: "write",
+        path: "README.md",
+        content: "# stale browser edit\n",
+        expectedSha256: savedHash,
+      }),
+    },
+    202,
+  );
+  const conflict = await processNextWorkspaceFileOperation(
+    created.session.id,
+    claimed.memberToken,
+    relayClient,
+    sandbox,
+  );
+  if (
+    conflict?.id !== staleWrite.operation.id ||
+    conflict.status !== "failed" ||
+    conflict.errorCode !== "file_conflict" ||
+    conflict.resultFile?.content !== "# host changed\n" ||
+    (await readFile(join(projectRoot, "README.md"), "utf8")) !== "# host changed\n"
+  ) {
+    throw new Error("Stale IDE save did not return the authoritative conflict safely");
+  }
+
+  const attributedPrompt = await request(
+    `/v1/sessions/${created.session.id}/messages`,
+    {
+      method: "POST",
+      headers: guestHeaders,
+      body: JSON.stringify({ kind: "codex_prompt", body: "Run focused tests" }),
+    },
+    201,
+  );
+  if (attributedPrompt.message.workspaceThreadId !== "thread-code-flow") {
+    throw new Error("Codex prompt was not attributed to the selected task");
+  }
+  guestRealtime.socket.close();
+
   const workspace = await request(`/v1/sessions/${created.session.id}/workspace`, {
     headers: guestHeaders,
   });
@@ -287,7 +432,7 @@ try {
     workspace.workspace.history.length !== 5 ||
     workspace.workspace.files.length !== 2 ||
     workspace.workspace.threads.length !== 0 ||
-    file.file.content !== "# Code-only loop\n"
+    file.file.content !== "# host changed\n"
   ) {
     throw new Error("Workspace flow returned an unexpected final state");
   }
@@ -306,6 +451,13 @@ try {
         "history import",
         "live history update without file replacement",
         "approved-member file read",
+        "default member read-only denial",
+        "owner write grant",
+        "durable queued operation",
+        "content-free realtime file event",
+        "host FileSandbox write completion",
+        "stale-hash conflict without overwrite",
+        "selected-task Codex prompt attribution",
       ],
     }),
   );

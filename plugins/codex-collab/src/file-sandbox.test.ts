@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -41,6 +41,20 @@ describe("FileSandbox", () => {
       FileConflictError,
     );
     expect(await readFile(path, "utf8")).toBe("changed elsewhere");
+  });
+
+  it("rejects a nested symlink escape before creating directories outside the root", async () => {
+    const root = await tempRoot();
+    const outside = await tempRoot();
+    await symlink(outside, join(root, "escape"), "junction");
+    const sandbox = await FileSandbox.create(root);
+
+    await expect(
+      sandbox.write("escape/new/danger.txt", "blocked", ""),
+    ).rejects.toThrow(/symbolic link/i);
+    await expect(readFile(join(outside, "new", "danger.txt"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("does not expose internal prompt attachment staging", async () => {

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import {
   type Account,
@@ -20,7 +20,12 @@ import {
   type RestoreAccountRoomResponse,
   type Session,
   type WorkspaceFile,
+  type WorkspaceFileAccess,
   type WorkspaceFileContent,
+  type WorkspaceFileOperation,
+  type WorkspaceFileOperationClaim,
+  type WorkspaceFileOperationKind,
+  type WorkspaceFileOperationStatus,
   type WorkspaceSummary,
   ProtocolError,
 } from "@codex-collab/protocol";
@@ -33,6 +38,7 @@ interface MemberRow {
   device_label: string | null;
   role: "owner" | "editor";
   status: MemberStatus;
+  workspace_file_access: WorkspaceFileAccess;
   created_at: string;
   approved_at: string | null;
 }
@@ -55,6 +61,7 @@ interface MessageRow {
   codex_options_json: string | null;
   delivery_status: MessageDeliveryStatus | null;
   codex_turn_id: string | null;
+  selected_thread_id: string | null;
   completed_at: string | null;
   created_at: string;
 }
@@ -109,6 +116,27 @@ interface WorkspaceFileRow extends WorkspaceFileMetadataRow {
   content: string;
 }
 
+interface WorkspaceFileOperationRow {
+  id: string;
+  session_id: string;
+  requested_by_member_id: string;
+  requested_by_display_name: string;
+  kind: WorkspaceFileOperationKind;
+  path: string;
+  request_content: string | null;
+  expected_sha256: string | null;
+  status: WorkspaceFileOperationStatus;
+  result_content: string | null;
+  result_size: number | null;
+  result_modified_at: string | null;
+  result_sha256: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  requested_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
 interface AccountRow {
   id: string;
   display_name: string;
@@ -144,6 +172,7 @@ interface AccountRoomRow {
   member_device_label: string | null;
   member_role: "owner" | "editor";
   member_status: MemberStatus;
+  member_workspace_file_access: WorkspaceFileAccess;
   member_created_at: string;
   member_approved_at: string | null;
   last_used_at: string | null;
@@ -176,6 +205,77 @@ function now(): string {
   return new Date().toISOString();
 }
 
+const PRIVATE_WORKSPACE_SEGMENTS = new Set([
+  ".codex",
+  ".codex-collab",
+  ".git",
+  ".runtime-data",
+]);
+const PRIVATE_WORKSPACE_NAMES = new Set([
+  ".netrc",
+  ".npmrc",
+  ".pypirc",
+  "auth.json",
+  "auth.toml",
+  "cookies.json",
+  "credentials.json",
+  "id_ed25519",
+  "id_rsa",
+  "secrets.json",
+  "tokens.json",
+]);
+
+function normalizeWorkspaceOperationPath(path: string): string {
+  const normalized = path.replaceAll("\\", "/");
+  if (
+    normalized.length === 0 ||
+    normalized.length > 500 ||
+    normalized.startsWith("/") ||
+    /^[A-Za-z]:/.test(normalized) ||
+    normalized.includes("\0")
+  ) {
+    throw new ProtocolError(400, "unsafe_workspace_path", "Use a safe relative file path");
+  }
+  const segments = normalized.split("/");
+  if (
+    segments.some(
+      (segment) =>
+        !segment ||
+        segment === "." ||
+        segment === ".." ||
+        segment.endsWith(".") ||
+        segment.endsWith(" ") ||
+        segment.includes(":") ||
+        /[\u0000-\u001f<>"|?*]/.test(segment) ||
+        /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(segment),
+    )
+  ) {
+    throw new ProtocolError(400, "unsafe_workspace_path", "Use a safe relative file path");
+  }
+  const lowerSegments = segments.map((segment) => segment.toLowerCase());
+  const name = lowerSegments.at(-1)!;
+  if (
+    lowerSegments.some((segment) => PRIVATE_WORKSPACE_SEGMENTS.has(segment)) ||
+    name === ".env" ||
+    name.startsWith(".env.") ||
+    PRIVATE_WORKSPACE_NAMES.has(name) ||
+    name.startsWith("service-account")
+  ) {
+    throw new ProtocolError(
+      403,
+      lowerSegments.includes(".codex")
+        ? "codex_path_not_shared"
+        : "workspace_path_not_shared",
+      "This private path is not shared with the web editor",
+    );
+  }
+  return normalized;
+}
+
+function contentSha256(content: string): string {
+  return createHash("sha256").update(content).digest("hex");
+}
+
 function toSession(row: SessionRow): Session {
   return {
     id: row.id,
@@ -194,6 +294,8 @@ function toMember(row: MemberRow): Member {
     deviceLabel: row.device_label,
     role: row.role,
     status: row.status,
+    workspaceFileAccess:
+      row.role === "owner" ? "workspace-write" : row.workspace_file_access,
     createdAt: row.created_at,
     approvedAt: row.approved_at,
   };
@@ -239,6 +341,8 @@ export class SessionStore {
         device_label TEXT,
         role TEXT NOT NULL CHECK (role IN ('owner', 'editor')),
         status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'revoked')),
+        workspace_file_access TEXT NOT NULL DEFAULT 'read-only'
+          CHECK (workspace_file_access IN ('read-only', 'workspace-write')),
         token_hash TEXT NOT NULL UNIQUE,
         created_at TEXT NOT NULL,
         approved_at TEXT
@@ -263,6 +367,7 @@ export class SessionStore {
         delivery_status TEXT
           CHECK (delivery_status IN ('queued', 'submitted', 'completed', 'failed')),
         codex_turn_id TEXT,
+        selected_thread_id TEXT,
         completed_at TEXT,
         created_at TEXT NOT NULL
       );
@@ -359,6 +464,26 @@ export class SessionStore {
         content TEXT NOT NULL,
         PRIMARY KEY (session_id, path)
       );
+      CREATE TABLE IF NOT EXISTS workspace_file_operations (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        requested_by_member_id TEXT NOT NULL REFERENCES members(id),
+        requested_by_display_name TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('read', 'write')),
+        path TEXT NOT NULL,
+        request_content TEXT,
+        expected_sha256 TEXT,
+        status TEXT NOT NULL CHECK (status IN ('queued', 'processing', 'completed', 'failed')),
+        result_content TEXT,
+        result_size INTEGER,
+        result_modified_at TEXT,
+        result_sha256 TEXT,
+        error_code TEXT,
+        error_message TEXT,
+        requested_at TEXT NOT NULL,
+        started_at TEXT,
+        completed_at TEXT
+      );
       CREATE INDEX IF NOT EXISTS members_session_idx ON members(session_id);
       CREATE UNIQUE INDEX IF NOT EXISTS members_session_id_unique
         ON members(session_id, id);
@@ -373,6 +498,10 @@ export class SessionStore {
       CREATE INDEX IF NOT EXISTS account_memberships_session_idx
         ON account_memberships(session_id);
       CREATE INDEX IF NOT EXISTS workspace_files_session_idx ON workspace_files(session_id);
+      CREATE INDEX IF NOT EXISTS workspace_file_operations_queue_idx
+        ON workspace_file_operations(session_id, status, requested_at);
+      CREATE INDEX IF NOT EXISTS workspace_file_operations_actor_idx
+        ON workspace_file_operations(session_id, requested_by_member_id, requested_at);
     `);
     this.ensureColumn(
       "account_sessions",
@@ -387,7 +516,16 @@ export class SessionStore {
       "room_status",
       "TEXT NOT NULL DEFAULT 'open' CHECK (room_status IN ('open', 'closed'))",
     );
+    this.ensureColumn(
+      "members",
+      "workspace_file_access",
+      "TEXT NOT NULL DEFAULT 'read-only' CHECK (workspace_file_access IN ('read-only', 'workspace-write'))",
+    );
+    this.db.exec(
+      "UPDATE members SET workspace_file_access = 'workspace-write' WHERE role = 'owner'",
+    );
     this.migrateMessagesTable();
+    this.ensureColumn("messages", "selected_thread_id", "TEXT");
     this.ensureColumn(
       "workspace_state",
       "codex_runtime_status",
@@ -426,6 +564,9 @@ export class SessionStore {
     const hasOptions = columns.some((item) => item.name === "codex_options_json");
     const hasDelivery = columns.some((item) => item.name === "delivery_status");
     const hasTurnId = columns.some((item) => item.name === "codex_turn_id");
+    const hasSelectedThreadId = columns.some(
+      (item) => item.name === "selected_thread_id",
+    );
     const hasCompletedAt = columns.some((item) => item.name === "completed_at");
     const hasAttachmentsTable = Boolean(
       this.db
@@ -464,6 +605,7 @@ export class SessionStore {
           delivery_status TEXT
             CHECK (delivery_status IN ('queued', 'submitted', 'completed', 'failed')),
           codex_turn_id TEXT,
+          selected_thread_id TEXT,
           completed_at TEXT,
           created_at TEXT NOT NULL
         )
@@ -471,11 +613,12 @@ export class SessionStore {
       this.db.exec(`
         INSERT INTO messages
           (id, session_id, sender_member_id, kind, body, codex_options_json,
-           delivery_status, codex_turn_id, completed_at, created_at)
+           delivery_status, codex_turn_id, selected_thread_id, completed_at, created_at)
         SELECT id, session_id, sender_member_id, kind, body,
                ${hasOptions ? "codex_options_json" : "NULL"},
                ${hasDelivery ? "delivery_status" : "NULL"},
                ${hasTurnId ? "codex_turn_id" : "NULL"},
+               ${hasSelectedThreadId ? "selected_thread_id" : "NULL"},
                ${hasCompletedAt ? "completed_at" : "NULL"},
                created_at
         FROM messages_legacy
@@ -538,8 +681,9 @@ export class SessionStore {
       this.db
         .prepare(`
           INSERT INTO members
-            (id, session_id, display_name, device_label, role, status, token_hash, created_at, approved_at)
-          VALUES (?, ?, ?, ?, 'owner', 'approved', ?, ?, ?)
+            (id, session_id, display_name, device_label, role, status,
+             workspace_file_access, token_hash, created_at, approved_at)
+          VALUES (?, ?, ?, ?, 'owner', 'approved', 'workspace-write', ?, ?, ?)
         `)
         .run(
           ownerId,
@@ -594,6 +738,7 @@ export class SessionStore {
         deviceLabel: deviceLabel ?? null,
         role: "owner",
         status: "approved",
+        workspaceFileAccess: "workspace-write",
         createdAt,
         approvedAt: createdAt,
       },
@@ -681,8 +826,9 @@ export class SessionStore {
       this.db
         .prepare(`
           INSERT INTO members
-            (id, session_id, display_name, device_label, role, status, token_hash, created_at, approved_at)
-          VALUES (?, ?, ?, ?, 'editor', 'pending', ?, ?, NULL)
+            (id, session_id, display_name, device_label, role, status,
+             workspace_file_access, token_hash, created_at, approved_at)
+          VALUES (?, ?, ?, ?, 'editor', 'pending', 'read-only', ?, ?, NULL)
         `)
         .run(
           memberId,
@@ -732,6 +878,7 @@ export class SessionStore {
         deviceLabel: deviceLabel ?? null,
         role: "editor",
         status: "pending",
+        workspaceFileAccess: "read-only",
         createdAt,
         approvedAt: null,
       },
@@ -1090,7 +1237,9 @@ export class SessionStore {
                s.owner_member_id, s.room_status, s.created_at AS session_created_at,
                m.id AS member_id, m.display_name AS member_display_name,
                m.device_label AS member_device_label, m.role AS member_role,
-               m.status AS member_status, m.created_at AS member_created_at,
+               m.status AS member_status,
+               m.workspace_file_access AS member_workspace_file_access,
+               m.created_at AS member_created_at,
                m.approved_at AS member_approved_at, am.last_used_at
         FROM account_memberships am
         JOIN sessions s ON s.id = am.session_id
@@ -1116,6 +1265,10 @@ export class SessionStore {
           deviceLabel: row.member_device_label,
           role: row.member_role,
           status: row.member_status,
+          workspaceFileAccess:
+            row.member_role === "owner"
+              ? "workspace-write"
+              : row.member_workspace_file_access,
           createdAt: row.member_created_at,
           approvedAt: row.member_approved_at,
         },
@@ -1182,7 +1335,7 @@ export class SessionStore {
     const row = this.db
       .prepare(`
         SELECT m.id, m.session_id, m.display_name, m.device_label, m.role,
-               m.status, m.created_at, m.approved_at
+               m.status, m.workspace_file_access, m.created_at, m.approved_at
         FROM account_memberships am
         JOIN members m ON m.id = am.member_id AND m.session_id = am.session_id
         WHERE am.account_id = ? AND am.session_id = ?
@@ -1269,7 +1422,8 @@ export class SessionStore {
     this.requireMember(sessionId, memberToken, true);
     const rows = this.db
       .prepare(`
-        SELECT id, session_id, display_name, device_label, role, status, created_at, approved_at
+        SELECT id, session_id, display_name, device_label, role, status,
+               workspace_file_access, created_at, approved_at
         FROM members WHERE session_id = ? ORDER BY created_at ASC
       `)
       .all(sessionId) as unknown as MemberRow[];
@@ -1291,6 +1445,30 @@ export class SessionStore {
     if (result.changes !== 1) {
       throw new ProtocolError(404, "pending_member_not_found", "Pending member was not found");
     }
+    return this.memberById(sessionId, targetMemberId);
+  }
+
+  updateMemberWorkspaceFileAccess(
+    sessionId: string,
+    memberToken: string,
+    targetMemberId: string,
+    workspaceFileAccess: WorkspaceFileAccess,
+  ): Member {
+    this.requireOwner(sessionId, memberToken);
+    const target = this.memberById(sessionId, targetMemberId);
+    if (target.role === "owner") {
+      throw new ProtocolError(
+        400,
+        "owner_workspace_access_required",
+        "The owner always retains workspace write access",
+      );
+    }
+    this.db
+      .prepare(`
+        UPDATE members SET workspace_file_access = ?
+        WHERE session_id = ? AND id = ?
+      `)
+      .run(workspaceFileAccess, sessionId, targetMemberId);
     return this.memberById(sessionId, targetMemberId);
   }
 
@@ -1336,6 +1514,17 @@ export class SessionStore {
         "Only the owner can change Codex approval permissions",
       );
     }
+    const workspaceThreadId =
+      kind === "codex_prompt" || kind === "codex_stop"
+        ? this.workspaceState(sessionId)?.selected_thread_id ?? null
+        : null;
+    if ((kind === "codex_prompt" || kind === "codex_stop") && !workspaceThreadId) {
+      throw new ProtocolError(
+        409,
+        "workspace_thread_not_selected",
+        "Select a Codex task before sending a Codex command",
+      );
+    }
     const message: Message = {
       id: randomUUID(),
       sessionId,
@@ -1348,6 +1537,7 @@ export class SessionStore {
       deliveryStatus:
         kind === "codex_prompt" || kind === "codex_stop" ? "queued" : null,
       codexTurnId: null,
+      workspaceThreadId,
       completedAt: null,
       createdAt: now(),
     };
@@ -1357,8 +1547,8 @@ export class SessionStore {
         .prepare(`
           INSERT INTO messages
             (id, session_id, sender_member_id, kind, body, codex_options_json,
-             delivery_status, codex_turn_id, completed_at, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             delivery_status, codex_turn_id, selected_thread_id, completed_at, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
         .run(
           message.id,
@@ -1369,6 +1559,7 @@ export class SessionStore {
           message.codexOptions ? JSON.stringify(message.codexOptions) : null,
           message.deliveryStatus,
           message.codexTurnId,
+          message.workspaceThreadId,
           message.completedAt,
           message.createdAt,
         );
@@ -1402,7 +1593,7 @@ export class SessionStore {
           .prepare(`
             SELECT m.id, m.session_id, m.sender_member_id, mb.display_name AS sender_display_name,
                    m.kind, m.body, m.codex_options_json, m.delivery_status,
-                   m.codex_turn_id, m.completed_at, m.created_at
+                   m.codex_turn_id, m.selected_thread_id, m.completed_at, m.created_at
             FROM messages m JOIN members mb ON mb.id = m.sender_member_id
             WHERE m.session_id = ? AND m.created_at > ?
             ORDER BY m.created_at ASC, m.id ASC LIMIT 500
@@ -1414,7 +1605,7 @@ export class SessionStore {
               SELECT m.id, m.session_id, m.sender_member_id,
                      mb.display_name AS sender_display_name,
                      m.kind, m.body, m.codex_options_json, m.delivery_status,
-                     m.codex_turn_id, m.completed_at, m.created_at
+                     m.codex_turn_id, m.selected_thread_id, m.completed_at, m.created_at
               FROM messages m JOIN members mb ON mb.id = m.sender_member_id
               WHERE m.session_id = ?
               ORDER BY m.created_at DESC, m.id DESC LIMIT 500
@@ -1845,6 +2036,323 @@ export class SessionStore {
     return { ...this.toWorkspaceFile(row), content: row.content };
   }
 
+  createWorkspaceFileOperation(
+    sessionId: string,
+    memberToken: string,
+    input:
+      | { kind: "read"; path: string }
+      | { kind: "write"; path: string; content: string; expectedSha256: string },
+  ): WorkspaceFileOperation {
+    const member = this.requireMember(sessionId, memberToken, true);
+    if (!this.workspaceState(sessionId)) {
+      throw new ProtocolError(409, "host_not_paired", "Pair the local Codex host first");
+    }
+    const path = normalizeWorkspaceOperationPath(input.path);
+    if (input.kind === "write") {
+      this.requireRoomOpen(sessionId);
+      if (member.role !== "owner" && member.workspaceFileAccess !== "workspace-write") {
+        throw new ProtocolError(
+          403,
+          "workspace_read_only",
+          "The owner has not granted this member workspace write access",
+        );
+      }
+      const contentBytes = Buffer.byteLength(input.content);
+      if (contentBytes > 2_000_000) {
+        throw new ProtocolError(
+          413,
+          "workspace_file_too_large",
+          "File exceeds the 2 MB collaboration write limit",
+        );
+      }
+      if (input.content.includes("\0")) {
+        throw new ProtocolError(
+          400,
+          "workspace_binary_file_unsupported",
+          "The web editor supports text files only",
+        );
+      }
+      if (input.expectedSha256 !== "" && !/^[a-f0-9]{64}$/.test(input.expectedSha256)) {
+        throw new ProtocolError(
+          400,
+          "invalid_expected_sha256",
+          "expectedSha256 must be an observed SHA-256 hash or an empty string for a new file",
+        );
+      }
+    }
+
+    const operationId = randomUUID();
+    const requestedAt = now();
+    this.db
+      .prepare(`
+        INSERT INTO workspace_file_operations
+          (id, session_id, requested_by_member_id, requested_by_display_name,
+           kind, path, request_content, expected_sha256, status, requested_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)
+      `)
+      .run(
+        operationId,
+        sessionId,
+        member.id,
+        member.displayName,
+        input.kind,
+        path,
+        input.kind === "write" ? input.content : null,
+        input.kind === "write" ? input.expectedSha256 : null,
+        requestedAt,
+      );
+    return this.workspaceFileOperationById(sessionId, operationId);
+  }
+
+  listWorkspaceFileOperations(
+    sessionId: string,
+    memberToken: string,
+    limit = 100,
+  ): WorkspaceFileOperation[] {
+    const member = this.requireMember(sessionId, memberToken, true);
+    const rows = (member.role === "owner"
+      ? this.db
+          .prepare(`
+            SELECT * FROM workspace_file_operations
+            WHERE session_id = ? ORDER BY requested_at DESC, id DESC LIMIT ?
+          `)
+          .all(sessionId, limit)
+      : this.db
+          .prepare(`
+            SELECT * FROM workspace_file_operations
+            WHERE session_id = ? AND requested_by_member_id = ?
+            ORDER BY requested_at DESC, id DESC LIMIT ?
+          `)
+          .all(sessionId, member.id, limit)) as unknown as WorkspaceFileOperationRow[];
+    return rows.map((row) => this.toWorkspaceFileOperation(row));
+  }
+
+  getWorkspaceFileOperation(
+    sessionId: string,
+    memberToken: string,
+    operationId: string,
+  ): WorkspaceFileOperation {
+    const member = this.requireMember(sessionId, memberToken, true);
+    const operation = this.workspaceFileOperationById(sessionId, operationId);
+    if (
+      member.role !== "owner" &&
+      operation.requestedByMemberId !== member.id
+    ) {
+      throw new ProtocolError(
+        403,
+        "workspace_operation_private",
+        "Only the requester or owner can read this file operation",
+      );
+    }
+    return operation;
+  }
+
+  claimNextWorkspaceFileOperation(
+    sessionId: string,
+    memberToken: string,
+  ): {
+    operation: WorkspaceFileOperationClaim | null;
+    rejected: WorkspaceFileOperation[];
+  } {
+    this.requireOwner(sessionId, memberToken);
+    const staleBefore = new Date(Date.now() - 2 * 60_000).toISOString();
+    const claimedAt = now();
+    const rejected: WorkspaceFileOperation[] = [];
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db
+        .prepare(`
+          UPDATE workspace_file_operations
+          SET status = 'queued', started_at = NULL
+          WHERE session_id = ? AND status = 'processing' AND started_at < ?
+        `)
+        .run(sessionId, staleBefore);
+
+      for (;;) {
+        const row = this.db
+          .prepare(`
+            SELECT * FROM workspace_file_operations
+            WHERE session_id = ? AND status = 'queued'
+            ORDER BY requested_at ASC, id ASC LIMIT 1
+          `)
+          .get(sessionId) as WorkspaceFileOperationRow | undefined;
+        if (!row) {
+          this.db.exec("COMMIT");
+          return { operation: null, rejected };
+        }
+        const requester = this.db
+          .prepare(`
+            SELECT id, session_id, display_name, device_label, role, status,
+                   workspace_file_access, created_at, approved_at
+            FROM members WHERE session_id = ? AND id = ?
+          `)
+          .get(sessionId, row.requested_by_member_id) as MemberRow | undefined;
+        const allowed =
+          requester?.status === "approved" &&
+          (row.kind === "read" ||
+            requester.role === "owner" ||
+            requester.workspace_file_access === "workspace-write");
+        if (!allowed) {
+          const errorCode =
+            requester?.status === "approved"
+              ? "workspace_read_only"
+              : "member_not_approved";
+          const errorMessage =
+            errorCode === "workspace_read_only"
+              ? "Workspace write access was removed before the host processed this operation"
+              : "The requesting member is no longer approved";
+          this.db
+            .prepare(`
+              UPDATE workspace_file_operations
+              SET status = 'failed', request_content = NULL,
+                  error_code = ?, error_message = ?, completed_at = ?
+              WHERE id = ? AND status = 'queued'
+            `)
+            .run(errorCode, errorMessage, claimedAt, row.id);
+          rejected.push(this.workspaceFileOperationById(sessionId, row.id));
+          continue;
+        }
+        const claimed = this.db
+          .prepare(`
+            UPDATE workspace_file_operations
+            SET status = 'processing', started_at = ?, error_code = NULL, error_message = NULL
+            WHERE id = ? AND session_id = ? AND status = 'queued'
+          `)
+          .run(claimedAt, row.id, sessionId);
+        if (claimed.changes !== 1) continue;
+        const current = this.workspaceFileOperationRowById(sessionId, row.id);
+        this.db.exec("COMMIT");
+        return {
+          operation: {
+            ...this.toWorkspaceFileOperation(current),
+            requestContent: current.request_content,
+          },
+          rejected,
+        };
+      }
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  completeWorkspaceFileOperation(
+    sessionId: string,
+    memberToken: string,
+    operationId: string,
+    input:
+      | { status: "completed"; file: WorkspaceFileContent }
+      | {
+          status: "failed";
+          errorCode: string;
+          errorMessage: string;
+          file?: WorkspaceFileContent | null;
+        },
+  ): WorkspaceFileOperation {
+    this.requireOwner(sessionId, memberToken);
+    const row = this.workspaceFileOperationRowById(sessionId, operationId);
+    if (row.status !== "processing") {
+      throw new ProtocolError(
+        409,
+        "workspace_operation_not_processing",
+        "The file operation is not currently claimed by the host",
+      );
+    }
+    const file = input.file ?? null;
+    if (file) {
+      const normalizedPath = normalizeWorkspaceOperationPath(file.path);
+      if (normalizedPath !== row.path) {
+        throw new ProtocolError(
+          400,
+          "workspace_operation_path_mismatch",
+          "The host result path does not match the requested path",
+        );
+      }
+      const size = Buffer.byteLength(file.content);
+      if (size > 2_000_000 || size !== file.size) {
+        throw new ProtocolError(400, "invalid_workspace_file", "Host file size is invalid");
+      }
+      if (contentSha256(file.content) !== file.sha256) {
+        throw new ProtocolError(400, "invalid_workspace_file", "Host file hash is invalid");
+      }
+      if (Number.isNaN(Date.parse(file.modifiedAt))) {
+        throw new ProtocolError(
+          400,
+          "invalid_workspace_file",
+          "Host file modification time is invalid",
+        );
+      }
+    }
+    const errorCode =
+      input.status === "failed" ? input.errorCode.trim().slice(0, 120) : null;
+    const errorMessage =
+      input.status === "failed" ? input.errorMessage.trim().slice(0, 1_000) : null;
+    if (input.status === "failed" && (!errorCode || !errorMessage)) {
+      throw new ProtocolError(
+        400,
+        "invalid_workspace_operation_result",
+        "Failed operations require an error code and message",
+      );
+    }
+    const completedAt = now();
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const updated = this.db
+        .prepare(`
+          UPDATE workspace_file_operations
+          SET status = ?, request_content = NULL,
+              result_content = ?, result_size = ?, result_modified_at = ?, result_sha256 = ?,
+              error_code = ?, error_message = ?, completed_at = ?
+          WHERE id = ? AND session_id = ? AND status = 'processing'
+        `)
+        .run(
+          input.status,
+          file?.content ?? null,
+          file?.size ?? null,
+          file?.modifiedAt ?? null,
+          file?.sha256 ?? null,
+          errorCode,
+          errorMessage,
+          completedAt,
+          operationId,
+          sessionId,
+        );
+      if (updated.changes !== 1) {
+        throw new ProtocolError(
+          409,
+          "workspace_operation_not_processing",
+          "The file operation is no longer claimed by the host",
+        );
+      }
+      if (file) {
+        this.db
+          .prepare(`
+            INSERT INTO workspace_files
+              (session_id, path, size, modified_at, sha256, content)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(session_id, path) DO UPDATE SET
+              size = excluded.size,
+              modified_at = excluded.modified_at,
+              sha256 = excluded.sha256,
+              content = excluded.content
+          `)
+          .run(
+            sessionId,
+            file.path,
+            file.size,
+            file.modifiedAt,
+            file.sha256,
+            file.content,
+          );
+      }
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+    return this.workspaceFileOperationById(sessionId, operationId);
+  }
+
   authenticateRealtime(sessionId: string, memberToken: string): Member {
     return this.requireMember(sessionId, memberToken, true);
   }
@@ -1879,7 +2387,7 @@ export class SessionStore {
       .prepare(`
         SELECT m.id, m.session_id, m.sender_member_id, mb.display_name AS sender_display_name,
                m.kind, m.body, m.codex_options_json, m.delivery_status,
-               m.codex_turn_id, m.completed_at, m.created_at
+               m.codex_turn_id, m.selected_thread_id, m.completed_at, m.created_at
         FROM messages m JOIN members mb ON mb.id = m.sender_member_id
         WHERE m.session_id = ? AND m.id = ?
       `)
@@ -1929,6 +2437,7 @@ export class SessionStore {
         : null,
       deliveryStatus: row.delivery_status,
       codexTurnId: row.codex_turn_id,
+      workspaceThreadId: row.selected_thread_id,
       completedAt: row.completed_at,
       createdAt: row.created_at,
     };
@@ -2016,7 +2525,8 @@ export class SessionStore {
   private memberById(sessionId: string, memberId: string): Member {
     const row = this.db
       .prepare(`
-        SELECT id, session_id, display_name, device_label, role, status, created_at, approved_at
+        SELECT id, session_id, display_name, device_label, role, status,
+               workspace_file_access, created_at, approved_at
         FROM members WHERE session_id = ? AND id = ?
       `)
       .get(sessionId, memberId) as MemberRow | undefined;
@@ -2038,7 +2548,7 @@ export class SessionStore {
       .prepare(`
         SELECT members.id, members.session_id, members.display_name,
                members.device_label, members.role, members.status,
-               members.created_at, members.approved_at,
+               members.workspace_file_access, members.created_at, members.approved_at,
                member_token.account_session_id
         FROM members
         LEFT JOIN member_tokens member_token
@@ -2105,6 +2615,69 @@ export class SessionStore {
     if (row.room_status === "closed") {
       throw new ProtocolError(409, "room_closed", "This room is closed");
     }
+  }
+
+  private workspaceFileOperationRowById(
+    sessionId: string,
+    operationId: string,
+  ): WorkspaceFileOperationRow {
+    const row = this.db
+      .prepare(`
+        SELECT * FROM workspace_file_operations
+        WHERE session_id = ? AND id = ?
+      `)
+      .get(sessionId, operationId) as WorkspaceFileOperationRow | undefined;
+    if (!row) {
+      throw new ProtocolError(
+        404,
+        "workspace_operation_not_found",
+        "Workspace file operation was not found",
+      );
+    }
+    return row;
+  }
+
+  private workspaceFileOperationById(
+    sessionId: string,
+    operationId: string,
+  ): WorkspaceFileOperation {
+    return this.toWorkspaceFileOperation(
+      this.workspaceFileOperationRowById(sessionId, operationId),
+    );
+  }
+
+  private toWorkspaceFileOperation(
+    row: WorkspaceFileOperationRow,
+  ): WorkspaceFileOperation {
+    const resultFile =
+      row.result_content !== null &&
+      row.result_size !== null &&
+      row.result_modified_at !== null &&
+      row.result_sha256 !== null
+        ? {
+            path: row.path,
+            content: row.result_content,
+            size: row.result_size,
+            modifiedAt: row.result_modified_at,
+            sha256: row.result_sha256,
+          }
+        : null;
+    return {
+      id: row.id,
+      sessionId: row.session_id,
+      requestedByMemberId: row.requested_by_member_id,
+      requestedByDisplayName: row.requested_by_display_name,
+      kind: row.kind,
+      path: row.path,
+      expectedSha256: row.expected_sha256,
+      status: row.status,
+      resultFile,
+      errorCode: row.error_code,
+      errorMessage: row.error_message,
+      requestedAt: row.requested_at,
+      startedAt: row.started_at,
+      completedAt: row.completed_at,
+    };
   }
 
   private workspaceState(sessionId: string): WorkspaceStateRow | undefined {

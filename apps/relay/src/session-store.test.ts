@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { createHash } from "node:crypto";
 import { SessionStore } from "./session-store.js";
 
 const stores: SessionStore[] = [];
@@ -32,6 +33,14 @@ describe("SessionStore", () => {
   it("requires owner approval before an invited member can collaborate", () => {
     const store = createStore();
     const created = store.createSession("Launch room", "Owner");
+    const pairing = store.createHostPairing(created.session.id, created.memberToken, 10);
+    const host = store.claimHostPairing(pairing.pairingToken, "Owner PC", "Project");
+    store.publishWorkspaceCatalog(created.session.id, host.memberToken, {
+      deviceLabel: "Owner PC",
+      rootLabel: "Project",
+      threads: [{ id: "thread-1", name: "Task", preview: "", updatedAt: null }],
+    });
+    store.selectWorkspaceThread(created.session.id, created.memberToken, "thread-1");
     const invite = store.createInvite(created.session.id, created.memberToken, 60, 1);
     const joined = store.joinInvite(invite.inviteToken, "Guest", "Laptop");
 
@@ -112,6 +121,12 @@ describe("SessionStore", () => {
 
     const pairing = store.createHostPairing(created.session.id, created.memberToken, 10);
     const host = store.claimHostPairing(pairing.pairingToken, "Owner PC", "Codex-Collab");
+    store.publishWorkspaceCatalog(created.session.id, host.memberToken, {
+      deviceLabel: "Owner PC",
+      rootLabel: "Codex-Collab",
+      threads: [{ id: "thread-1", name: "Current task", preview: "", updatedAt: null }],
+    });
+    store.selectWorkspaceThread(created.session.id, created.memberToken, "thread-1");
     const firstInvite = store.createInvite(created.session.id, created.memberToken, 60, 1);
     const secondInvite = store.createInvite(created.session.id, created.memberToken, 60, 1);
     const guest = store.joinInvite(firstInvite.inviteToken, "Guest");
@@ -226,6 +241,14 @@ describe("SessionStore", () => {
   it("stores Codex composer options and attachments with auditable delivery state", () => {
     const store = createStore();
     const created = store.createSession("Composer room", "Owner");
+    const pairing = store.createHostPairing(created.session.id, created.memberToken, 10);
+    const host = store.claimHostPairing(pairing.pairingToken, "Owner PC", "Project");
+    store.publishWorkspaceCatalog(created.session.id, host.memberToken, {
+      deviceLabel: "Owner PC",
+      rootLabel: "Project",
+      threads: [{ id: "thread-1", name: "Task", preview: "", updatedAt: null }],
+    });
+    store.selectWorkspaceThread(created.session.id, created.memberToken, "thread-1");
     const content = new TextEncoder().encode("attachment body");
     const message = store.addMessage(
       created.session.id,
@@ -466,12 +489,13 @@ describe("SessionStore", () => {
     try {
       const message = migrated.db
         .prepare(
-          "SELECT delivery_status, codex_turn_id, completed_at FROM messages WHERE id = ?",
+          "SELECT delivery_status, codex_turn_id, selected_thread_id, completed_at FROM messages WHERE id = ?",
         )
         .get("message-1") as
         | {
             delivery_status: string;
             codex_turn_id: string | null;
+            selected_thread_id: string | null;
             completed_at: string | null;
           }
         | undefined;
@@ -482,6 +506,7 @@ describe("SessionStore", () => {
       expect(message).toEqual({
         delivery_status: "submitted",
         codex_turn_id: null,
+        selected_thread_id: null,
         completed_at: null,
       });
       expect(new TextDecoder().decode(attachment?.content)).toBe("body");
@@ -514,6 +539,17 @@ describe("SessionStore", () => {
       expect(memberTokenColumns.map((column) => column.name)).toEqual(
         expect.arrayContaining(["account_session_id", "expires_at", "revoked_at"]),
       );
+      const migratedOwner = migrated.db
+        .prepare("SELECT workspace_file_access FROM members WHERE id = 'owner-1'")
+        .get() as { workspace_file_access: string };
+      expect(migratedOwner.workspace_file_access).toBe("workspace-write");
+      expect(
+        migrated.db
+          .prepare(
+            "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'workspace_file_operations'",
+          )
+          .get(),
+      ).toBeTruthy();
     } finally {
       migrated.close();
       await rm(directory, { recursive: true, force: true });
@@ -542,6 +578,256 @@ describe("SessionStore", () => {
     expect(hostRows[0]?.token_hash).not.toContain(claimed.memberToken);
     expect(pairingRows[0]?.token_hash).toMatch(/^[a-f0-9]{64}$/);
     expect(hostRows[0]?.token_hash).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("queues auditable host file operations behind explicit member write access", () => {
+    const store = createStore();
+    const created = store.createSession("IDE room", "Owner");
+    const pairing = store.createHostPairing(created.session.id, created.memberToken, 10);
+    const host = store.claimHostPairing(pairing.pairingToken, "Owner PC", "Project");
+    const invite = store.createInvite(created.session.id, created.memberToken, 60, 1);
+    const guest = store.joinInvite(invite.inviteToken, "Editor");
+    store.approveMember(created.session.id, created.memberToken, guest.member.id);
+
+    expect(created.owner.workspaceFileAccess).toBe("workspace-write");
+    expect(store.getCurrentMember(created.session.id, guest.memberToken).workspaceFileAccess).toBe(
+      "read-only",
+    );
+    expect(() =>
+      store.createWorkspaceFileOperation(created.session.id, guest.memberToken, {
+        kind: "write",
+        path: "src/index.ts",
+        content: "export {};",
+        expectedSha256: "",
+      }),
+    ).toThrowError(/not granted/i);
+
+    const read = store.createWorkspaceFileOperation(
+      created.session.id,
+      guest.memberToken,
+      { kind: "read", path: "src/index.ts" },
+    );
+    expect(read.status).toBe("queued");
+    expect(read.resultFile).toBeNull();
+
+    const writable = store.updateMemberWorkspaceFileAccess(
+      created.session.id,
+      created.memberToken,
+      guest.member.id,
+      "workspace-write",
+    );
+    expect(writable.workspaceFileAccess).toBe("workspace-write");
+    const write = store.createWorkspaceFileOperation(
+      created.session.id,
+      guest.memberToken,
+      {
+        kind: "write",
+        path: "src/index.ts",
+        content: "export {};",
+        expectedSha256: "",
+      },
+    );
+    expect(write.status).toBe("queued");
+    expect(write.completedAt).toBeNull();
+
+    const firstClaim = store.claimNextWorkspaceFileOperation(
+      created.session.id,
+      host.memberToken,
+    );
+    expect(firstClaim.operation?.id).toBe(read.id);
+    expect(firstClaim.operation?.requestContent).toBeNull();
+    const readContent = "export const oldValue = true;";
+    store.completeWorkspaceFileOperation(
+      created.session.id,
+      host.memberToken,
+      read.id,
+      {
+        status: "completed",
+        file: {
+          path: "src/index.ts",
+          content: readContent,
+          size: Buffer.byteLength(readContent),
+          modifiedAt: "2026-07-27T00:00:00.000Z",
+          sha256: createHash("sha256").update(readContent).digest("hex"),
+        },
+      },
+    );
+    const secondClaim = store.claimNextWorkspaceFileOperation(
+      created.session.id,
+      host.memberToken,
+    );
+    expect(secondClaim.operation?.id).toBe(write.id);
+    expect(secondClaim.operation?.requestContent).toBe("export {};");
+    const savedContent = "export {};";
+    const completed = store.completeWorkspaceFileOperation(
+      created.session.id,
+      host.memberToken,
+      write.id,
+      {
+        status: "completed",
+        file: {
+          path: "src/index.ts",
+          content: savedContent,
+          size: Buffer.byteLength(savedContent),
+          modifiedAt: "2026-07-27T00:00:01.000Z",
+          sha256: createHash("sha256").update(savedContent).digest("hex"),
+        },
+      },
+    );
+    expect(completed.status).toBe("completed");
+    expect(completed.resultFile?.content).toBe(savedContent);
+    expect(
+      store.getWorkspaceFile(created.session.id, guest.memberToken, "src/index.ts").content,
+    ).toBe(savedContent);
+    expect(
+      store.listWorkspaceFileOperations(created.session.id, guest.memberToken),
+    ).toHaveLength(2);
+  });
+
+  it("rechecks queued write permission and rejects private or unsafe editor paths", () => {
+    const store = createStore();
+    const created = store.createSession("Secure IDE room", "Owner");
+    const pairing = store.createHostPairing(created.session.id, created.memberToken, 10);
+    const host = store.claimHostPairing(pairing.pairingToken, "Owner PC", "Project");
+    const invite = store.createInvite(created.session.id, created.memberToken, 60, 1);
+    const guest = store.joinInvite(invite.inviteToken, "Editor");
+    store.approveMember(created.session.id, created.memberToken, guest.member.id);
+    store.updateMemberWorkspaceFileAccess(
+      created.session.id,
+      created.memberToken,
+      guest.member.id,
+      "workspace-write",
+    );
+    const queued = store.createWorkspaceFileOperation(
+      created.session.id,
+      guest.memberToken,
+      {
+        kind: "write",
+        path: "README.md",
+        content: "queued",
+        expectedSha256: "a".repeat(64),
+      },
+    );
+    store.updateMemberWorkspaceFileAccess(
+      created.session.id,
+      created.memberToken,
+      guest.member.id,
+      "read-only",
+    );
+    const claim = store.claimNextWorkspaceFileOperation(
+      created.session.id,
+      host.memberToken,
+    );
+    expect(claim.operation).toBeNull();
+    expect(claim.rejected.map((operation) => operation.id)).toContain(queued.id);
+    expect(
+      store.getWorkspaceFileOperation(created.session.id, guest.memberToken, queued.id),
+    ).toMatchObject({ status: "failed", errorCode: "workspace_read_only" });
+
+    store.updateMemberWorkspaceFileAccess(
+      created.session.id,
+      created.memberToken,
+      guest.member.id,
+      "workspace-write",
+    );
+    const revokedRead = store.createWorkspaceFileOperation(
+      created.session.id,
+      guest.memberToken,
+      { kind: "read", path: "README.md" },
+    );
+    store.db
+      .prepare("UPDATE members SET status = 'revoked' WHERE session_id = ? AND id = ?")
+      .run(created.session.id, guest.member.id);
+    const revokedClaim = store.claimNextWorkspaceFileOperation(
+      created.session.id,
+      host.memberToken,
+    );
+    expect(revokedClaim.operation).toBeNull();
+    expect(
+      store.getWorkspaceFileOperation(
+        created.session.id,
+        created.memberToken,
+        revokedRead.id,
+      ),
+    ).toMatchObject({ status: "failed", errorCode: "member_not_approved" });
+
+    for (const path of ["../outside.txt", "C:\\outside.txt", ".codex/auth.json", ".env"]) {
+      expect(() =>
+        store.createWorkspaceFileOperation(created.session.id, created.memberToken, {
+          kind: "read",
+          path,
+        }),
+      ).toThrow();
+    }
+  });
+
+  it("keeps queued file operations durable across relay restarts", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codex-collab-operation-db-"));
+    const filename = join(directory, "relay.sqlite");
+    const first = new SessionStore(filename);
+    const created = first.createSession("Durable IDE room", "Owner");
+    const pairing = first.createHostPairing(created.session.id, created.memberToken, 10);
+    const host = first.claimHostPairing(pairing.pairingToken, "Owner PC", "Project");
+    const queued = first.createWorkspaceFileOperation(
+      created.session.id,
+      created.memberToken,
+      { kind: "read", path: "README.md" },
+    );
+    first.close();
+
+    const restarted = new SessionStore(filename);
+    try {
+      expect(
+        restarted.getWorkspaceFileOperation(
+          created.session.id,
+          created.memberToken,
+          queued.id,
+        ).status,
+      ).toBe("queued");
+      expect(
+        restarted.claimNextWorkspaceFileOperation(
+          created.session.id,
+          host.memberToken,
+        ).operation?.id,
+      ).toBe(queued.id);
+    } finally {
+      restarted.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("attributes every new Codex command to the selected workspace task", () => {
+    const store = createStore();
+    const created = store.createSession("Task room", "Owner");
+    expect(() =>
+      store.addMessage(created.session.id, created.memberToken, "codex_prompt", "No task"),
+    ).toThrowError(/select/i);
+    const pairing = store.createHostPairing(created.session.id, created.memberToken, 10);
+    const host = store.claimHostPairing(pairing.pairingToken, "Owner PC", "Project");
+    store.publishWorkspaceCatalog(created.session.id, host.memberToken, {
+      deviceLabel: "Owner PC",
+      rootLabel: "Project",
+      threads: [
+        { id: "thread-one", name: "One", preview: "", updatedAt: null },
+        { id: "thread-two", name: "Two", preview: "", updatedAt: null },
+      ],
+    });
+    store.selectWorkspaceThread(created.session.id, created.memberToken, "thread-one");
+    const first = store.addMessage(
+      created.session.id,
+      created.memberToken,
+      "codex_prompt",
+      "First task",
+    );
+    store.selectWorkspaceThread(created.session.id, created.memberToken, "thread-two");
+    const second = store.addMessage(
+      created.session.id,
+      created.memberToken,
+      "codex_stop",
+      "Stop second task",
+    );
+    expect(first.workspaceThreadId).toBe("thread-one");
+    expect(second.workspaceThreadId).toBe("thread-two");
   });
 
   it("imports an owner-selected Codex task and exposes it only to approved members", () => {

@@ -93,6 +93,7 @@ async function runSync(): Promise<void> {
   do {
     syncRequested = false;
     try {
+      await sync.processPendingFileOperations();
       await sync.sync();
       await ensureRealtimeConnection();
     } catch (error) {
@@ -234,6 +235,11 @@ async function ensureRealtimeConnection(): Promise<void> {
         envelope.type === "message.created"
       ) {
         void forwardRealtimeCommand();
+      } else if (
+        envelope.sessionId === profile.sessionId &&
+        envelope.type === "file.operation.updated"
+      ) {
+        void runSync();
       }
     } catch {
       // Ignore malformed realtime payloads and retain polling as fallback.

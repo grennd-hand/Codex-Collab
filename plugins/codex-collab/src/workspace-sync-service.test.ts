@@ -34,6 +34,7 @@ const ownerPrompt = {
   codexOptions: null,
   deliveryStatus: "queued" as const,
   codexTurnId: null,
+  workspaceThreadId: "thread-1",
   completedAt: null,
   createdAt: "2026-07-25T00:00:00.000Z",
 };

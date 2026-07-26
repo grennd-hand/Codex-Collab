@@ -17,6 +17,7 @@ const member: Member = {
   deviceLabel: null,
   role: "owner",
   status: "approved",
+  workspaceFileAccess: "workspace-write",
   createdAt: session.createdAt,
   approvedAt: session.createdAt,
 };
