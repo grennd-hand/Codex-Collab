@@ -53,6 +53,8 @@ import {
   WeatherSunnyRegular,
 } from "@fluentui/react-icons";
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useId,
@@ -85,7 +87,6 @@ import type {
   RealtimeEnvelope,
   RealtimeTicketResponse,
   Session,
-  WorkspaceFileContent,
   WorkspaceSummary,
 } from "@codex-collab/protocol";
 import {
@@ -128,6 +129,15 @@ import { isCredentialRejected, requestJson } from "./api-client.js";
 import { ApiRequestError } from "./api-client.js";
 import { compressImageFile } from "./image-compression.js";
 import {
+  readWorkspaceFileOperation,
+  saveWorkspaceFileOperation,
+} from "./ide/workspace-file-operations.js";
+import type {
+  IdeFileDocument,
+  IdeSaveRequest,
+  IdeSaveResult,
+} from "./ide/types.js";
+import {
   linkAccountRoom,
   loadAccountProfile,
   logoutAccount,
@@ -136,6 +146,8 @@ import {
   restoreAccountRoom,
   signInWithPasskey,
 } from "./account-client.js";
+
+const IdeWorkspace = lazy(() => import("./ide/IdeWorkspace.js"));
 
 const brand: BrandVariants = {
   10: "#02040C",
@@ -161,6 +173,10 @@ const darkTheme = createDarkTheme(brand);
 const storageKey = "codexCollab";
 
 type ThemeMode = "light" | "dark";
+type WorkspaceFileAccess = "read-only" | "workspace-write";
+type MemberWithWorkspaceFileAccess = Member & {
+  workspaceFileAccess?: WorkspaceFileAccess;
+};
 type ConnectionState = "ready" | "connecting" | "live" | "waiting" | "error";
 type SessionExitReason = "manual" | "credential-rejected";
 export type ComposerMode = "codex" | "chat";
@@ -171,6 +187,14 @@ export function workspaceNeedsConversationLoad(
   workspace: Pick<WorkspaceSummary, "selectedThreadId" | "syncedAt"> | null,
 ): boolean {
   return Boolean(workspace?.selectedThreadId && !workspace.syncedAt);
+}
+
+function memberWorkspaceFileAccess(member: Member | null | undefined): WorkspaceFileAccess {
+  if (member?.role === "owner") return "workspace-write";
+  return (member as MemberWithWorkspaceFileAccess | null | undefined)
+    ?.workspaceFileAccess === "workspace-write"
+    ? "workspace-write"
+    : "read-only";
 }
 
 export function codexExecutionPhase(
@@ -1240,8 +1264,8 @@ export function App() {
   const [pairingToken, setPairingToken] = useState("");
   const [pairingExpiresAt, setPairingExpiresAt] = useState("");
   const [pairingCopied, setPairingCopied] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<WorkspaceFileContent | null>(null);
-  const [fileLoading, setFileLoading] = useState(false);
+  const [workspaceAccessUpdatingMemberId, setWorkspaceAccessUpdatingMemberId] =
+    useState<string | null>(null);
   const [inviteLink, setInviteLink] = useState("");
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
@@ -1331,8 +1355,7 @@ export function App() {
       setInviteOpen(false);
       setPairingToken("");
       setPairingExpiresAt("");
-      setSelectedFile(null);
-      setFileLoading(false);
+      setWorkspaceAccessUpdatingMemberId(null);
       setInviteLink("");
       setCopied(false);
       setCopyFailed(false);
@@ -1515,11 +1538,6 @@ export function App() {
     }
     setWorkspaceSummary(result.workspace);
     setConversationLoading(workspaceNeedsConversationLoad(result.workspace));
-    setSelectedFile((current) =>
-      current && !result.workspace.files.some((file) => file.path === current.path)
-        ? null
-        : current,
-    );
     return result.workspace;
   }, [approved, authHeaders, session, token]);
 
@@ -1832,6 +1850,9 @@ export function App() {
           pushActivity("共享工作区已更新", "Codex 记录或文件发生变化", "success");
           void refreshWorkspace().catch(showError);
         }
+        if ((envelope.type as string) === "file.operation.updated") {
+          void refreshWorkspace().catch(showError);
+        }
       });
       socket.addEventListener("close", (event) => {
         if (!stopped) {
@@ -1934,7 +1955,6 @@ export function App() {
       setMessages([]);
       setMembers([result.member]);
       setWorkspaceSummary(null);
-      setSelectedFile(null);
       setInviteLink("");
       setPendingChatAttachments([]);
       setPendingAttachments([]);
@@ -2289,6 +2309,39 @@ export function App() {
     }
   };
 
+  const updateMemberWorkspaceFileAccess = async (
+    target: Member,
+    workspaceFileAccess: WorkspaceFileAccess,
+  ) => {
+    if (!session || member?.role !== "owner" || target.role === "owner") return;
+    setWorkspaceAccessUpdatingMemberId(target.id);
+    try {
+      const result = await requestJson<{ member: MemberWithWorkspaceFileAccess }>(
+        `/v1/sessions/${encodeURIComponent(session.id)}/members/${encodeURIComponent(target.id)}/workspace-file-access`,
+        {
+          method: "PATCH",
+          headers: authHeaders(true),
+          body: JSON.stringify({ workspaceFileAccess }),
+        },
+      );
+      setMembers((current) =>
+        current.map((item) => (item.id === target.id ? result.member : item)),
+      );
+      pushActivity(
+        "项目文件权限已更新",
+        `${target.displayName}：${
+          workspaceFileAccess === "workspace-write" ? "项目文件可写" : "项目文件只读"
+        }`,
+        "success",
+      );
+      setError(null);
+    } catch (caught) {
+      showError(caught);
+    } finally {
+      setWorkspaceAccessUpdatingMemberId(null);
+    }
+  };
+
   const createInvite = async () => {
     if (!session || !roomOpen) {
       return;
@@ -2408,7 +2461,6 @@ export function App() {
     }
     setWorkspaceLoading(true);
     setConversationLoading(true);
-    setSelectedFile(null);
     try {
       const result = await requestJson<{ workspace: WorkspaceSummary }>(
         `/v1/sessions/${session.id}/workspace/selection`,
@@ -2429,24 +2481,43 @@ export function App() {
     }
   };
 
-  const openWorkspaceFile = async (path: string) => {
-    if (!session) {
-      return;
-    }
-    setFileLoading(true);
-    try {
-      const result = await requestJson<{ file: WorkspaceFileContent }>(
-        `/v1/sessions/${session.id}/workspace/file?path=${encodeURIComponent(path)}`,
-        { headers: authHeaders() },
+  const readWorkspaceFile = useCallback(
+    async (path: string): Promise<IdeFileDocument> => {
+      if (!session) throw new Error("当前没有可用的协作会话。");
+      const file = await readWorkspaceFileOperation(
+        {
+          sessionId: session.id,
+          headers: authHeaders(true),
+        },
+        path,
       );
-      setSelectedFile(result.file);
       setError(null);
-    } catch (caught) {
-      showError(caught);
-    } finally {
-      setFileLoading(false);
-    }
-  };
+      return file;
+    },
+    [authHeaders, session],
+  );
+
+  const saveWorkspaceFile = useCallback(
+    async (request: IdeSaveRequest): Promise<IdeSaveResult> => {
+      if (!session) throw new Error("当前没有可用的协作会话。");
+      const result = await saveWorkspaceFileOperation(
+        {
+          sessionId: session.id,
+          headers: authHeaders(true),
+        },
+        request,
+      );
+      if (result.status === "saved") {
+        pushActivity("项目文件已保存", request.path, "success");
+        void refreshWorkspace().catch(showError);
+      } else {
+        pushActivity("项目文件存在冲突", request.path, "warning");
+      }
+      setError(null);
+      return result;
+    },
+    [authHeaders, pushActivity, refreshWorkspace, session, showError],
+  );
 
   const resetSession = () => {
     clearSessionState("manual");
@@ -2468,11 +2539,11 @@ export function App() {
     ? unassignedMessages.length
     : 0;
   const pendingMemberCount = members.filter((item) => item.status === "pending").length;
+  const workspaceFileAccess = memberWorkspaceFileAccess(member);
+  const workspaceReadOnly = workspaceFileAccess !== "workspace-write";
   const memberIdentities = useMemo(() => buildMemberIdentityMap(members), [members]);
   const identityForMember = (memberId: string) =>
     memberIdentities.get(memberId) ?? fallbackMemberIdentity(memberId);
-  const codexConfigFileCount =
-    workspaceSummary?.files.filter((file) => file.path.startsWith(".codex/")).length ?? 0;
   const executionPhase = codexExecutionPhase(
     currentThreadMessages,
     workspaceSummary?.codexRuntimeStatus,
@@ -2707,6 +2778,30 @@ export function App() {
                               >
                                 批准
                               </Button>
+                            ) : member?.role === "owner" &&
+                              item.role !== "owner" &&
+                              item.status === "approved" ? (
+                              <div className="member-file-access-control">
+                                <Badge appearance="tint" color="success">
+                                  已批准
+                                </Badge>
+                                <Select
+                                  size="small"
+                                  aria-label={`${item.displayName} 的项目文件权限`}
+                                  title="仅控制已共享项目根目录，不包含 .codex 配置目录"
+                                  value={memberWorkspaceFileAccess(item)}
+                                  disabled={workspaceAccessUpdatingMemberId === item.id}
+                                  onChange={(_, data) =>
+                                    void updateMemberWorkspaceFileAccess(
+                                      item,
+                                      data.value as WorkspaceFileAccess,
+                                    )
+                                  }
+                                >
+                                  <option value="read-only">项目文件只读</option>
+                                  <option value="workspace-write">项目文件可写</option>
+                                </Select>
+                              </div>
                             ) : (
                               <Badge
                                 appearance="tint"
@@ -3564,29 +3659,71 @@ export function App() {
         open={workspaceOpen}
         onOpenChange={(_, data) => setWorkspaceOpen(data.open)}
       >
-        <DialogSurface className="workspace-dialog-surface">
-          <DialogBody>
-            <DialogTitle>Codex 任务与共享文件</DialogTitle>
-            <DialogContent className="workspace-dialog-content">
-              <p className="dialog-intro">
-                房主选择本机 Codex 任务后，导入可见消息、推理摘要、命令输出、项目文本，
-                以及单独授权的 .codex 非凭据配置。已批准成员拥有只读访问权。
-              </p>
+        {workspaceSummary?.hostConnected ? (
+          <DialogSurface className="ide-dialog-surface">
+            <DialogBody className="ide-dialog-body">
+              <DialogTitle className="visually-hidden">项目 IDE</DialogTitle>
+              <DialogContent className="ide-dialog-content">
+                <Suspense
+                  fallback={
+                    <div className="workspace-dialog-loading" aria-label="正在启动项目 IDE">
+                      <Skeleton>
+                        <SkeletonItem />
+                        <SkeletonItem />
+                      </Skeleton>
+                    </div>
+                  }
+                >
+                  <IdeWorkspace
+                    files={workspaceSummary.files}
+                    rootLabel={workspaceSummary.rootLabel}
+                    hostDeviceLabel={workspaceSummary.hostDeviceLabel}
+                    selectedThreadLabel={
+                      workspaceSummary.selectedThread?.name ||
+                      workspaceSummary.selectedThread?.preview ||
+                      null
+                    }
+                    syncedAt={workspaceSummary.syncedAt}
+                    themeMode={themeMode}
+                    readOnly={workspaceReadOnly}
+                    readOnlyReason={
+                      workspaceReadOnly
+                        ? "房主尚未为你开放项目文件写入权限。"
+                        : undefined
+                    }
+                    loading={workspaceLoading}
+                    onReadFile={readWorkspaceFile}
+                    onSaveFile={saveWorkspaceFile}
+                    onRefresh={openWorkspace}
+                    onClose={() => setWorkspaceOpen(false)}
+                  />
+                </Suspense>
+              </DialogContent>
+            </DialogBody>
+          </DialogSurface>
+        ) : (
+          <DialogSurface className="workspace-dialog-surface">
+            <DialogBody>
+              <DialogTitle>连接 Codex 工作区</DialogTitle>
+              <DialogContent className="workspace-dialog-content">
+                <p className="dialog-intro">
+                  文件只从房主明确授权的绝对项目根目录读取。
+                  .codex 配置目录始终作为单独的只读共享范围。
+                </p>
 
-              {workspaceLoading && !workspaceSummary ? (
-                <div className="workspace-dialog-loading">
-                  <Skeleton>
-                    <SkeletonItem />
-                    <SkeletonItem />
-                  </Skeleton>
-                </div>
-              ) : null}
+                {workspaceLoading && !workspaceSummary ? (
+                  <div className="workspace-dialog-loading">
+                    <Skeleton>
+                      <SkeletonItem />
+                      <SkeletonItem />
+                    </Skeleton>
+                  </div>
+                ) : null}
 
-              {!workspaceSummary?.hostConnected ? (
                 <section className="pairing-panel">
                   <div className="workspace-section-heading">
                     <div>
-                      <span>步骤 1</span>
+                      <span>主机连接</span>
                       <h3>连接房主的本机 Codex</h3>
                     </div>
                     {member?.role === "owner" ? (
@@ -3636,173 +3773,15 @@ export function App() {
                     </div>
                   ) : null}
                 </section>
-              ) : (
-                <>
-                  <section className="workspace-status-card">
-                    <div>
-                      <span>本机已连接</span>
-                      <strong>{workspaceSummary.rootLabel}</strong>
-                      <small>{workspaceSummary.hostDeviceLabel}</small>
-                    </div>
-                    <Badge appearance="tint" color="success">
-                      {workspaceSummary.syncedAt ? "已同步" : "等待导入"}
-                    </Badge>
-                  </section>
-
-                  <section className="thread-picker">
-                    <div className="workspace-section-heading">
-                      <div>
-                        <span>当前记录</span>
-                        <h3>已共享的 Codex 任务</h3>
-                      </div>
-                      {workspaceSummary.syncedAt ? (
-                        <small>
-                          最近同步 {timeLabel(workspaceSummary.syncedAt)}
-                        </small>
-                      ) : null}
-                    </div>
-                    {workspaceSummary.selectedThread ? (
-                      <div className="selected-thread-summary">
-                        <HistoryRegular />
-                        <div>
-                          <strong>
-                            {workspaceSummary.selectedThread.name ||
-                              workspaceSummary.selectedThread.preview ||
-                              "已共享 Codex 任务"}
-                          </strong>
-                          <span>{workspaceSummary.selectedThread.preview}</span>
-                        </div>
-                      </div>
-                    ) : (
-                      <MessageBar intent="info">
-                        <MessageBarBody>
-                          {member?.role === "owner"
-                            ? "请在页面顶部选择要共享的聊天记录。"
-                            : "等待房主选择要共享的 Codex 任务。"}
-                        </MessageBarBody>
-                      </MessageBar>
-                    )}
-                    {workspaceSummary.selectedThreadId && !workspaceSummary.syncedAt ? (
-                      <MessageBar intent="info">
-                        <MessageBarBody>
-                          任务已选择，正在等待房主本机插件导入。请保持 Codex 运行。
-                        </MessageBarBody>
-                      </MessageBar>
-                    ) : null}
-                  </section>
-
-                  <div className="workspace-data-grid">
-                    <section className="history-panel">
-                      <div className="workspace-section-heading compact">
-                        <div>
-                          <span>导入记录</span>
-                          <h3>Codex 对话</h3>
-                        </div>
-                        <small>{workspaceSummary.history.length} 条</small>
-                      </div>
-                      <div className="record-list">
-                        {workspaceSummary.history.length === 0 ? (
-                          <div className="workspace-empty">选择任务并完成同步后显示记录</div>
-                        ) : (
-                          workspaceSummary.history.map((entry) =>
-                            entry.role === "command" ? (
-                              <ExecutionStepCard
-                                compact
-                                key={entry.id}
-                                record={presentExecutionEntry(entry)}
-                              />
-                            ) : (
-                              <article className={`record-entry ${entry.role}`} key={entry.id}>
-                                <div>
-                                  <strong>{recordRoleLabel(entry.role)}</strong>
-                                  {entry.createdAt ? (
-                                    <time dateTime={entry.createdAt}>
-                                      {timeLabel(entry.createdAt)}
-                                    </time>
-                                  ) : null}
-                                </div>
-                                {entry.role === "assistant" || entry.role === "reasoning" ? (
-                                  <ReadableOutput text={entry.text} />
-                                ) : (
-                                  <p>{entry.text}</p>
-                                )}
-                              </article>
-                            ),
-                          )
-                        )}
-                      </div>
-                    </section>
-
-                    <section className="files-panel">
-                      <div className="workspace-section-heading compact">
-                        <div>
-                          <span>只读快照</span>
-                          <h3>项目文件</h3>
-                        </div>
-                        <small>
-                          {workspaceSummary.files.length} 个
-                          {codexConfigFileCount > 0
-                            ? ` · .codex 配置 ${codexConfigFileCount} 个`
-                            : ""}
-                        </small>
-                      </div>
-                      <div className="file-browser">
-                        <nav aria-label="共享文件">
-                          {workspaceSummary.files.length === 0 ? (
-                            <div className="workspace-empty">同步后显示可安全共享的文本文件</div>
-                          ) : (
-                            workspaceSummary.files.map((file) => (
-                              <button
-                                type="button"
-                                className={selectedFile?.path === file.path ? "active" : ""}
-                                key={file.path}
-                                onClick={() => void openWorkspaceFile(file.path)}
-                              >
-                                <DocumentRegular />
-                                <span>{file.path}</span>
-                                <small>{Math.max(1, Math.ceil(file.size / 1024))} KB</small>
-                              </button>
-                            ))
-                          )}
-                        </nav>
-                        <div className="file-preview">
-                          {fileLoading ? (
-                            <span>正在读取文件…</span>
-                          ) : selectedFile ? (
-                            <>
-                              <header>
-                                <strong>{selectedFile.path}</strong>
-                                <span>SHA {selectedFile.sha256.slice(0, 10)}</span>
-                              </header>
-                              <pre>{selectedFile.content}</pre>
-                            </>
-                          ) : (
-                            <div className="workspace-empty">选择文件查看内容</div>
-                          )}
-                        </div>
-                      </div>
-                    </section>
-                  </div>
-                </>
-              )}
-            </DialogContent>
-            <DialogActions>
-              <Button appearance="secondary" onClick={() => setWorkspaceOpen(false)}>
-                关闭
-              </Button>
-              {workspaceSummary?.hostConnected ? (
-                <Button
-                  appearance="primary"
-                  icon={<ArrowSyncRegular />}
-                  disabled={workspaceLoading}
-                  onClick={() => void openWorkspace()}
-                >
-                  刷新
+              </DialogContent>
+              <DialogActions>
+                <Button appearance="secondary" onClick={() => setWorkspaceOpen(false)}>
+                  关闭
                 </Button>
-              ) : null}
-            </DialogActions>
-          </DialogBody>
-        </DialogSurface>
+              </DialogActions>
+            </DialogBody>
+          </DialogSurface>
+        )}
       </Dialog>
 
       <Dialog open={setupOpen}>

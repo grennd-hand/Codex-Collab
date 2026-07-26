@@ -341,6 +341,18 @@ textarea {
   font-size: 11px;
 }
 
+.member-file-access-control {
+  min-width: 0;
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+}
+
+.member-file-access-control .fui-Select {
+  max-width: 128px;
+  font-size: 11px;
+}
+
 .panel-empty {
   padding: 34px 8px;
   color: var(--colorNeutralForeground3);
