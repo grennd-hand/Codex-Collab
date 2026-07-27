@@ -3,12 +3,14 @@ import {
   sanitizeCodexUserMessageText,
   type CodexRecordEntry,
   type Message,
+  type WorkspaceHistoryPageItem,
 } from "@codex-collab/protocol";
 
 export type ImportedTimelineItem =
   | {
       kind: "message";
       entry: CodexRecordEntry;
+      key?: string;
     }
   | {
       kind: "execution";
@@ -40,6 +42,18 @@ interface CollabCommandEnvelope {
   commandId: string | null;
   member: string;
   body: string;
+}
+
+type TimelineHistoryEntry = CodexRecordEntry | WorkspaceHistoryPageItem;
+
+function keyedHistoryEntry(item: TimelineHistoryEntry): {
+  key: string | null;
+  groupKey: string | null;
+  entry: CodexRecordEntry;
+} {
+  return "entry" in item
+    ? { key: item.key, groupKey: item.groupKey ?? null, entry: item.entry }
+    : { key: null, groupKey: null, entry: item };
 }
 
 export function splitConversationMessages(messages: readonly Message[]): {
@@ -108,10 +122,13 @@ export function parseCollabCommandEnvelope(
     : null;
 }
 
-export function buildImportedTimeline(history: CodexRecordEntry[]): ImportedTimelineItem[] {
+export function buildImportedTimeline(
+  history: readonly TimelineHistoryEntry[],
+): ImportedTimelineItem[] {
   const timeline: ImportedTimelineItem[] = [];
 
-  for (const entry of history) {
+  for (const historyItem of history) {
+    const { key, groupKey, entry } = keyedHistoryEntry(historyItem);
     const isCommentary = entry.role === "assistant" && entry.phase === "commentary";
     if (entry.role === "user" || (entry.role === "assistant" && !isCommentary)) {
       const previous = timeline.at(-1);
@@ -130,6 +147,7 @@ export function buildImportedTimeline(history: CodexRecordEntry[]): ImportedTime
       timeline.push({
         kind: "message",
         entry: visibleText === entry.text ? entry : { ...entry, text: visibleText },
+        ...(key ? { key } : {}),
       });
       continue;
     }
@@ -140,7 +158,7 @@ export function buildImportedTimeline(history: CodexRecordEntry[]): ImportedTime
     } else {
       timeline.push({
         kind: "execution",
-        id: `execution-${entry.id}`,
+        id: groupKey ?? `execution-${key ?? entry.id}`,
         entries: [entry],
       });
     }
@@ -150,14 +168,15 @@ export function buildImportedTimeline(history: CodexRecordEntry[]): ImportedTime
 }
 
 export function buildUnifiedTimeline(
-  history: CodexRecordEntry[],
+  history: readonly TimelineHistoryEntry[],
   messages: readonly Message[],
 ): UnifiedTimelineItem[] {
   const commandMessages = messages.filter(
     (message) => message.kind === "codex_prompt",
   );
   const claimedMessageIds = new Set<string>();
-  const filteredHistory = history.filter((entry) => {
+  const filteredHistory = history.filter((historyItem) => {
+    const { entry } = keyedHistoryEntry(historyItem);
     if (entry.role !== "user") return true;
     const envelope = parseCollabCommandEnvelope(entry.text);
     const visibleText = envelope?.body ?? sanitizeImportedUserText(entry.text);
@@ -207,14 +226,57 @@ export function buildUnifiedTimeline(
     return Number.isFinite(timestamp) ? timestamp : null;
   };
   let order = 0;
-  for (const item of buildImportedTimeline(filteredHistory)) {
+  const importedTimeline = buildImportedTimeline(filteredHistory);
+  const importedTimestamps = importedTimeline.map((item) => {
     const createdAt =
       item.kind === "message"
         ? item.entry.createdAt
         : item.entries.find((entry) => entry.createdAt)?.createdAt ?? null;
+    return parseTimestamp(createdAt);
+  });
+  let lastImportedTimestamp: number | null = null;
+  for (let index = 0; index < importedTimeline.length; index += 1) {
+    const item = importedTimeline[index]!;
+    let timestamp = importedTimestamps[index] ?? null;
+    if (timestamp === null) {
+      let previousIndex = index - 1;
+      while (previousIndex >= 0 && importedTimestamps[previousIndex] === null) {
+        previousIndex -= 1;
+      }
+      let nextIndex = index + 1;
+      while (
+        nextIndex < importedTimestamps.length &&
+        importedTimestamps[nextIndex] === null
+      ) {
+        nextIndex += 1;
+      }
+      const previousTimestamp =
+        previousIndex >= 0 ? importedTimestamps[previousIndex] ?? null : null;
+      const nextTimestamp =
+        nextIndex < importedTimestamps.length
+          ? importedTimestamps[nextIndex] ?? null
+          : null;
+      if (previousTimestamp !== null && nextTimestamp !== null) {
+        const fraction = (index - previousIndex) / (nextIndex - previousIndex);
+        timestamp =
+          previousTimestamp + (nextTimestamp - previousTimestamp) * fraction;
+      } else if (nextTimestamp !== null) {
+        timestamp = nextTimestamp - (nextIndex - index) / 1_000;
+      } else if (previousTimestamp !== null) {
+        timestamp = previousTimestamp + (index - previousIndex) / 1_000;
+      }
+    }
+    if (
+      timestamp !== null &&
+      lastImportedTimestamp !== null &&
+      timestamp <= lastImportedTimestamp
+    ) {
+      timestamp = lastImportedTimestamp + 1 / 1_000;
+    }
+    if (timestamp !== null) lastImportedTimestamp = timestamp;
     candidates.push({
       item: { kind: "imported", item },
-      timestamp: parseTimestamp(createdAt),
+      timestamp,
       sourcePriority: 1,
       order: order++,
     });

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { CodexRecordEntry, Message } from "@codex-collab/protocol";
+import type {
+  CodexRecordEntry,
+  Message,
+  WorkspaceHistoryPageItem,
+} from "@codex-collab/protocol";
 import {
   buildImportedTimeline,
   buildUnifiedTimeline,
@@ -116,6 +120,52 @@ describe("buildImportedTimeline", () => {
       },
       { kind: "message", entry: finalAnswer },
     ]);
+  });
+
+  it("preserves pagination keys for duplicate ids in messages and executions", () => {
+    const items: WorkspaceHistoryPageItem[] = [
+      { key: "duplicate:1", entry: record("duplicate", "assistant", "First") },
+      { key: "reasoning:1", entry: record("same-step", "reasoning") },
+      { key: "divider", entry: record("divider", "assistant") },
+      { key: "reasoning:2", entry: record("same-step", "reasoning") },
+      { key: "duplicate:2", entry: record("duplicate", "assistant", "Second") },
+    ];
+
+    const timeline = buildImportedTimeline(items);
+    expect(timeline[0]).toMatchObject({ kind: "message", key: "duplicate:1" });
+    expect(timeline[1]).toMatchObject({
+      kind: "execution",
+      id: "execution-reasoning:1",
+    });
+    expect(timeline[3]).toMatchObject({
+      kind: "execution",
+      id: "execution-reasoning:2",
+    });
+    expect(timeline[4]).toMatchObject({ kind: "message", key: "duplicate:2" });
+  });
+
+  it("keeps an execution group key stable when an older page extends the group", () => {
+    const recent: WorkspaceHistoryPageItem[] = [
+      {
+        key: "middle-step",
+        groupKey: "execution-root-step",
+        entry: record("duplicate-step", "reasoning"),
+      },
+    ];
+    const withOlder: WorkspaceHistoryPageItem[] = [
+      {
+        key: "root-step",
+        groupKey: "execution-root-step",
+        entry: record("duplicate-step", "reasoning"),
+      },
+      ...recent,
+    ];
+    expect(buildImportedTimeline(recent)[0]).toMatchObject({
+      id: "execution-root-step",
+    });
+    expect(buildImportedTimeline(withOlder)[0]).toMatchObject({
+      id: "execution-root-step",
+    });
   });
 });
 
@@ -395,6 +445,37 @@ describe("buildUnifiedTimeline", () => {
       { kind: "imported", item: { kind: "message", entry: firstImported } },
       { kind: "imported", item: { kind: "message", entry: secondImported } },
     ]);
+  });
+
+  it("keeps an undated older imported record before its dated successor", () => {
+    const undated = record("undated-old", "assistant", "Older without time");
+    const dated = {
+      ...record("dated-new", "assistant", "Newer with time"),
+      createdAt: "2026-07-25T00:01:00.000Z",
+    };
+    const timeline = buildUnifiedTimeline([undated, dated], []);
+    expect(timeline.map((item) =>
+      item.kind === "imported" && item.item.kind === "message"
+        ? item.item.entry.id
+        : "other",
+    )).toEqual(["undated-old", "dated-new"]);
+  });
+
+  it("keeps Host array order when imported timestamps are out of order", () => {
+    const first = {
+      ...record("host-first", "assistant"),
+      createdAt: "2026-07-25T00:02:00.000Z",
+    };
+    const second = {
+      ...record("host-second", "assistant"),
+      createdAt: "2026-07-25T00:01:00.000Z",
+    };
+    const timeline = buildUnifiedTimeline([first, second], []);
+    expect(timeline.map((item) =>
+      item.kind === "imported" && item.item.kind === "message"
+        ? item.item.entry.id
+        : "other",
+    )).toEqual(["host-first", "host-second"]);
   });
 
   it("uses a deterministic source order for equal or invalid timestamps", () => {

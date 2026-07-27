@@ -78,7 +78,7 @@ import type {
   RealtimeEnvelope,
   RealtimeTicketResponse,
   Session,
-  WorkspaceHistoryResult,
+  WorkspaceHistoryPage,
   WorkspaceOverview,
   WorkspaceSummary,
 } from "@codex-collab/protocol";
@@ -171,9 +171,18 @@ import {
   shouldApplyWorkspaceResponse,
 } from "./app/workspace-refresh.js";
 import {
-  mergeWorkspaceHistory,
   mergeWorkspaceOverview,
 } from "./app/workspace-state.js";
+import {
+  beginLatestHistoryLoad,
+  beginOlderHistoryLoad,
+  createWorkspaceHistoryWindow,
+  failHistoryLoad,
+  prependOlderHistoryPage,
+  reconcileLatestHistoryPage,
+  workspaceHistoryEntries,
+  type WorkspaceHistoryWindow,
+} from "./app/workspace-history-window.js";
 const IdeWorkspace = lazy(() => import("./ide/IdeWorkspace.js"));
 
 const brand: BrandVariants = {
@@ -315,6 +324,50 @@ function isLoopbackOrigin(): boolean {
     window.location.hostname === "::1"
   );
 }
+
+interface HistoryScrollAnchor {
+  key: string;
+  offset: number;
+  scrollHeight: number;
+  scrollTop: number;
+}
+
+function captureHistoryScrollAnchor(
+  stream: HTMLElement | null,
+): HistoryScrollAnchor | null {
+  if (!stream) return null;
+  const streamTop = stream.getBoundingClientRect().top;
+  const anchor = Array.from(
+    stream.querySelectorAll<HTMLElement>("[data-history-key]"),
+  ).find((element) => element.getBoundingClientRect().bottom > streamTop + 1);
+  const key = anchor?.dataset.historyKey;
+  return anchor && key
+    ? {
+        key,
+        offset: anchor.getBoundingClientRect().top - streamTop,
+        scrollHeight: stream.scrollHeight,
+        scrollTop: stream.scrollTop,
+      }
+    : null;
+}
+
+function restoreHistoryScrollAnchor(
+  stream: HTMLElement | null,
+  anchor: HistoryScrollAnchor | null,
+): void {
+  if (!stream || !anchor) return;
+  const matching = Array.from(
+    stream.querySelectorAll<HTMLElement>("[data-history-key]"),
+  ).find((element) => element.dataset.historyKey === anchor.key);
+  if (matching) {
+    const currentOffset =
+      matching.getBoundingClientRect().top - stream.getBoundingClientRect().top;
+    stream.scrollTop += currentOffset - anchor.offset;
+    return;
+  }
+  stream.scrollTop =
+    anchor.scrollTop + Math.max(0, stream.scrollHeight - anchor.scrollHeight);
+}
 export function App() {
   const initialInviteToken = useMemo(inviteTokenFromLocation, []);
   const initialCredential = useMemo(
@@ -356,6 +409,9 @@ export function App() {
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [workspaceEditorExpanded, setWorkspaceEditorExpanded] = useState(false);
   const [workspaceSummary, setWorkspaceSummary] = useState<WorkspaceSummary | null>(null);
+  const [workspaceHistoryWindow, setWorkspaceHistoryWindow] = useState(() =>
+    createWorkspaceHistoryWindow(null, null),
+  );
   const [ideOpenFileRequest, setIdeOpenFileRequest] =
     useState<IdeOpenFileRequest | null>(null);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
@@ -410,7 +466,13 @@ export function App() {
   const workspaceRefreshInFlightRef = useRef<Promise<WorkspaceSummary | null> | null>(
     null,
   );
+  const workspaceRefreshIncludesHistoryRef = useRef(false);
   const workspaceRefreshAbortRef = useRef<AbortController | null>(null);
+  const workspaceHistoryOlderAbortRef = useRef<AbortController | null>(null);
+  const workspaceHistoryPrependingRef = useRef(false);
+  const workspaceHistoryEpochRef = useRef(0);
+  const workspaceHistoryWindowRef = useRef(workspaceHistoryWindow);
+  const workspaceHistoryOlderRequestIdRef = useRef(0);
   const workspacePriorityFileReadsRef = useRef(0);
   const workspaceRefreshPendingRef = useRef(false);
   const workspaceRefreshResumeTimerRef = useRef<number | undefined>(undefined);
@@ -430,10 +492,28 @@ export function App() {
   const supportsPasskeys = useMemo(passkeysAvailable, []);
   const composerStorageKey = session ? `codexCollabComposer:${session.id}` : null;
   workspaceSessionIdRef.current = session?.id ?? null;
+  workspaceHistoryWindowRef.current = workspaceHistoryWindow;
+
+  const commitWorkspaceHistoryWindow = useCallback(
+    (update: (current: WorkspaceHistoryWindow) => WorkspaceHistoryWindow) => {
+      const current = workspaceHistoryWindowRef.current;
+      const next = update(current);
+      workspaceHistoryWindowRef.current = next;
+      setWorkspaceHistoryWindow(next);
+      return next;
+    },
+    [],
+  );
 
   useEffect(() => {
+    workspaceHistoryEpochRef.current += 1;
+    workspaceHistoryOlderRequestIdRef.current += 1;
     workspaceRefreshAbortRef.current?.abort();
     workspaceRefreshAbortRef.current = null;
+    workspaceRefreshIncludesHistoryRef.current = false;
+    workspaceHistoryOlderAbortRef.current?.abort();
+    workspaceHistoryOlderAbortRef.current = null;
+    workspaceHistoryPrependingRef.current = false;
     workspacePriorityFileReadsRef.current = 0;
     workspaceRefreshPendingRef.current = false;
     workspaceHistoryRequestedAtRef.current = 0;
@@ -445,7 +525,7 @@ export function App() {
     workspaceFileReadsRef.current.clear();
     workspaceRefreshInFlightRef.current = null;
     setIdeOpenFileRequest(null);
-  }, [session?.id, workspaceSummary?.selectedThreadId]);
+  }, [session?.id]);
 
   const pushActivity = useCallback(
     (
@@ -477,7 +557,14 @@ export function App() {
       setMembers([]);
       setMessages([]);
       setWorkspaceSummary(null);
+      commitWorkspaceHistoryWindow(() =>
+        createWorkspaceHistoryWindow(null, null),
+      );
+      workspaceHistoryEpochRef.current += 1;
+      workspaceHistoryOlderRequestIdRef.current += 1;
       workspaceRefreshSequenceRef.current += 1;
+      workspaceHistoryOlderAbortRef.current?.abort();
+      workspaceHistoryOlderAbortRef.current = null;
       setConversationLoading(false);
       setLoading(false);
       setWorkspaceLoading(false);
@@ -513,7 +600,7 @@ export function App() {
       setCredentialNotice(null);
       pushActivity("已离开本机会话", "服务器数据未删除", "info");
     },
-    [pushActivity],
+    [commitWorkspaceHistoryWindow, pushActivity],
   );
 
   const showError = useCallback(
@@ -663,12 +750,20 @@ export function App() {
       return null;
     }
     const inFlight = workspaceRefreshInFlightRef.current;
-    if (inFlight) return inFlight;
+    if (inFlight) {
+      if (!includeHistory || workspaceRefreshIncludesHistoryRef.current) {
+        return inFlight;
+      }
+      workspaceRefreshAbortRef.current?.abort();
+      workspaceRefreshInFlightRef.current = null;
+    }
 
     const sessionId = session.id;
+    const historyEpoch = workspaceHistoryEpochRef.current;
     const requestSequence = ++workspaceRefreshSequenceRef.current;
     const controller = new AbortController();
     workspaceRefreshAbortRef.current = controller;
+    workspaceRefreshIncludesHistoryRef.current = includeHistory;
     workspaceRefreshPendingRef.current = false;
     const request = (async (): Promise<WorkspaceSummary | null> => {
       const result = await requestJson<{ workspace: WorkspaceOverview }>(
@@ -676,41 +771,81 @@ export function App() {
         { headers: authHeaders(), signal: controller.signal },
       );
       const overview = result.workspace;
+      if (
+        workspaceSessionIdRef.current !== sessionId ||
+        workspaceHistoryEpochRef.current !== historyEpoch
+      ) {
+        return null;
+      }
       let overviewSummary: WorkspaceSummary = { ...overview, history: [] };
       if (
-        workspaceSessionIdRef.current === sessionId &&
-        shouldApplyWorkspaceResponse(
+        !shouldApplyWorkspaceResponse(
           requestSequence,
           workspaceAppliedSequenceRef.current,
         )
       ) {
-        workspaceAppliedSequenceRef.current = requestSequence;
-        setWorkspaceSummary((current) => {
-          overviewSummary = mergeWorkspaceOverview(current, overview);
-          return overviewSummary;
-        });
+        return null;
       }
+      workspaceAppliedSequenceRef.current = requestSequence;
+      setWorkspaceSummary((current) => {
+        overviewSummary = mergeWorkspaceOverview(current, overview);
+        return overviewSummary;
+      });
       if (!includeHistory || workspacePriorityFileReadsRef.current > 0) {
         return overviewSummary;
       }
-      const historyResult = await requestJson<{
-        workspaceHistory: WorkspaceHistoryResult;
-      }>(`/v1/sessions/${sessionId}/workspace/history`, {
-        headers: authHeaders(),
-        signal: controller.signal,
-      });
-      const workspaceHistory = historyResult.workspaceHistory;
-      if (
-        workspaceSessionIdRef.current === sessionId &&
-        workspaceAppliedSequenceRef.current === requestSequence &&
-        workspaceHistory.selectedThreadId === overview.selectedThreadId
-      ) {
-        const completeWorkspace = mergeWorkspaceHistory(overview, workspaceHistory);
-        if (!completeWorkspace) return overviewSummary;
-        setWorkspaceSummary(completeWorkspace);
-        setConversationLoading(workspaceNeedsConversationLoad(completeWorkspace));
-        workspaceHistoryRequestedAtRef.current = Date.now();
-        return completeWorkspace;
+      if (!overview.selectedThreadId) {
+        commitWorkspaceHistoryWindow(() =>
+          createWorkspaceHistoryWindow(sessionId, null),
+        );
+        setConversationLoading(false);
+        return overviewSummary;
+      }
+      commitWorkspaceHistoryWindow((current) =>
+        beginLatestHistoryLoad(current, sessionId, overview.selectedThreadId),
+      );
+      try {
+        const historyResult = await requestJson<{
+          workspaceHistoryPage: WorkspaceHistoryPage;
+        }>(`/v1/sessions/${sessionId}/workspace/history/page?limit=40`, {
+          headers: authHeaders(),
+          signal: controller.signal,
+        });
+        const workspaceHistoryPage = historyResult.workspaceHistoryPage;
+        if (
+          workspaceSessionIdRef.current === sessionId &&
+          workspaceHistoryEpochRef.current === historyEpoch &&
+          workspaceAppliedSequenceRef.current === requestSequence &&
+          workspaceHistoryPage.selectedThreadId === overview.selectedThreadId
+        ) {
+          commitWorkspaceHistoryWindow((current) =>
+            reconcileLatestHistoryPage(
+              current,
+              sessionId,
+              workspaceHistoryPage,
+            ),
+          );
+          setConversationLoading(
+            workspaceNeedsConversationLoad({
+              ...overview,
+              syncedAt: workspaceHistoryPage.syncedAt ?? overview.syncedAt,
+            }),
+          );
+          workspaceHistoryRequestedAtRef.current = Date.now();
+        }
+      } catch (caught) {
+        if (isWorkspaceRefreshAbort(caught)) throw caught;
+        if (
+          workspaceSessionIdRef.current !== sessionId ||
+          workspaceHistoryEpochRef.current !== historyEpoch ||
+          workspaceAppliedSequenceRef.current !== requestSequence
+        ) {
+          return null;
+        }
+        const message =
+          caught instanceof Error ? caught.message : "最近对话记录加载失败";
+        commitWorkspaceHistoryWindow((current) => failHistoryLoad(current, message));
+        setConversationLoading(false);
       }
       return overviewSummary;
     })()
@@ -728,11 +863,137 @@ export function App() {
         }
         if (workspaceRefreshInFlightRef.current === request) {
           workspaceRefreshInFlightRef.current = null;
+          workspaceRefreshIncludesHistoryRef.current = false;
         }
       });
     workspaceRefreshInFlightRef.current = request;
     return request;
-  }, [approved, authHeaders, session, token]);
+  }, [approved, authHeaders, commitWorkspaceHistoryWindow, session, token]);
+
+  const loadOlderWorkspaceHistory = useCallback(async () => {
+    const historyWindow = workspaceHistoryWindowRef.current;
+    if (
+      !session ||
+      !token ||
+      !approved ||
+      !historyWindow.threadId ||
+      !historyWindow.hasOlder ||
+      !historyWindow.olderCursor ||
+      historyWindow.olderLoading ||
+      workspaceHistoryOlderAbortRef.current
+    ) {
+      return;
+    }
+
+    const sessionId = session.id;
+    const threadId = historyWindow.threadId;
+    const requestedCursor = historyWindow.olderCursor;
+    const historyEpoch = workspaceHistoryEpochRef.current;
+    const requestId = ++workspaceHistoryOlderRequestIdRef.current;
+    const scrollAnchor = captureHistoryScrollAnchor(messageStreamRef.current);
+    const controller = new AbortController();
+    let scrollAdjustmentScheduled = false;
+    workspaceHistoryOlderAbortRef.current = controller;
+    workspaceHistoryPrependingRef.current = true;
+    commitWorkspaceHistoryWindow(beginOlderHistoryLoad);
+
+    try {
+      const result = await requestJson<{
+        workspaceHistoryPage: WorkspaceHistoryPage;
+      }>(
+        `/v1/sessions/${sessionId}/workspace/history/page?limit=40&before=${encodeURIComponent(
+          requestedCursor,
+        )}`,
+        { headers: authHeaders(), signal: controller.signal },
+      );
+      if (
+        workspaceSessionIdRef.current !== sessionId ||
+        workspaceHistoryEpochRef.current !== historyEpoch ||
+        workspaceHistoryOlderRequestIdRef.current !== requestId ||
+        result.workspaceHistoryPage.selectedThreadId !== threadId
+      ) {
+        return;
+      }
+      const currentWindow = workspaceHistoryWindowRef.current;
+      if (
+        currentWindow.sessionId !== sessionId ||
+        currentWindow.threadId !== threadId ||
+        currentWindow.olderCursor !== requestedCursor
+      ) {
+        return;
+      }
+      const nextWindow = prependOlderHistoryPage(
+        currentWindow,
+        sessionId,
+        requestedCursor,
+        result.workspaceHistoryPage,
+      );
+      if (nextWindow === currentWindow) return;
+      commitWorkspaceHistoryWindow(() =>
+        nextWindow,
+      );
+      scrollAdjustmentScheduled = true;
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          if (
+            workspaceSessionIdRef.current === sessionId &&
+            workspaceHistoryEpochRef.current === historyEpoch &&
+            workspaceHistoryOlderRequestIdRef.current === requestId
+          ) {
+            restoreHistoryScrollAnchor(messageStreamRef.current, scrollAnchor);
+          }
+          if (workspaceHistoryOlderRequestIdRef.current === requestId) {
+            workspaceHistoryPrependingRef.current = false;
+            if (workspaceHistoryOlderAbortRef.current === controller) {
+              workspaceHistoryOlderAbortRef.current = null;
+            }
+          }
+        });
+      });
+    } catch (caught) {
+      if (isWorkspaceRefreshAbort(caught)) return;
+      if (
+        workspaceSessionIdRef.current !== sessionId ||
+        workspaceHistoryEpochRef.current !== historyEpoch ||
+        workspaceHistoryOlderRequestIdRef.current !== requestId ||
+        workspaceHistoryWindowRef.current.threadId !== threadId
+      ) {
+        return;
+      }
+      if (
+        caught instanceof ApiRequestError &&
+        caught.code === "history_cursor_stale"
+      ) {
+        commitWorkspaceHistoryWindow(() =>
+          createWorkspaceHistoryWindow(sessionId, threadId, true),
+        );
+        void refreshWorkspace(true).catch(showError);
+        return;
+      }
+      const message = caught instanceof Error ? caught.message : "更早记录加载失败";
+      commitWorkspaceHistoryWindow((current) => failHistoryLoad(current, message));
+    } finally {
+      if (workspaceHistoryOlderRequestIdRef.current === requestId) {
+        commitWorkspaceHistoryWindow((current) =>
+          current.olderLoading ? { ...current, olderLoading: false } : current,
+        );
+        if (!scrollAdjustmentScheduled) {
+          workspaceHistoryPrependingRef.current = false;
+          if (workspaceHistoryOlderAbortRef.current === controller) {
+            workspaceHistoryOlderAbortRef.current = null;
+          }
+        }
+      }
+    }
+  }, [
+    approved,
+    authHeaders,
+    commitWorkspaceHistoryWindow,
+    refreshWorkspace,
+    session,
+    showError,
+    token,
+  ]);
 
   const resumeWorkspaceRefreshAfterFileRead = useCallback(() => {
     if (
@@ -876,7 +1137,11 @@ export function App() {
 
   useEffect(() => {
     const stream = messageStreamRef.current;
-    if (stream && messageStreamPinnedRef.current) {
+    if (
+      stream &&
+      messageStreamPinnedRef.current &&
+      !workspaceHistoryPrependingRef.current
+    ) {
       stream.scrollTop = stream.scrollHeight;
     }
     const chatStream = chatStreamRef.current;
@@ -886,8 +1151,8 @@ export function App() {
   }, [
     messages,
     workspaceSummary?.codexRuntimeStatus,
-    workspaceSummary?.history.length,
-    workspaceSummary?.history.at(-1)?.text,
+    workspaceHistoryWindow.items.length,
+    workspaceHistoryWindow.items.at(-1)?.entry.text,
   ]);
 
   useEffect(() => {
@@ -1199,6 +1464,9 @@ export function App() {
       setMessages([]);
       setMembers([result.member]);
       setWorkspaceSummary(null);
+      commitWorkspaceHistoryWindow(() =>
+        createWorkspaceHistoryWindow(null, null),
+      );
       setInviteLink("");
       setPendingChatAttachments([]);
       setPendingAttachments([]);
@@ -1715,6 +1983,16 @@ export function App() {
     if (!session || !threadId || member?.role !== "owner") {
       return;
     }
+    workspaceHistoryEpochRef.current += 1;
+    workspaceHistoryOlderRequestIdRef.current += 1;
+    workspaceRefreshSequenceRef.current += 1;
+    workspaceRefreshAbortRef.current?.abort();
+    workspaceRefreshAbortRef.current = null;
+    workspaceRefreshInFlightRef.current = null;
+    workspaceRefreshIncludesHistoryRef.current = false;
+    workspaceHistoryOlderAbortRef.current?.abort();
+    workspaceHistoryOlderAbortRef.current = null;
+    workspaceHistoryPrependingRef.current = false;
     setWorkspaceLoading(true);
     setConversationLoading(true);
     try {
@@ -1726,9 +2004,15 @@ export function App() {
           body: JSON.stringify({ threadId }),
         },
       );
-      setWorkspaceSummary(result.workspace);
+      workspaceFileCacheRef.current.clear();
+      workspaceFileReadsRef.current.clear();
+      setWorkspaceSummary({ ...result.workspace, history: [] });
+      commitWorkspaceHistoryWindow(() =>
+        createWorkspaceHistoryWindow(session.id, threadId, true),
+      );
       setConversationLoading(workspaceNeedsConversationLoad(result.workspace));
       pushActivity("已选择 Codex 任务", "等待本机插件导入记录与文件", "success");
+      void refreshWorkspace(true).catch(showError);
     } catch (caught) {
       setConversationLoading(false);
       showError(caught);
@@ -1822,7 +2106,10 @@ export function App() {
 
   const owner = members.find((item) => item.role === "owner");
   const status = connectionPresentation(connection, Boolean(session));
-  const importedHistory = workspaceSummary?.history ?? [];
+  const importedHistory = useMemo(
+    () => workspaceHistoryEntries(workspaceHistoryWindow),
+    [workspaceHistoryWindow],
+  );
   const workspaceFileChanges = useMemo(
     () => collectExecutionFileChanges(importedHistory),
     [importedHistory],
@@ -1833,9 +2120,15 @@ export function App() {
       codexMessages,
       workspaceSummary?.selectedThreadId,
     );
-  const codexTimeline = buildUnifiedTimeline(importedHistory, currentThreadMessages);
+  const codexTimeline = buildUnifiedTimeline(
+    workspaceHistoryWindow.items,
+    currentThreadMessages,
+  );
   const hasCodexContent =
     importedHistory.length > 0 || currentThreadMessages.length > 0;
+  const conversationInitialLoading =
+    conversationLoading ||
+    (workspaceHistoryWindow.initialLoading && workspaceHistoryWindow.items.length === 0);
   const hiddenUnassignedMessageCount = workspaceSummary?.selectedThreadId
     ? unassignedMessages.length
     : 0;
@@ -2425,7 +2718,9 @@ export function App() {
             <section
               className="message-stream"
               aria-label="Codex 对话"
-              aria-busy={conversationLoading}
+              aria-busy={
+                conversationInitialLoading || workspaceHistoryWindow.olderLoading
+              }
               ref={messageStreamRef}
               onScroll={(event) => {
                 const stream = event.currentTarget;
@@ -2433,18 +2728,60 @@ export function App() {
                   stream.scrollHeight - stream.scrollTop - stream.clientHeight < 96;
                 messageStreamPinnedRef.current = pinned;
                 setMessageStreamPinned(pinned);
+                if (
+                  stream.scrollTop < 120 &&
+                  workspaceHistoryWindow.hasOlder &&
+                  !workspaceHistoryWindow.olderLoading
+                ) {
+                  void loadOlderWorkspaceHistory();
+                }
               }}
             >
-              {conversationLoading ? (
+              {conversationInitialLoading ? (
                 <div className="conversation-loading" role="status" aria-live="polite">
                   <Spinner
-                    label="正在加载对话记录"
+                    label="正在加载最近对话记录"
                     labelPosition="below"
                     size="medium"
                   />
                 </div>
               ) : (
                 <>
+                  {workspaceHistoryWindow.hasOlder ||
+                  workspaceHistoryWindow.olderLoading ||
+                  workspaceHistoryWindow.error ? (
+                    <div className="history-page-control" role="status">
+                      {workspaceHistoryWindow.olderLoading ? (
+                        <>
+                          <Spinner size="tiny" />
+                          <span>正在加载更早记录…</span>
+                        </>
+                      ) : workspaceHistoryWindow.hasOlder ? (
+                        <Button
+                          appearance="subtle"
+                          icon={<HistoryRegular />}
+                          size="small"
+                          onClick={() => void loadOlderWorkspaceHistory()}
+                        >
+                          查看更早记录
+                        </Button>
+                      ) : null}
+                      {workspaceHistoryWindow.error ? (
+                        <>
+                          <span className="history-page-error">
+                            {workspaceHistoryWindow.error}
+                          </span>
+                          <Button
+                            appearance="subtle"
+                            size="small"
+                            onClick={() => void refreshWorkspace(true).catch(showError)}
+                          >
+                            重试
+                          </Button>
+                        </>
+                      ) : null}
+                    </div>
+                  ) : null}
                   {hiddenUnassignedMessageCount > 0 ? (
                     <div className="timeline-provenance-notice" role="note">
                       <HistoryRegular aria-hidden="true" />
@@ -2487,6 +2824,7 @@ export function App() {
                               : ""
                           }`}
                           style={identity.style}
+                          data-history-key={`shared:${item.id}`}
                           key={`shared-${item.id}`}
                         >
                           <div className="message-meta">
@@ -2543,7 +2881,8 @@ export function App() {
                             entry.role === "user" ? "历史用户输入" : "Codex 回复"
                           }`}
                           className={`message imported-message ${entry.role}`}
-                          key={`codex-${entry.id}`}
+                          data-history-key={item.key ?? entry.id}
+                          key={`codex-${item.key ?? entry.id}`}
                         >
                           <div className="message-meta">
                             <span className="imported-history-source">
@@ -2583,6 +2922,7 @@ export function App() {
                         }
                         entries={item.entries}
                         completedAt={item.completedAt ?? null}
+                        historyKey={item.id}
                         key={item.id}
                         sourceLabel="导入自 Codex 任务"
                         onOpenFile={openWorkspaceFileFromExecution}
@@ -2607,7 +2947,7 @@ export function App() {
                   跳到最新
                 </Button>
               ) : null}
-              {!conversationLoading &&
+              {!conversationInitialLoading &&
               shouldShowExecutionStatus(executionPhase, hasRunningExecutionEntry) ? (
                 <div
                   className={`codex-execution-status ${executionPhase}`}

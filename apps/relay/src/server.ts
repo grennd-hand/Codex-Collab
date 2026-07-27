@@ -1456,6 +1456,33 @@ const server = createServer(async (request, response) => {
     const workspaceHistoryMatch = url.pathname.match(
       /^\/v1\/sessions\/([^/]+)\/workspace\/history$/,
     );
+    const workspaceHistoryPageMatch = url.pathname.match(
+      /^\/v1\/sessions\/([^/]+)\/workspace\/history\/page$/,
+    );
+    if (method === "GET" && workspaceHistoryPageMatch?.[1]) {
+      const rawLimit = url.searchParams.get("limit");
+      if (rawLimit !== null && !/^\d+$/.test(rawLimit)) {
+        throw new ProtocolError(
+          400,
+          "invalid_history_page_limit",
+          "History page limit must be an integer",
+        );
+      }
+      const rawCursor = url.searchParams.get("before");
+      sendJson(response, 200, {
+        workspaceHistoryPage: store.getWorkspaceHistoryPage(
+          workspaceHistoryPageMatch[1],
+          bearerToken(request),
+          {
+            ...(rawLimit === null ? {} : { limit: Number(rawLimit) }),
+            ...(rawCursor === null
+              ? {}
+              : { before: requiredString(rawCursor, "before", 2_000) }),
+          },
+        ),
+      });
+      return;
+    }
     if (method === "GET" && workspaceHistoryMatch?.[1]) {
       sendJson(response, 200, {
         workspaceHistory: store.getWorkspaceHistory(

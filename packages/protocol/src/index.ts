@@ -651,6 +651,21 @@ export interface WorkspaceHistoryResult {
   syncedAt: string | null;
 }
 
+export interface WorkspaceHistoryPageItem {
+  key: string;
+  entry: CodexRecordEntry;
+  groupKey?: string | null;
+}
+
+export interface WorkspaceHistoryPage {
+  selectedThreadId: string | null;
+  items: WorkspaceHistoryPageItem[];
+  totalCount: number;
+  hasOlder: boolean;
+  olderCursor: string | null;
+  syncedAt: string | null;
+}
+
 export interface CreateHostPairingResponse {
   sessionId: string;
   pairingToken: string;

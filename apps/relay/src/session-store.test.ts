@@ -2066,6 +2066,103 @@ describe("SessionStore", () => {
     ).toThrowError(/select/i);
   });
 
+  it("pages workspace history from newest to oldest with stable opaque cursors", () => {
+    const store = createStore();
+    const created = store.createSession("Paged room", "Owner");
+    const pairing = store.createHostPairing(created.session.id, created.memberToken, 10);
+    const host = store.claimHostPairing(pairing.pairingToken, "Owner PC", "Project");
+    store.publishWorkspaceCatalog(created.session.id, host.memberToken, {
+      deviceLabel: "Owner PC",
+      rootLabel: "Project",
+      threads: [{ id: "thread-1", name: "Paged task", preview: "", updatedAt: 1 }],
+    });
+    store.selectWorkspaceThread(created.session.id, created.memberToken, "thread-1");
+    const history = Array.from({ length: 95 }, (_, index) => ({
+      id: index === 10 || index === 11 ? "duplicate" : `entry-${index}`,
+      role: (index >= 50 && index <= 60 ? "reasoning" : "assistant") as
+        | "reasoning"
+        | "assistant",
+      text: `Record ${index}`,
+      createdAt: index % 7 === 0 ? null : `2026-07-27T00:${String(index).padStart(2, "0")}:00.000Z`,
+    }));
+    store.publishWorkspaceHistory(created.session.id, host.memberToken, {
+      threadId: "thread-1",
+      history,
+    });
+
+    const newest = store.getWorkspaceHistoryPage(
+      created.session.id,
+      created.memberToken,
+      { limit: 40 },
+    );
+    expect(newest.items).toHaveLength(40);
+    expect(newest.items[0]?.entry.text).toBe("Record 55");
+    expect(newest.items.at(-1)?.entry.text).toBe("Record 94");
+    expect(newest).toMatchObject({ totalCount: 95, hasOlder: true });
+    expect(newest.olderCursor).toEqual(expect.any(String));
+
+    const middle = store.getWorkspaceHistoryPage(
+      created.session.id,
+      created.memberToken,
+      { limit: 40, before: newest.olderCursor },
+    );
+    expect(middle.items.map((item) => item.entry.text)).toEqual(
+      history.slice(15, 55).map((entry) => entry.text),
+    );
+    expect(middle.items.at(-1)?.entry.role).toBe("reasoning");
+    expect(newest.items[0]?.entry.role).toBe("reasoning");
+    expect(middle.items.at(-1)?.groupKey).toEqual(expect.any(String));
+    expect(middle.items.at(-1)?.groupKey).toBe(newest.items[0]?.groupKey);
+    const oldest = store.getWorkspaceHistoryPage(
+      created.session.id,
+      created.memberToken,
+      { limit: 40, before: middle.olderCursor },
+    );
+    expect(oldest.items.map((item) => item.entry.text)).toEqual(
+      history.slice(0, 15).map((entry) => entry.text),
+    );
+    expect(oldest).toMatchObject({ hasOlder: false, olderCursor: null });
+    expect(new Set(oldest.items.map((item) => item.key)).size).toBe(15);
+    expect(store.getWorkspaceHistory(created.session.id, created.memberToken).history).toHaveLength(95);
+
+    store.publishWorkspaceHistory(created.session.id, host.memberToken, {
+      threadId: "thread-1",
+      history: [
+        ...history,
+        {
+          id: "entry-95",
+          role: "assistant",
+          text: "Record 95",
+          createdAt: null,
+        },
+      ],
+    });
+    expect(
+      store.getWorkspaceHistoryPage(created.session.id, created.memberToken, {
+        limit: 40,
+        before: newest.olderCursor,
+      }).items[0]?.entry.text,
+    ).toBe("Record 15");
+
+    store.publishWorkspaceHistory(created.session.id, host.memberToken, {
+      threadId: "thread-1",
+      history: history.map((entry, index) =>
+        index === 55 ? { ...entry, text: "Changed anchor" } : entry,
+      ),
+    });
+    expect(() =>
+      store.getWorkspaceHistoryPage(created.session.id, created.memberToken, {
+        limit: 40,
+        before: newest.olderCursor,
+      }),
+    ).toThrowError(/changed/i);
+    expect(() =>
+      store.getWorkspaceHistoryPage(created.session.id, created.memberToken, {
+        before: "not-a-cursor",
+      }),
+    ).toThrowError(/cursor/i);
+  });
+
   it("clears stale imports when the owner selects another Codex task", () => {
     const store = createStore();
     const created = store.createSession("Switch room", "Owner");

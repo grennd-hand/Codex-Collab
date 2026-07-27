@@ -446,12 +446,14 @@ export function ExecutionProcess({
   entries,
   active = false,
   completedAt = null,
+  historyKey,
   sourceLabel = null,
   onOpenFile,
 }: {
   entries: CodexRecordEntry[];
   active?: boolean;
   completedAt?: string | null;
+  historyKey?: string;
   sourceLabel?: string | null;
   onOpenFile?: (target: IdeNavigationTarget) => void;
 }) {
@@ -489,6 +491,7 @@ export function ExecutionProcess({
       className={`execution-process ${presentation.status} ${
         expanded ? "expanded" : "collapsed"
       }`}
+      data-history-key={historyKey}
       aria-label={`${sourceLabel ? `${sourceLabel}，` : ""}${
         presentation.status === "completed" ? "处理概要" : "任务过程"
       }`}
