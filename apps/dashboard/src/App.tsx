@@ -26,7 +26,6 @@ import {
   type BrandVariants,
 } from "@fluentui/react-components";
 import {
-  ArrowDownloadRegular,
   ArrowSyncRegular,
   AttachRegular,
   BotRegular,
@@ -37,9 +36,7 @@ import {
   CopyRegular,
   DeleteRegular,
   DismissRegular,
-  DocumentRegular,
   FolderOpenRegular,
-  HomeRegular,
   HistoryRegular,
   KeyRegular,
   LockClosedRegular,
@@ -57,23 +54,19 @@ import {
   Suspense,
   useCallback,
   useEffect,
-  useId,
   useMemo,
   useRef,
   useState,
-  type ReactNode,
 } from "react";
 import type {
   AccountProfileResponse,
   AccountRoom,
   CodexAccessMode,
-  CodexRecordEntry,
   CodexCustomApprovalPolicy,
   CodexCustomFileAccess,
   CodexModelId,
   CodexPromptOptions,
   CodexReasoningEffort,
-  CodexRuntimeStatus,
   CodexSpeed,
   CreateInviteResponse,
   CreateHostPairingResponse,
@@ -81,8 +74,6 @@ import type {
   JoinInviteResponse,
   Member,
   Message,
-  MessageAttachment,
-  MessageAttachmentInput,
   MessageKind,
   RealtimeEnvelope,
   RealtimeTicketResponse,
@@ -93,14 +84,10 @@ import {
   CODEX_MODEL_OPTIONS,
   DEFAULT_CODEX_CUSTOM_PERMISSIONS,
   DEFAULT_CODEX_PROMPT_OPTIONS,
-  MAX_MESSAGE_ATTACHMENT_COUNT,
-  MAX_MESSAGE_ATTACHMENT_SIZE,
-  MAX_MESSAGE_ATTACHMENT_TOTAL_SIZE,
   codexModelSupportsFast,
   codexModelSupportsImages,
   codexModelSupportsReasoningEffort,
   getCodexModelOption,
-  normalizeCodexModelId,
 } from "@codex-collab/protocol";
 import { copyText } from "./clipboard.js";
 import {
@@ -108,15 +95,6 @@ import {
   selectCodexMessagesForThread,
   splitConversationMessages,
 } from "./imported-timeline.js";
-import {
-  classifyReadableSource,
-  executionOutputNeedsViewport,
-  parseReadableBlocks,
-  presentExecutionEntries,
-  presentExecutionEntry,
-  type ExecutionStatus,
-  type ReadableExecution,
-} from "./readable-output.js";
 import {
   setupSubmissionMode,
   shouldRestoreCredential,
@@ -127,7 +105,6 @@ import {
 } from "./member-identity.js";
 import { isCredentialRejected, requestJson } from "./api-client.js";
 import { ApiRequestError } from "./api-client.js";
-import { compressImageFile } from "./image-compression.js";
 import {
   readWorkspaceFileOperation,
   saveWorkspaceFileOperation,
@@ -146,7 +123,38 @@ import {
   restoreAccountRoom,
   signInWithPasskey,
 } from "./account-client.js";
-
+import {
+  PeerChatAttachment,
+  appendPendingAttachments,
+  attachmentSizeLabel,
+  formatFileSize,
+  prepareAttachmentBatch,
+  serializeAttachment,
+  type PendingAttachment,
+} from "./app/attachments.js";
+import { AccountRoomList } from "./app/AccountRoomList.js";
+import { MemberSkeleton } from "./app/MemberSkeleton.js";
+import {
+  connectionPresentation,
+  type ConnectionState,
+} from "./app/connection.js";
+import {
+  ExecutionProcess,
+  ReadableOutput,
+} from "./app/ExecutionProcess.js";
+import {
+  canMemberStopCodex,
+  chatMessageBody,
+  codexExecutionPhase,
+  composerPrimaryAction,
+  filterUnsupportedImageAttachments,
+  normalizeCodexOptionsForUi,
+  reasoningEffortLabels,
+  reasoningEffortOrder,
+  restoreComposerControlFocus,
+  shouldShowExecutionStatus,
+  workspaceNeedsConversationLoad,
+} from "./app/codex-controls.js";
 const IdeWorkspace = lazy(() => import("./ide/IdeWorkspace.js"));
 
 const brand: BrandVariants = {
@@ -177,17 +185,7 @@ type WorkspaceFileAccess = "read-only" | "workspace-write";
 type MemberWithWorkspaceFileAccess = Member & {
   workspaceFileAccess?: WorkspaceFileAccess;
 };
-type ConnectionState = "ready" | "connecting" | "live" | "waiting" | "error";
 type SessionExitReason = "manual" | "credential-rejected";
-export type ComposerMode = "codex" | "chat";
-export type CodexExecutionPhase = "idle" | "queued" | "running" | "stopping";
-export type ComposerPrimaryAction = "send_chat" | "send_codex" | "stop_codex";
-
-export function workspaceNeedsConversationLoad(
-  workspace: Pick<WorkspaceSummary, "selectedThreadId" | "syncedAt"> | null,
-): boolean {
-  return Boolean(workspace?.selectedThreadId && !workspace.syncedAt);
-}
 
 function memberWorkspaceFileAccess(member: Member | null | undefined): WorkspaceFileAccess {
   if (member?.role === "owner") return "workspace-write";
@@ -195,73 +193,6 @@ function memberWorkspaceFileAccess(member: Member | null | undefined): Workspace
     ?.workspaceFileAccess === "workspace-write"
     ? "workspace-write"
     : "read-only";
-}
-
-export function codexExecutionPhase(
-  messages: readonly Pick<Message, "kind" | "deliveryStatus">[],
-  runtimeStatus: CodexRuntimeStatus | null | undefined,
-): CodexExecutionPhase {
-  let latestPromptIndex = -1;
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messages[index]?.kind === "codex_prompt") {
-      latestPromptIndex = index;
-      break;
-    }
-  }
-
-  for (let index = messages.length - 1; index > latestPromptIndex; index -= 1) {
-    const message = messages[index];
-    if (message?.kind !== "codex_stop") continue;
-    if (
-      message.deliveryStatus === "queued" ||
-      message.deliveryStatus === "submitted"
-    ) {
-      return "stopping";
-    }
-    if (message.deliveryStatus === "completed") {
-      return "idle";
-    }
-    break;
-  }
-
-  const latestPrompt =
-    latestPromptIndex >= 0 ? messages[latestPromptIndex] : undefined;
-  if (
-    runtimeStatus === "running" ||
-    latestPrompt?.deliveryStatus === "submitted"
-  ) {
-    return "running";
-  }
-  if (latestPrompt?.deliveryStatus === "queued") {
-    return "queued";
-  }
-  return "idle";
-}
-
-export function shouldShowExecutionStatus(
-  phase: CodexExecutionPhase,
-  hasRunningExecutionEntry: boolean,
-): boolean {
-  return phase !== "idle" && (phase !== "running" || !hasRunningExecutionEntry);
-}
-
-export function canMemberStopCodex(
-  member: Pick<Member, "role" | "status"> | null,
-  phase: CodexExecutionPhase,
-): boolean {
-  return (
-    member?.status === "approved" &&
-    phase !== "idle" &&
-    phase !== "stopping"
-  );
-}
-
-export function composerPrimaryAction(
-  phase: CodexExecutionPhase,
-  mode: ComposerMode,
-): ComposerPrimaryAction {
-  if (phase !== "idle") return "stop_codex";
-  return mode === "chat" ? "send_chat" : "send_codex";
 }
 
 interface SavedCredential {
@@ -276,17 +207,6 @@ interface ActivityItem {
   detail: string;
   createdAt: string;
   tone: "info" | "success" | "warning" | "danger";
-}
-
-interface PendingAttachment {
-  id: string;
-  file: File;
-  originalSize?: number;
-}
-
-interface PreparedAttachmentBatch {
-  attachments: PendingAttachment[];
-  warnings: string[];
 }
 
 interface SpeechRecognitionResultLike {
@@ -315,842 +235,6 @@ interface SpeechRecognitionLike {
 }
 
 type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
-
-const reasoningEffortOrder: Exclude<
-  CodexReasoningEffort,
-  "follow-desktop"
->[] = ["low", "medium", "high", "xhigh", "max", "ultra"];
-const reasoningEffortLabels: Record<
-  Exclude<CodexReasoningEffort, "follow-desktop">,
-  string
-> = {
-  low: "轻度",
-  medium: "中",
-  high: "高",
-  xhigh: "极高",
-  max: "最大",
-  ultra: "超强",
-};
-const accessModes = new Set<CodexAccessMode>([
-  "follow-desktop",
-  "request-approval",
-  "auto",
-  "full-access",
-  "custom",
-]);
-const reasoningEfforts = new Set<CodexReasoningEffort>([
-  "follow-desktop",
-  ...reasoningEffortOrder,
-]);
-const speeds = new Set<CodexSpeed>(["follow-desktop", "standard", "fast"]);
-const customFileAccessModes = new Set<CodexCustomFileAccess>([
-  "read-only",
-  "workspace-write",
-  "full-access",
-]);
-const customApprovalPolicies = new Set<CodexCustomApprovalPolicy>([
-  "on-request",
-  "never",
-]);
-
-export function normalizeCodexOptionsForUi(value: unknown): CodexPromptOptions {
-  const record =
-    value && typeof value === "object" && !Array.isArray(value)
-      ? (value as Record<string, unknown>)
-      : {};
-  const accessMode =
-    typeof record.accessMode === "string" &&
-    accessModes.has(record.accessMode as CodexAccessMode)
-      ? (record.accessMode as CodexAccessMode)
-      : DEFAULT_CODEX_PROMPT_OPTIONS.accessMode;
-  const model =
-    typeof record.model === "string" ? normalizeCodexModelId(record.model) : null;
-  let reasoningEffort =
-    typeof record.reasoningEffort === "string" &&
-    reasoningEfforts.has(record.reasoningEffort as CodexReasoningEffort)
-      ? (record.reasoningEffort as CodexReasoningEffort)
-      : DEFAULT_CODEX_PROMPT_OPTIONS.reasoningEffort;
-  let speed =
-    typeof record.speed === "string" && speeds.has(record.speed as CodexSpeed)
-      ? (record.speed as CodexSpeed)
-      : DEFAULT_CODEX_PROMPT_OPTIONS.speed;
-
-  if (!codexModelSupportsReasoningEffort(model, reasoningEffort)) {
-    const requestedIndex = reasoningEffortOrder.indexOf(
-      reasoningEffort as Exclude<CodexReasoningEffort, "follow-desktop">,
-    );
-    reasoningEffort =
-      reasoningEffortOrder
-        .slice(0, Math.max(requestedIndex, 0) + 1)
-        .reverse()
-        .find((candidate) => codexModelSupportsReasoningEffort(model, candidate)) ??
-      "medium";
-  }
-  if (speed === "fast" && !codexModelSupportsFast(model)) {
-    speed = "standard";
-  }
-
-  const customRecord =
-    record.customPermissions &&
-    typeof record.customPermissions === "object" &&
-    !Array.isArray(record.customPermissions)
-      ? (record.customPermissions as Record<string, unknown>)
-      : {};
-  const fileAccess =
-    typeof customRecord.fileAccess === "string" &&
-    customFileAccessModes.has(customRecord.fileAccess as CodexCustomFileAccess)
-      ? (customRecord.fileAccess as CodexCustomFileAccess)
-      : DEFAULT_CODEX_CUSTOM_PERMISSIONS.fileAccess;
-  const approvalPolicy =
-    typeof customRecord.approvalPolicy === "string" &&
-    customApprovalPolicies.has(
-      customRecord.approvalPolicy as CodexCustomApprovalPolicy,
-    )
-      ? (customRecord.approvalPolicy as CodexCustomApprovalPolicy)
-      : DEFAULT_CODEX_CUSTOM_PERMISSIONS.approvalPolicy;
-
-  return {
-    accessMode,
-    customPermissions:
-      accessMode === "custom" ? { fileAccess, approvalPolicy } : null,
-    model,
-    reasoningEffort,
-    speed,
-    planMode: record.planMode === true,
-  };
-}
-
-export function filterUnsupportedImageAttachments<
-  T extends { file: { type: string } },
->(model: CodexModelId | null, attachments: readonly T[]): T[] {
-  return codexModelSupportsImages(model)
-    ? [...attachments]
-    : attachments.filter((attachment) => !attachment.file.type.startsWith("image/"));
-}
-
-export function chatMessageBody(draft: string, attachmentCount: number): string {
-  const body = draft.trim();
-  return body || (attachmentCount > 0 ? `发送了 ${attachmentCount} 个附件` : "");
-}
-
-type ComposerControl = Pick<
-  HTMLInputElement | HTMLTextAreaElement,
-  "disabled" | "focus" | "setSelectionRange" | "value"
->;
-
-export function restoreComposerControlFocus(
-  control: ComposerControl | null,
-  schedule: (callback: FrameRequestCallback) => number = (callback) =>
-    window.requestAnimationFrame(callback),
-): void {
-  schedule(() => {
-    if (!control || control.disabled) return;
-    control.focus();
-    const cursorPosition = control.value.length;
-    control.setSelectionRange(cursorPosition, cursorPosition);
-  });
-}
-
-function formatFileSize(size: number): string {
-  if (size < 1_000) return `${size} B`;
-  if (size < 1_000_000) return `${Math.round(size / 1_000)} KB`;
-  return `${(size / 1_000_000).toFixed(1)} MB`;
-}
-
-function attachmentSizeLabel(attachment: PendingAttachment): string {
-  return attachment.originalSize && attachment.originalSize > attachment.file.size
-    ? `已压缩 ${formatFileSize(attachment.originalSize)} → ${formatFileSize(attachment.file.size)}`
-    : formatFileSize(attachment.file.size);
-}
-
-async function prepareAttachmentBatch(files: readonly File[]): Promise<PreparedAttachmentBatch> {
-  const attachments: PendingAttachment[] = [];
-  const warnings: string[] = [];
-  for (const file of files) {
-    if (file.size === 0) {
-      warnings.push(`空文件无法发送：${file.name}`);
-      continue;
-    }
-    try {
-      const prepared = await compressImageFile(file);
-      attachments.push({
-        id: crypto.randomUUID(),
-        file: prepared.file,
-        ...(prepared.compressed ? { originalSize: prepared.originalSize } : {}),
-      });
-    } catch {
-      attachments.push({ id: crypto.randomUUID(), file });
-      warnings.push(`图片压缩失败，已尝试保留原文件：${file.name}`);
-    }
-  }
-  return { attachments, warnings };
-}
-
-function appendPendingAttachments(
-  current: readonly PendingAttachment[],
-  incoming: readonly PendingAttachment[],
-): { attachments: PendingAttachment[]; warning: string | null } {
-  const next = [...current];
-  let warning: string | null = null;
-  for (const attachment of incoming) {
-    const file = attachment.file;
-    if (file.size > MAX_MESSAGE_ATTACHMENT_SIZE) {
-      const sizeLimitMb = MAX_MESSAGE_ATTACHMENT_SIZE / 1_000_000;
-      warning = attachment.originalSize
-        ? `${file.name} 压缩后仍超过 ${sizeLimitMb} MB 单文件限制`
-        : `${file.name} 超过 ${sizeLimitMb} MB 单文件限制`;
-      continue;
-    }
-    if (
-      next.some(
-        (item) =>
-          item.file.name === file.name &&
-          item.file.size === file.size &&
-          item.file.lastModified === file.lastModified,
-      )
-    ) {
-      continue;
-    }
-    if (next.length >= MAX_MESSAGE_ATTACHMENT_COUNT) {
-      warning = `一次最多发送 ${MAX_MESSAGE_ATTACHMENT_COUNT} 个附件`;
-      break;
-    }
-    if (
-      next.reduce((sum, item) => sum + item.file.size, 0) + file.size >
-      MAX_MESSAGE_ATTACHMENT_TOTAL_SIZE
-    ) {
-      warning = `压缩后的附件总大小不能超过 ${
-        MAX_MESSAGE_ATTACHMENT_TOTAL_SIZE / 1_000_000
-      } MB`;
-      break;
-    }
-    next.push(attachment);
-  }
-  return { attachments: next, warning };
-}
-
-function renderInlineText(text: string): ReactNode[] {
-  const pattern =
-    /(`[^`\n]+`|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\(https?:\/\/[^\s)]+\))/g;
-  return text.split(pattern).filter(Boolean).map((part, index) => {
-    const link = part.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/);
-    if (link) {
-      return (
-        <a
-          href={link[2]}
-          key={`${index}-${part}`}
-          rel="noreferrer"
-          target="_blank"
-        >
-          {link[1]}
-        </a>
-      );
-    }
-    if (part.startsWith("`") && part.endsWith("`")) {
-      return <code key={`${index}-${part}`}>{part.slice(1, -1)}</code>;
-    }
-    if (part.startsWith("**") && part.endsWith("**")) {
-      return <strong key={`${index}-${part}`}>{part.slice(2, -2)}</strong>;
-    }
-    return part;
-  });
-}
-
-function ReadableOutput({ text }: { text: string }) {
-  const blocks = parseReadableBlocks(text);
-  return (
-    <div className="readable-output">
-      {blocks.map((block, index) => {
-        const key = `${block.kind}-${index}`;
-        if (block.kind === "heading") {
-          return block.level === 3 ? (
-            <h4 key={key}>{renderInlineText(block.text)}</h4>
-          ) : (
-            <h3 className={`level-${block.level}`} key={key}>
-              {renderInlineText(block.text)}
-            </h3>
-          );
-        }
-        if (block.kind === "unordered-list") {
-          return (
-            <ul key={key}>
-              {block.items.map((item, itemIndex) => (
-                <li key={`${itemIndex}-${item}`}>{renderInlineText(item)}</li>
-              ))}
-            </ul>
-          );
-        }
-        if (block.kind === "ordered-list") {
-          return (
-            <ol key={key}>
-              {block.items.map((item, itemIndex) => (
-                <li key={`${itemIndex}-${item}`}>{renderInlineText(item)}</li>
-              ))}
-            </ol>
-          );
-        }
-        if (block.kind === "quote") {
-          return <blockquote key={key}>{renderInlineText(block.text)}</blockquote>;
-        }
-        if (block.kind === "code") {
-          return (
-            <div className="readable-code" key={key}>
-              {block.language ? <span>{block.language}</span> : null}
-              <pre>{block.text}</pre>
-            </div>
-          );
-        }
-        return <p key={key}>{renderInlineText(block.text)}</p>;
-      })}
-    </div>
-  );
-}
-
-function ReadableSource({ text }: { text: string }) {
-  if (classifyReadableSource(text) === "code") {
-    return (
-      <div className="readable-code">
-        <span>代码</span>
-        <pre>{text}</pre>
-      </div>
-    );
-  }
-  return <ReadableOutput text={text} />;
-}
-
-function executionStatusLabel(status: ExecutionStatus): string {
-  switch (status) {
-    case "running":
-      return "正在运行";
-    case "completed":
-      return "已完成";
-    case "failed":
-      return "失败";
-    default:
-      return "已记录";
-  }
-}
-
-export interface ExecutionProcessPresentation {
-  status: ExecutionStatus;
-  title: string;
-  detail: string;
-  progress: string;
-  defaultExpanded: boolean;
-}
-
-export function executionProcessPresentation(
-  records: readonly (Pick<ReadableExecution, "status" | "title"> &
-    Partial<Pick<ReadableExecution, "role">>)[],
-  active = false,
-  finalized = false,
-): ExecutionProcessPresentation {
-  const running = records.filter((record) => record.status === "running");
-  const failed = records.filter((record) => record.status === "failed");
-  const completedCount = records.filter((record) => record.status === "completed").length;
-  const commandCount = records.filter((record) => record.role === "command").length;
-  const processCount = records.filter(
-    (record) => record.role === "reasoning" || record.role === "commentary",
-  ).length;
-  const hasRoleDetails = commandCount > 0 || processCount > 0;
-  const stepBreakdown =
-    hasRoleDetails
-      ? `${records.length} 个步骤（${commandCount} 个操作，${processCount} 条处理）`
-      : `${records.length} 个步骤`;
-  const latestRunning = running.at(-1);
-
-  if (finalized) {
-    return {
-      status: "completed",
-      title: "已处理",
-      detail: "处理概要已收起",
-      progress: stepBreakdown,
-      defaultExpanded: false,
-    };
-  }
-  if (running.length > 0) {
-    return {
-      status: "running",
-      title: "正在执行",
-      detail: latestRunning?.title ?? "正在等待当前步骤",
-      progress: `${completedCount} / ${records.length} 已完成${
-        hasRoleDetails ? `（${commandCount} 个操作）` : ""
-      }`,
-      defaultExpanded: true,
-    };
-  }
-  if (active) {
-    return {
-      status: "running",
-      title: "正在执行",
-      detail: "Codex 正在继续处理",
-      progress:
-        records.length > 0
-          ? `已同步 ${stepBreakdown}，等待下一步`
-          : "正在等待首个执行步骤",
-      defaultExpanded: true,
-    };
-  }
-  if (failed.length > 0) {
-    return {
-      status: "failed",
-      title: "任务过程有错误",
-      detail: failed.at(-1)?.title ?? "请查看失败步骤",
-      progress: hasRoleDetails ? `${failed.length} 个失败；${stepBreakdown}` : `${failed.length} 个失败`,
-      defaultExpanded: true,
-    };
-  }
-  if (records.length > 0 && completedCount === records.length) {
-    return {
-      status: "completed",
-      title: "已处理",
-      detail: "处理概要已收起",
-      progress: stepBreakdown,
-      defaultExpanded: false,
-    };
-  }
-  return {
-    status: "unknown",
-    title: "任务过程",
-    detail: "已记录执行活动",
-    progress: stepBreakdown,
-    defaultExpanded: false,
-  };
-}
-
-export function elapsedExecutionLabel(
-  startedAt: string | null,
-  currentTime = Date.now(),
-): string | null {
-  if (!startedAt) return null;
-  const started = Date.parse(startedAt);
-  if (!Number.isFinite(started) || started > currentTime) return null;
-  const totalSeconds = Math.max(0, Math.floor((currentTime - started) / 1_000));
-  if (totalSeconds < 2) return "刚刚开始";
-  if (totalSeconds < 60) return `已运行 ${totalSeconds} 秒`;
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  if (minutes < 60) return `已运行 ${minutes} 分 ${seconds} 秒`;
-  const hours = Math.floor(minutes / 60);
-  return `已运行 ${hours} 小时 ${minutes % 60} 分`;
-}
-
-export function completedExecutionDurationLabel(
-  records: readonly Pick<ReadableExecution, "createdAt">[],
-  completedAt: string | null = null,
-): string | null {
-  const timestamps = records
-    .map((record) => (record.createdAt ? Date.parse(record.createdAt) : Number.NaN))
-    .filter(Number.isFinite);
-  if (timestamps.length === 0) return null;
-  const started = Math.min(...timestamps);
-  if (!completedAt && Math.max(...timestamps) === started) return null;
-  const completed = completedAt ? Date.parse(completedAt) : Math.max(...timestamps);
-  if (!Number.isFinite(completed) || completed < started) return null;
-  const totalSeconds = Math.max(0, Math.floor((completed - started) / 1_000));
-  if (totalSeconds < 60) return `${totalSeconds} 秒`;
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  if (minutes < 60) return `${minutes} 分 ${seconds} 秒`;
-  const hours = Math.floor(minutes / 60);
-  return `${hours} 小时 ${minutes % 60} 分`;
-}
-
-function ExecutionElapsedTime({ startedAt }: { startedAt: string }) {
-  const [currentTime, setCurrentTime] = useState(() => Date.now());
-  useEffect(() => {
-    setCurrentTime(Date.now());
-    const timer = window.setInterval(() => setCurrentTime(Date.now()), 1_000);
-    return () => window.clearInterval(timer);
-  }, [startedAt]);
-  const label = elapsedExecutionLabel(startedAt, currentTime);
-  return label ? <span>{label}</span> : null;
-}
-
-function ExecutionStatusIcon({
-  status,
-  fallback,
-}: {
-  status: ExecutionStatus;
-  fallback: "command" | "reasoning";
-}) {
-  if (status === "running") return <Spinner size="tiny" />;
-  if (status === "completed") return <CheckmarkCircleRegular />;
-  if (status === "failed") return <DismissRegular />;
-  return fallback === "command" ? <DocumentRegular /> : <HistoryRegular />;
-}
-
-function ExecutionStepCard({
-  record,
-  compact = false,
-}: {
-  record: ReadableExecution;
-  compact?: boolean;
-}) {
-  const [detailsOpen, setDetailsOpen] = useState(
-    record.status === "running" || record.status === "failed",
-  );
-  const [outputCopied, setOutputCopied] = useState(false);
-  const outputNeedsViewport = executionOutputNeedsViewport(record.output);
-
-  useEffect(() => {
-    setDetailsOpen(record.status === "running" || record.status === "failed");
-  }, [record.status]);
-
-  useEffect(() => {
-    setOutputCopied(false);
-  }, [record.output]);
-
-  return (
-    <article
-      className={`execution-step ${record.role} ${record.status}${compact ? " compact" : ""}`}
-    >
-      <div className="execution-step-marker" aria-hidden="true">
-        <ExecutionStatusIcon
-          status={record.status}
-          fallback={record.role === "command" ? "command" : "reasoning"}
-        />
-      </div>
-      <div className="execution-step-content">
-        <header>
-          <div>
-            <strong>{record.title}</strong>
-            <span className={`execution-state ${record.status}`}>
-              {executionStatusLabel(record.status)}
-            </span>
-          </div>
-          {record.createdAt ? (
-            <time dateTime={record.createdAt}>{timeLabel(record.createdAt)}</time>
-          ) : null}
-        </header>
-        <p className="execution-step-summary">{record.summary}</p>
-        {(record.role === "reasoning" || record.role === "commentary") && record.input ? (
-          <ReadableOutput text={record.input} />
-        ) : null}
-        {record.role === "reasoning" && record.sourceText ? (
-          <details className="execution-details reasoning-source">
-            <summary>
-              <span>查看 Codex 原始摘要</span>
-              <small>内容可能为英文</small>
-            </summary>
-            <div className="execution-detail-body">
-              <div className="reasoning-source-content">
-                <span>原始摘要</span>
-                <ReadableSource text={record.sourceText} />
-              </div>
-            </div>
-          </details>
-        ) : null}
-        {record.role === "command" && (record.input || record.output) ? (
-          <details
-            className="execution-details"
-            open={detailsOpen}
-          >
-            <summary
-              onClick={(event) => {
-                event.preventDefault();
-                setDetailsOpen((current) => !current);
-              }}
-            >
-              <span>
-                {record.status === "running"
-                  ? "查看正在执行的内容"
-                  : record.status === "failed"
-                    ? "查看失败详情"
-                    : "查看执行详情"}
-              </span>
-              {record.outputLineCount > 0 ? (
-                <small>{record.outputLineCount} 行输出</small>
-              ) : null}
-            </summary>
-            <div className="execution-detail-body">
-              {record.input ? (
-                <div className="execution-input">
-                  <span>命令</span>
-                  <pre>{record.input}</pre>
-                </div>
-              ) : null}
-              {record.output ? (
-                <div
-                  className={`execution-output-viewer${outputNeedsViewport ? " long" : ""}`}
-                >
-                  <div className="execution-output-toolbar">
-                    <strong>输出</strong>
-                    <small>{record.outputLineCount} 行</small>
-                    <Button
-                      appearance="subtle"
-                      size="small"
-                      icon={<CopyRegular />}
-                      aria-label="复制完整命令输出"
-                      onClick={() => {
-                        void copyText(record.output ?? "").then(setOutputCopied);
-                      }}
-                    >
-                      {outputCopied ? "已复制" : "复制"}
-                    </Button>
-                  </div>
-                  <pre
-                    tabIndex={0}
-                    aria-label="命令输出，可在框内滚动查看完整内容"
-                  >
-                    {record.output}
-                  </pre>
-                  <div className="execution-output-footer">
-                    <span className={`execution-output-result ${record.status}`}>
-                      {executionStatusLabel(record.status)}
-                    </span>
-                    <span>
-                      {outputNeedsViewport
-                        ? "可上下、左右滚动查看完整输出"
-                        : "可滚动查看完整输出"}
-                    </span>
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          </details>
-        ) : null}
-      </div>
-    </article>
-  );
-}
-
-export function ExecutionProcess({
-  entries,
-  active = false,
-  completedAt = null,
-  sourceLabel = null,
-}: {
-  entries: CodexRecordEntry[];
-  active?: boolean;
-  completedAt?: string | null;
-  sourceLabel?: string | null;
-}) {
-  const finalized = Boolean(completedAt);
-  const records = presentExecutionEntries(entries, active && !finalized, finalized);
-  const presentation = executionProcessPresentation(records, active && !finalized, finalized);
-  const [expanded, setExpanded] = useState(presentation.defaultExpanded);
-  const contentId = useId();
-  const runningStartedAt =
-    presentation.status === "running"
-      ? (records.find((record) => record.createdAt)?.createdAt ?? null)
-      : null;
-  const completedDuration =
-    presentation.status === "completed"
-      ? completedExecutionDurationLabel(records, completedAt)
-      : null;
-  const disclosureAction =
-    presentation.status === "completed"
-      ? expanded
-        ? "收起处理概要"
-        : "展开处理概要"
-      : expanded
-        ? "折叠任务过程"
-        : "展开任务过程";
-
-  useEffect(() => {
-    setExpanded(presentation.defaultExpanded);
-  }, [presentation.defaultExpanded, presentation.status]);
-  return (
-    <section
-      className={`execution-process ${presentation.status} ${expanded ? "expanded" : "collapsed"}`}
-      aria-label={`${sourceLabel ? `${sourceLabel}，` : ""}${
-        presentation.status === "completed" ? "处理概要" : "任务过程"
-      }`}
-    >
-      <span className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">
-        {presentation.title}：{completedDuration ? `耗时 ${completedDuration}，` : ""}
-        {presentation.detail}，{presentation.progress}
-      </span>
-      <header className="execution-process-heading">
-        <button
-          type="button"
-          aria-controls={contentId}
-          aria-expanded={expanded}
-          aria-label={`${presentation.title}：${presentation.detail}，${presentation.progress}，${
-            disclosureAction
-          }`}
-          onClick={() => setExpanded((current) => !current)}
-        >
-          <span className="execution-process-status-icon" aria-hidden="true">
-            <ExecutionStatusIcon status={presentation.status} fallback="reasoning" />
-          </span>
-          <span className="execution-process-title">
-            <strong>
-              {sourceLabel ? `${sourceLabel}：${presentation.title}` : presentation.title}
-            </strong>
-            {presentation.status !== "completed" || expanded ? (
-              <span>{presentation.detail}</span>
-            ) : null}
-          </span>
-          <span className="execution-process-meta">
-            {runningStartedAt ? <ExecutionElapsedTime startedAt={runningStartedAt} /> : null}
-            {completedDuration ? <span>耗时 {completedDuration}</span> : null}
-            {presentation.status !== "completed" || expanded || !completedDuration ? (
-              <span>{presentation.progress}</span>
-            ) : null}
-          </span>
-          <ChevronDownRegular className="execution-process-chevron" aria-hidden="true" />
-        </button>
-      </header>
-      {expanded ? (
-        <div className="execution-step-list" id={contentId}>
-          {records.map((record) => (
-            <ExecutionStepCard key={`codex-${record.id}`} record={record} />
-          ))}
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error(`无法读取附件：${file.name}`));
-    reader.onload = () => {
-      const result = reader.result;
-      if (typeof result !== "string") {
-        reject(new Error(`无法读取附件：${file.name}`));
-        return;
-      }
-      resolve(result.slice(result.indexOf(",") + 1));
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
-async function serializeAttachment(
-  attachment: PendingAttachment,
-): Promise<MessageAttachmentInput> {
-  return {
-    name: attachment.file.name,
-    mediaType: attachment.file.type || "application/octet-stream",
-    size: attachment.file.size,
-    dataBase64: await fileToBase64(attachment.file),
-  };
-}
-
-async function fetchMessageAttachment(
-  sessionId: string,
-  messageId: string,
-  attachmentId: string,
-  token: string,
-  signal?: AbortSignal,
-): Promise<Blob> {
-  const response = await fetch(
-    `/v1/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(
-      messageId,
-    )}/attachments/${encodeURIComponent(attachmentId)}`,
-    {
-      headers: { authorization: `Bearer ${token}` },
-      signal,
-    },
-  );
-  if (!response.ok) {
-    throw new Error(`附件读取失败（HTTP ${response.status}）`);
-  }
-  return response.blob();
-}
-
-function PeerChatAttachment(props: {
-  sessionId: string;
-  messageId: string;
-  attachment: MessageAttachment;
-  token: string;
-  onError(error: unknown): void;
-}) {
-  const { sessionId, messageId, attachment, token, onError } = props;
-  const isImage = attachment.mediaType.startsWith("image/");
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [previewFailed, setPreviewFailed] = useState(false);
-  const [downloading, setDownloading] = useState(false);
-
-  useEffect(() => {
-    if (!isImage) return;
-    const controller = new AbortController();
-    let objectUrl: string | null = null;
-    void fetchMessageAttachment(
-      sessionId,
-      messageId,
-      attachment.id,
-      token,
-      controller.signal,
-    )
-      .then((blob) => {
-        objectUrl = URL.createObjectURL(blob);
-        setPreviewUrl(objectUrl);
-      })
-      .catch((error: unknown) => {
-        if (controller.signal.aborted) return;
-        setPreviewFailed(true);
-        onError(error);
-      });
-    return () => {
-      controller.abort();
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [attachment.id, isImage, messageId, onError, sessionId, token]);
-
-  const download = async () => {
-    setDownloading(true);
-    try {
-      const blob = await fetchMessageAttachment(
-        sessionId,
-        messageId,
-        attachment.id,
-        token,
-      );
-      const objectUrl = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = objectUrl;
-      link.download = attachment.name;
-      document.body.append(link);
-      link.click();
-      link.remove();
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
-    } catch (error) {
-      onError(error);
-    } finally {
-      setDownloading(false);
-    }
-  };
-
-  return (
-    <div className={`peer-chat-attachment ${isImage ? "image" : "file"}`}>
-      {isImage ? (
-        <div className="peer-chat-image-preview">
-          {previewUrl ? (
-            <img src={previewUrl} alt={attachment.name} />
-          ) : previewFailed ? (
-            <span>图片预览不可用</span>
-          ) : (
-            <Skeleton aria-label="正在加载图片预览">
-              <SkeletonItem />
-            </Skeleton>
-          )}
-        </div>
-      ) : null}
-      <div className="peer-chat-attachment-row">
-        <AttachRegular aria-hidden="true" />
-        <div>
-          <strong title={attachment.name}>{attachment.name}</strong>
-          <small>{formatFileSize(attachment.size)}</small>
-        </div>
-        <Button
-          type="button"
-          appearance="subtle"
-          size="small"
-          icon={<ArrowDownloadRegular />}
-          disabled={downloading}
-          title={`下载 ${attachment.name}`}
-          aria-label={`下载 ${attachment.name}`}
-          onClick={() => void download()}
-        />
-      </div>
-    </div>
-  );
-}
 
 function deliveryStatusLabel(message: Message): string | null {
   if (message.kind !== "codex_prompt" && message.kind !== "codex_stop") return null;
@@ -1190,13 +274,6 @@ function timeLabel(value: string): string {
   }).format(new Date(value));
 }
 
-function recordRoleLabel(role: WorkspaceSummary["history"][number]["role"]): string {
-  if (role === "user") return "用户";
-  if (role === "assistant") return "Codex";
-  if (role === "reasoning") return "推理摘要";
-  return "命令执行";
-}
-
 function deviceLabel(): string {
   return navigator.platform || "Web device";
 }
@@ -1219,7 +296,6 @@ function isLoopbackOrigin(): boolean {
     window.location.hostname === "::1"
   );
 }
-
 export function App() {
   const initialInviteToken = useMemo(inviteTokenFromLocation, []);
   const initialCredential = useMemo(
@@ -4141,118 +3217,5 @@ export function App() {
         </DialogSurface>
       </Dialog>
     </FluentProvider>
-  );
-}
-
-function AccountRoomList({
-  rooms,
-  currentSessionId,
-  restoringRoomId,
-  onRestore,
-}: {
-  rooms: AccountRoom[];
-  currentSessionId: string | null;
-  restoringRoomId: string | null;
-  onRestore: (room: AccountRoom) => void;
-}) {
-  return (
-    <div className="account-room-list" role="list" aria-label="我的房间">
-      {rooms.map((room) => {
-        const current = room.session.id === currentSessionId;
-        const inactive =
-          room.member.status === "rejected" || room.member.status === "revoked";
-        const statusLabel =
-          room.member.status === "pending"
-            ? "等待批准"
-            : room.member.status === "rejected"
-              ? "已拒绝"
-              : room.member.status === "revoked"
-                ? "权限已撤销"
-                : room.member.role === "owner"
-                  ? "主人"
-                  : "成员";
-        const statusColor =
-          room.member.status === "pending"
-            ? "warning"
-            : inactive
-              ? "danger"
-              : "success";
-        return (
-          <div className="account-room-item" role="listitem" key={room.session.id}>
-            <div className="account-room-icon" aria-hidden="true">
-              <HomeRegular />
-            </div>
-            <div className="account-room-copy">
-              <strong>{room.session.name}</strong>
-              <span>
-                {room.session.roomStatus === "closed" ? "房间已关闭" : statusLabel}
-                {room.lastUsedAt
-                  ? `，上次使用 ${new Intl.DateTimeFormat("zh-CN", {
-                      month: "numeric",
-                      day: "numeric",
-                    }).format(new Date(room.lastUsedAt))}`
-                  : ""}
-              </span>
-            </div>
-            <Badge appearance="tint" color={statusColor}>
-              {statusLabel}
-            </Badge>
-            <Button
-              appearance={current ? "secondary" : "primary"}
-              size="small"
-              aria-current={current ? "page" : undefined}
-              disabled={current || inactive || restoringRoomId !== null}
-              onClick={() => onRestore(room)}
-            >
-              {current
-                ? "当前房间"
-                : restoringRoomId === room.session.id
-                  ? "正在进入"
-                  : "进入"}
-            </Button>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function connectionPresentation(
-  state: ConnectionState,
-  hasSession: boolean,
-): { label: string; color: "success" | "warning" | "danger" | "informative" } {
-  if (!hasSession) {
-    return { label: "Relay 就绪", color: "informative" };
-  }
-  if (state === "live") {
-    return { label: "实时连接", color: "success" };
-  }
-  if (state === "waiting") {
-    return { label: "等待批准", color: "warning" };
-  }
-  if (state === "error") {
-    return { label: "需要处理", color: "danger" };
-  }
-  return { label: "正在连接", color: "informative" };
-}
-
-function MemberSkeleton() {
-  return (
-    <Skeleton aria-label="正在加载成员">
-      <div className="member-skeleton">
-        <SkeletonItem shape="circle" size={32} />
-        <div>
-          <SkeletonItem size={12} />
-          <SkeletonItem size={8} />
-        </div>
-      </div>
-      <div className="member-skeleton">
-        <SkeletonItem shape="circle" size={32} />
-        <div>
-          <SkeletonItem size={12} />
-          <SkeletonItem size={8} />
-        </div>
-      </div>
-    </Skeleton>
   );
 }

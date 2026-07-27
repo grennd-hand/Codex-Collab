@@ -114,6 +114,50 @@ The current IDE phase does not yet permit two Codex writers to share one checkou
 multi-writer phase assigns each writer a separate Git worktree; the relay coordinates messages and
 intent while Git remains the merge and audit mechanism.
 
+## Source module boundaries
+
+Source files are split by responsibility rather than by an arbitrary line count. The line budgets
+below are review triggers, not automatic failure conditions:
+
+- page and service orchestrators should normally stay below 1,200 lines;
+- state or protocol modules should normally stay below 600 lines;
+- presentational React components should normally stay below 350 lines;
+- a larger file must have one cohesive reason to change and a documented follow-up boundary.
+
+The dashboard follows this feature layout:
+
+```text
+apps/dashboard/src/
+├── App.tsx                    session orchestration and page composition
+├── app/
+│   ├── codex-controls.ts      pure Codex/composer state rules
+│   ├── ExecutionProcess.tsx   imported execution presentation
+│   ├── attachments.tsx        attachment preparation, transfer and preview
+│   ├── AccountRoomList.tsx    account room selection
+│   ├── connection.ts          realtime status presentation
+│   └── MemberSkeleton.tsx     member-list loading state
+└── ide/
+    ├── IdeWorkspace.tsx       IDE state coordinator
+    ├── IdeTitlebar.tsx        stable workspace actions
+    ├── IdeExplorer.tsx        searchable file tree
+    ├── IdeEditorPane.tsx      Monaco tabs, editor and conflict view
+    └── ide-tab-state.ts       editor tab state model
+```
+
+Refactoring continues in dependency order so behavior and security checks remain reviewable:
+
+1. move dashboard realtime/session state from `App.tsx` into focused hooks, then extract the people,
+   peer chat, Codex timeline and dialog surfaces;
+2. split Relay persistence from `session-store.ts` into account, membership, message, workspace and
+   file-operation repositories while keeping transactions inside the owning repository;
+3. split HTTP route registration from `server.ts` without moving authentication or rate-limit
+   checks away from each route;
+4. split the plugin app-server client into transport, protocol mapping and rollout import modules.
+
+Security-sensitive refactors must preserve the existing public types and tests until the new module
+has direct unit coverage. A short file is not considered an improvement if it merely hides shared
+mutable state or separates a transaction across modules.
+
 ## Next milestones
 
 - owner-visible notification and approval queue for peer-authored prompts;

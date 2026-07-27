@@ -4,19 +4,21 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
   ExecutionProcess,
+  completedExecutionDurationLabel,
+  elapsedExecutionLabel,
+  executionProcessPresentation,
+} from "./app/ExecutionProcess.js";
+import {
   canMemberStopCodex,
   chatMessageBody,
   codexExecutionPhase,
   composerPrimaryAction,
-  completedExecutionDurationLabel,
-  elapsedExecutionLabel,
-  executionProcessPresentation,
   filterUnsupportedImageAttachments,
   normalizeCodexOptionsForUi,
   restoreComposerControlFocus,
   shouldShowExecutionStatus,
   workspaceNeedsConversationLoad,
-} from "./App.js";
+} from "./app/codex-controls.js";
 
 function command(
   kind: "codex_prompt" | "codex_stop",

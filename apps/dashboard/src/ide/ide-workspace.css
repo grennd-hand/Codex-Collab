@@ -144,6 +144,18 @@
   height: 30px;
 }
 
+.ide-title-actions .ide-toolbar-button,
+.ide-title-actions .ide-toolbar-button::before,
+.ide-title-actions .ide-toolbar-button::after {
+  animation: none !important;
+  transition: none !important;
+}
+
+.ide-title-actions .ide-toolbar-button:hover,
+.ide-title-actions .ide-toolbar-button:active {
+  transform: none;
+}
+
 .ide-mobile-explorer-toggle {
   display: none !important;
 }
