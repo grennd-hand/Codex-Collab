@@ -164,6 +164,7 @@ import {
   shouldShowExecutionStatus,
   workspaceNeedsConversationLoad,
 } from "./app/codex-controls.js";
+import { shouldApplyWorkspaceResponse } from "./app/workspace-refresh.js";
 const IdeWorkspace = lazy(() => import("./ide/IdeWorkspace.js"));
 
 const brand: BrandVariants = {
@@ -396,6 +397,11 @@ export function App() {
   const loadedComposerKeyRef = useRef<string | null>(null);
   const linkedRoomKeyRef = useRef<string | null>(null);
   const workspaceRefreshSequenceRef = useRef(0);
+  const workspaceAppliedSequenceRef = useRef(0);
+  const workspaceRefreshInFlightRef = useRef<Promise<WorkspaceSummary | null> | null>(
+    null,
+  );
+  const workspaceSessionIdRef = useRef<string | null>(null);
   const ideOpenFileSequenceRef = useRef(0);
   const workspaceFileCacheRef = useRef(new WorkspaceFileCache());
   const workspaceFileReadsRef = useRef(
@@ -409,10 +415,12 @@ export function App() {
   const roomOpen = session?.roomStatus !== "closed";
   const supportsPasskeys = useMemo(passkeysAvailable, []);
   const composerStorageKey = session ? `codexCollabComposer:${session.id}` : null;
+  workspaceSessionIdRef.current = session?.id ?? null;
 
   useEffect(() => {
     workspaceFileCacheRef.current.clear();
     workspaceFileReadsRef.current.clear();
+    workspaceRefreshInFlightRef.current = null;
     setIdeOpenFileRequest(null);
   }, [session?.id, workspaceSummary?.selectedThreadId]);
 
@@ -627,27 +635,45 @@ export function App() {
     if (!session || !token || !approved) {
       return null;
     }
+    const inFlight = workspaceRefreshInFlightRef.current;
+    if (inFlight) return inFlight;
+
+    const sessionId = session.id;
     const requestSequence = ++workspaceRefreshSequenceRef.current;
-    const result = await requestJson<{ workspace: WorkspaceSummary }>(
-      `/v1/sessions/${session.id}/workspace`,
+    const request = requestJson<{ workspace: WorkspaceSummary }>(
+      `/v1/sessions/${sessionId}/workspace`,
       { headers: authHeaders() },
-    );
-    if (requestSequence !== workspaceRefreshSequenceRef.current) {
-      return result.workspace;
-    }
-    setWorkspaceSummary(result.workspace);
-    setConversationLoading(workspaceNeedsConversationLoad(result.workspace));
-    return result.workspace;
+    )
+      .then((result) => {
+        if (
+          workspaceSessionIdRef.current === sessionId &&
+          shouldApplyWorkspaceResponse(
+            requestSequence,
+            workspaceAppliedSequenceRef.current,
+          )
+        ) {
+          workspaceAppliedSequenceRef.current = requestSequence;
+          setWorkspaceSummary(result.workspace);
+          setConversationLoading(workspaceNeedsConversationLoad(result.workspace));
+        }
+        return result.workspace;
+      })
+      .finally(() => {
+        if (workspaceRefreshInFlightRef.current === request) {
+          workspaceRefreshInFlightRef.current = null;
+        }
+      });
+    workspaceRefreshInFlightRef.current = request;
+    return request;
   }, [approved, authHeaders, session, token]);
 
   const refresh = useCallback(async () => {
     if (!session || !token || !approved) {
       return;
     }
-    const workspaceRequestSequence = ++workspaceRefreshSequenceRef.current;
     setLoading(true);
     try {
-      const [messageResult, memberResult, meResult, workspaceResult] = await Promise.all([
+      const [messageResult, memberResult, meResult] = await Promise.all([
         requestJson<{ messages: Message[] }>(
           `/v1/sessions/${session.id}/messages`,
           { headers: authHeaders() },
@@ -662,17 +688,10 @@ export function App() {
           headers: authHeaders(),
           },
         ),
-        requestJson<{ workspace: WorkspaceSummary }>(
-          `/v1/sessions/${session.id}/workspace`,
-          { headers: authHeaders() },
-        ),
+        refreshWorkspace(),
       ]);
       setMessages(messageResult.messages);
       setMembers(memberResult.members);
-      if (workspaceRequestSequence === workspaceRefreshSequenceRef.current) {
-        setWorkspaceSummary(workspaceResult.workspace);
-        setConversationLoading(workspaceNeedsConversationLoad(workspaceResult.workspace));
-      }
       if (
         meResult.member.status !== member.status ||
         meResult.session.roomStatus !== session.roomStatus
@@ -690,7 +709,7 @@ export function App() {
     } finally {
       setLoading(false);
     }
-  }, [approved, authHeaders, member, saveCredential, session, showError, token]);
+  }, [approved, authHeaders, member, refreshWorkspace, saveCredential, session, showError, token]);
 
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
