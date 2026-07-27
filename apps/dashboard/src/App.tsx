@@ -164,7 +164,10 @@ import {
   shouldShowExecutionStatus,
   workspaceNeedsConversationLoad,
 } from "./app/codex-controls.js";
-import { shouldApplyWorkspaceResponse } from "./app/workspace-refresh.js";
+import {
+  isWorkspaceRefreshAbort,
+  shouldApplyWorkspaceResponse,
+} from "./app/workspace-refresh.js";
 const IdeWorkspace = lazy(() => import("./ide/IdeWorkspace.js"));
 
 const brand: BrandVariants = {
@@ -401,6 +404,10 @@ export function App() {
   const workspaceRefreshInFlightRef = useRef<Promise<WorkspaceSummary | null> | null>(
     null,
   );
+  const workspaceRefreshAbortRef = useRef<AbortController | null>(null);
+  const workspacePriorityFileReadsRef = useRef(0);
+  const workspaceRefreshPendingRef = useRef(false);
+  const workspaceRefreshResumeTimerRef = useRef<number | undefined>(undefined);
   const workspaceSessionIdRef = useRef<string | null>(null);
   const ideOpenFileSequenceRef = useRef(0);
   const workspaceFileCacheRef = useRef(new WorkspaceFileCache());
@@ -418,6 +425,14 @@ export function App() {
   workspaceSessionIdRef.current = session?.id ?? null;
 
   useEffect(() => {
+    workspaceRefreshAbortRef.current?.abort();
+    workspaceRefreshAbortRef.current = null;
+    workspacePriorityFileReadsRef.current = 0;
+    workspaceRefreshPendingRef.current = false;
+    if (workspaceRefreshResumeTimerRef.current !== undefined) {
+      window.clearTimeout(workspaceRefreshResumeTimerRef.current);
+      workspaceRefreshResumeTimerRef.current = undefined;
+    }
     workspaceFileCacheRef.current.clear();
     workspaceFileReadsRef.current.clear();
     workspaceRefreshInFlightRef.current = null;
@@ -635,14 +650,21 @@ export function App() {
     if (!session || !token || !approved) {
       return null;
     }
+    if (workspacePriorityFileReadsRef.current > 0) {
+      workspaceRefreshPendingRef.current = true;
+      return null;
+    }
     const inFlight = workspaceRefreshInFlightRef.current;
     if (inFlight) return inFlight;
 
     const sessionId = session.id;
     const requestSequence = ++workspaceRefreshSequenceRef.current;
+    const controller = new AbortController();
+    workspaceRefreshAbortRef.current = controller;
+    workspaceRefreshPendingRef.current = false;
     const request = requestJson<{ workspace: WorkspaceSummary }>(
       `/v1/sessions/${sessionId}/workspace`,
-      { headers: authHeaders() },
+      { headers: authHeaders(), signal: controller.signal },
     )
       .then((result) => {
         if (
@@ -658,7 +680,16 @@ export function App() {
         }
         return result.workspace;
       })
+      .catch((caught: unknown) => {
+        if (isWorkspaceRefreshAbort(caught)) {
+          return null;
+        }
+        throw caught;
+      })
       .finally(() => {
+        if (workspaceRefreshAbortRef.current === controller) {
+          workspaceRefreshAbortRef.current = null;
+        }
         if (workspaceRefreshInFlightRef.current === request) {
           workspaceRefreshInFlightRef.current = null;
         }
@@ -666,6 +697,30 @@ export function App() {
     workspaceRefreshInFlightRef.current = request;
     return request;
   }, [approved, authHeaders, session, token]);
+
+  const resumeWorkspaceRefreshAfterFileRead = useCallback(() => {
+    if (
+      workspacePriorityFileReadsRef.current > 0 ||
+      !workspaceRefreshPendingRef.current ||
+      workspaceRefreshResumeTimerRef.current !== undefined
+    ) {
+      return;
+    }
+    const attempt = () => {
+      if (workspacePriorityFileReadsRef.current > 0) {
+        workspaceRefreshResumeTimerRef.current = undefined;
+        return;
+      }
+      if (workspaceRefreshInFlightRef.current) {
+        workspaceRefreshResumeTimerRef.current = window.setTimeout(attempt, 100);
+        return;
+      }
+      workspaceRefreshResumeTimerRef.current = undefined;
+      workspaceRefreshPendingRef.current = false;
+      void refreshWorkspace().catch(showError);
+    };
+    workspaceRefreshResumeTimerRef.current = window.setTimeout(attempt, 300);
+  }, [refreshWorkspace, showError]);
 
   const refresh = useCallback(async () => {
     if (!session || !token || !approved) {
@@ -1626,6 +1681,14 @@ export function App() {
       const existingRead = workspaceFileReadsRef.current.get(key);
       if (existingRead) return existingRead;
 
+      workspacePriorityFileReadsRef.current += 1;
+      workspaceRefreshPendingRef.current = true;
+      if (workspaceRefreshResumeTimerRef.current !== undefined) {
+        window.clearTimeout(workspaceRefreshResumeTimerRef.current);
+        workspaceRefreshResumeTimerRef.current = undefined;
+      }
+      workspaceRefreshAbortRef.current?.abort();
+
       const request = readWorkspaceFileOperation(
         { sessionId: session.id, headers: authHeaders(true) },
         path,
@@ -1644,11 +1707,18 @@ export function App() {
           setError(null);
           return file;
         })
-        .finally(() => workspaceFileReadsRef.current.delete(key));
+        .finally(() => {
+          workspaceFileReadsRef.current.delete(key);
+          workspacePriorityFileReadsRef.current = Math.max(
+            0,
+            workspacePriorityFileReadsRef.current - 1,
+          );
+          resumeWorkspaceRefreshAfterFileRead();
+        });
       workspaceFileReadsRef.current.set(key, request);
       return request;
     },
-    [authHeaders, session, workspaceSummary],
+    [authHeaders, resumeWorkspaceRefreshAfterFileRead, session, workspaceSummary],
   );
 
   const saveWorkspaceFile = useCallback(

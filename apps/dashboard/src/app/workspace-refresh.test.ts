@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { shouldApplyWorkspaceResponse } from "./workspace-refresh.js";
+import {
+  isWorkspaceRefreshAbort,
+  shouldApplyWorkspaceResponse,
+} from "./workspace-refresh.js";
 
 describe("shouldApplyWorkspaceResponse", () => {
   it("applies the first completed response even when newer requests already started", () => {
@@ -12,5 +15,13 @@ describe("shouldApplyWorkspaceResponse", () => {
 
   it("rejects a response older than the newest result already applied", () => {
     expect(shouldApplyWorkspaceResponse(3, 4)).toBe(false);
+  });
+
+  it("recognizes an intentionally cancelled background refresh", () => {
+    const aborted = new Error("interactive file read has priority");
+    aborted.name = "AbortError";
+
+    expect(isWorkspaceRefreshAbort(aborted)).toBe(true);
+    expect(isWorkspaceRefreshAbort(new Error("network failed"))).toBe(false);
   });
 });
