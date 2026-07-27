@@ -285,10 +285,12 @@ function ExecutionStatusIcon({
 function ExecutionStepCard({
   record,
   compact = false,
+  historyKey,
   onOpenFile,
 }: {
   record: ReadableExecution;
   compact?: boolean;
+  historyKey?: string | null;
   onOpenFile?: (target: IdeNavigationTarget) => void;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(
@@ -308,6 +310,7 @@ function ExecutionStepCard({
   return (
     <article
       className={`execution-step ${record.role} ${record.status}${compact ? " compact" : ""}`}
+      data-history-anchor={historyKey ?? undefined}
     >
       <div className="execution-step-marker" aria-hidden="true">
         <ExecutionStatusIcon
@@ -447,6 +450,7 @@ export function ExecutionProcess({
   active = false,
   completedAt = null,
   historyKey,
+  historyEntryKeys,
   sourceLabel = null,
   onOpenFile,
 }: {
@@ -454,6 +458,7 @@ export function ExecutionProcess({
   active?: boolean;
   completedAt?: string | null;
   historyKey?: string;
+  historyEntryKeys?: readonly (string | null)[];
   sourceLabel?: string | null;
   onOpenFile?: (target: IdeNavigationTarget) => void;
 }) {
@@ -492,6 +497,7 @@ export function ExecutionProcess({
         expanded ? "expanded" : "collapsed"
       }`}
       data-history-key={historyKey}
+      data-history-anchor={expanded ? undefined : historyKey}
       aria-label={`${sourceLabel ? `${sourceLabel}，` : ""}${
         presentation.status === "completed" ? "处理概要" : "任务过程"
       }`}
@@ -550,10 +556,11 @@ export function ExecutionProcess({
       </header>
       {expanded ? (
         <div className="execution-step-list" id={contentId}>
-          {records.map((record) => (
+          {records.map((record, index) => (
             <ExecutionStepCard
-              key={`codex-${record.id}`}
+              key={`codex-${historyEntryKeys?.[index] ?? `${record.id}-${index}`}`}
               record={record}
+              historyKey={historyEntryKeys?.[index]}
               onOpenFile={onOpenFile}
             />
           ))}

@@ -188,6 +188,8 @@ describe("Codex client-style task process", () => {
     const imported = renderToStaticMarkup(
       createElement(ExecutionProcess, {
         sourceLabel: "导入自 Codex 任务",
+        historyKey: "collapsed-execution",
+        historyEntryKeys: ["collapsed-step"],
         entries: [
           {
             id: "imported",
@@ -200,6 +202,8 @@ describe("Codex client-style task process", () => {
     );
     expect(imported).toContain('aria-label="导入自 Codex 任务，处理概要"');
     expect(imported).toContain("导入自 Codex 任务：已处理");
+    expect(imported).toContain('data-history-anchor="collapsed-execution"');
+    expect(imported).not.toContain('data-history-anchor="collapsed-step"');
 
     const completed = renderToStaticMarkup(
       createElement(ExecutionProcess, {
@@ -256,6 +260,26 @@ describe("Codex client-style task process", () => {
     expect(running).toContain("正在运行");
     expect(running).toContain('role="status"');
     expect(running).toContain("查看正在执行的内容");
+
+    const anchoredRunning = renderToStaticMarkup(
+      createElement(ExecutionProcess, {
+        historyKey: "execution-page-group",
+        historyEntryKeys: ["history-step-1"],
+        entries: [
+          {
+            id: "duplicate-step-id",
+            role: "command",
+            text: "tool: exec_command\nstatus: running\ninput:\n{\"cmd\":\"npm test\"}",
+            createdAt: null,
+          },
+        ],
+      }),
+    );
+    expect(anchoredRunning).toContain('data-history-key="execution-page-group"');
+    expect(anchoredRunning).toContain('data-history-anchor="history-step-1"');
+    expect(anchoredRunning).not.toContain(
+      'data-history-anchor="execution-page-group"',
+    );
 
     const longOutput = renderToStaticMarkup(
       createElement(ExecutionProcess, {

@@ -136,10 +136,12 @@ describe("buildImportedTimeline", () => {
     expect(timeline[1]).toMatchObject({
       kind: "execution",
       id: "execution-reasoning:1",
+      entryKeys: ["reasoning:1"],
     });
     expect(timeline[3]).toMatchObject({
       kind: "execution",
       id: "execution-reasoning:2",
+      entryKeys: ["reasoning:2"],
     });
     expect(timeline[4]).toMatchObject({ kind: "message", key: "duplicate:2" });
   });
@@ -165,6 +167,7 @@ describe("buildImportedTimeline", () => {
     });
     expect(buildImportedTimeline(withOlder)[0]).toMatchObject({
       id: "execution-root-step",
+      entryKeys: ["root-step", "middle-step"],
     });
   });
 });

@@ -16,6 +16,7 @@ export type ImportedTimelineItem =
       kind: "execution";
       id: string;
       entries: CodexRecordEntry[];
+      entryKeys?: Array<string | null>;
       completedAt?: string;
     };
 
@@ -154,12 +155,18 @@ export function buildImportedTimeline(
 
     const previous = timeline.at(-1);
     if (previous?.kind === "execution") {
+      const previousEntryCount = previous.entries.length;
       previous.entries.push(entry);
+      if (previous.entryKeys || key) {
+        previous.entryKeys ??= Array<string | null>(previousEntryCount).fill(null);
+        previous.entryKeys.push(key);
+      }
     } else {
       timeline.push({
         kind: "execution",
         id: groupKey ?? `execution-${key ?? entry.id}`,
         entries: [entry],
+        ...(key ? { entryKeys: [key] } : {}),
       });
     }
   }

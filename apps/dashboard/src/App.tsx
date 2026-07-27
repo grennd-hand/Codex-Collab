@@ -54,6 +54,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -332,15 +333,23 @@ interface HistoryScrollAnchor {
   scrollTop: number;
 }
 
+interface PendingHistoryScrollRestore {
+  sessionId: string;
+  threadId: string;
+  historyEpoch: number;
+  requestId: number;
+  anchor: HistoryScrollAnchor | null;
+}
+
 function captureHistoryScrollAnchor(
   stream: HTMLElement | null,
 ): HistoryScrollAnchor | null {
   if (!stream) return null;
   const streamTop = stream.getBoundingClientRect().top;
   const anchor = Array.from(
-    stream.querySelectorAll<HTMLElement>("[data-history-key]"),
+    stream.querySelectorAll<HTMLElement>("[data-history-anchor]"),
   ).find((element) => element.getBoundingClientRect().bottom > streamTop + 1);
-  const key = anchor?.dataset.historyKey;
+  const key = anchor?.dataset.historyAnchor;
   return anchor && key
     ? {
         key,
@@ -357,8 +366,8 @@ function restoreHistoryScrollAnchor(
 ): void {
   if (!stream || !anchor) return;
   const matching = Array.from(
-    stream.querySelectorAll<HTMLElement>("[data-history-key]"),
-  ).find((element) => element.dataset.historyKey === anchor.key);
+    stream.querySelectorAll<HTMLElement>("[data-history-anchor]"),
+  ).find((element) => element.dataset.historyAnchor === anchor.key);
   if (matching) {
     const currentOffset =
       matching.getBoundingClientRect().top - stream.getBoundingClientRect().top;
@@ -473,6 +482,8 @@ export function App() {
   const workspaceHistoryEpochRef = useRef(0);
   const workspaceHistoryWindowRef = useRef(workspaceHistoryWindow);
   const workspaceHistoryOlderRequestIdRef = useRef(0);
+  const workspaceHistoryPendingScrollRestoreRef =
+    useRef<PendingHistoryScrollRestore | null>(null);
   const workspacePriorityFileReadsRef = useRef(0);
   const workspaceRefreshPendingRef = useRef(false);
   const workspaceRefreshResumeTimerRef = useRef<number | undefined>(undefined);
@@ -505,6 +516,24 @@ export function App() {
     [],
   );
 
+  useLayoutEffect(() => {
+    const pending = workspaceHistoryPendingScrollRestoreRef.current;
+    if (!pending) return;
+    workspaceHistoryPendingScrollRestoreRef.current = null;
+    if (
+      workspaceSessionIdRef.current === pending.sessionId &&
+      workspaceHistoryEpochRef.current === pending.historyEpoch &&
+      workspaceHistoryOlderRequestIdRef.current === pending.requestId &&
+      workspaceHistoryWindowRef.current.threadId === pending.threadId
+    ) {
+      restoreHistoryScrollAnchor(messageStreamRef.current, pending.anchor);
+    }
+    if (workspaceHistoryOlderRequestIdRef.current === pending.requestId) {
+      workspaceHistoryPrependingRef.current = false;
+      workspaceHistoryOlderAbortRef.current = null;
+    }
+  }, [workspaceHistoryWindow]);
+
   useEffect(() => {
     workspaceHistoryEpochRef.current += 1;
     workspaceHistoryOlderRequestIdRef.current += 1;
@@ -513,6 +542,7 @@ export function App() {
     workspaceRefreshIncludesHistoryRef.current = false;
     workspaceHistoryOlderAbortRef.current?.abort();
     workspaceHistoryOlderAbortRef.current = null;
+    workspaceHistoryPendingScrollRestoreRef.current = null;
     workspaceHistoryPrependingRef.current = false;
     workspacePriorityFileReadsRef.current = 0;
     workspaceRefreshPendingRef.current = false;
@@ -565,6 +595,7 @@ export function App() {
       workspaceRefreshSequenceRef.current += 1;
       workspaceHistoryOlderAbortRef.current?.abort();
       workspaceHistoryOlderAbortRef.current = null;
+      workspaceHistoryPendingScrollRestoreRef.current = null;
       setConversationLoading(false);
       setLoading(false);
       setWorkspaceLoading(false);
@@ -929,27 +960,15 @@ export function App() {
         result.workspaceHistoryPage,
       );
       if (nextWindow === currentWindow) return;
-      commitWorkspaceHistoryWindow(() =>
-        nextWindow,
-      );
+      workspaceHistoryPendingScrollRestoreRef.current = {
+        sessionId,
+        threadId,
+        historyEpoch,
+        requestId,
+        anchor: scrollAnchor,
+      };
       scrollAdjustmentScheduled = true;
-      window.requestAnimationFrame(() => {
-        window.requestAnimationFrame(() => {
-          if (
-            workspaceSessionIdRef.current === sessionId &&
-            workspaceHistoryEpochRef.current === historyEpoch &&
-            workspaceHistoryOlderRequestIdRef.current === requestId
-          ) {
-            restoreHistoryScrollAnchor(messageStreamRef.current, scrollAnchor);
-          }
-          if (workspaceHistoryOlderRequestIdRef.current === requestId) {
-            workspaceHistoryPrependingRef.current = false;
-            if (workspaceHistoryOlderAbortRef.current === controller) {
-              workspaceHistoryOlderAbortRef.current = null;
-            }
-          }
-        });
-      });
+      commitWorkspaceHistoryWindow(() => nextWindow);
     } catch (caught) {
       if (isWorkspaceRefreshAbort(caught)) return;
       if (
@@ -1992,6 +2011,7 @@ export function App() {
     workspaceRefreshIncludesHistoryRef.current = false;
     workspaceHistoryOlderAbortRef.current?.abort();
     workspaceHistoryOlderAbortRef.current = null;
+    workspaceHistoryPendingScrollRestoreRef.current = null;
     workspaceHistoryPrependingRef.current = false;
     setWorkspaceLoading(true);
     setConversationLoading(true);
@@ -2824,6 +2844,7 @@ export function App() {
                               : ""
                           }`}
                           style={identity.style}
+                          data-history-anchor={`shared:${item.id}`}
                           data-history-key={`shared:${item.id}`}
                           key={`shared-${item.id}`}
                         >
@@ -2881,6 +2902,7 @@ export function App() {
                             entry.role === "user" ? "历史用户输入" : "Codex 回复"
                           }`}
                           className={`message imported-message ${entry.role}`}
+                          data-history-anchor={item.key ?? entry.id}
                           data-history-key={item.key ?? entry.id}
                           key={`codex-${item.key ?? entry.id}`}
                         >
@@ -2923,6 +2945,7 @@ export function App() {
                         entries={item.entries}
                         completedAt={item.completedAt ?? null}
                         historyKey={item.id}
+                        historyEntryKeys={item.entryKeys}
                         key={item.id}
                         sourceLabel="导入自 Codex 任务"
                         onOpenFile={openWorkspaceFileFromExecution}
