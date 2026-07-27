@@ -5,6 +5,7 @@ import editorWorkerUrl from "monaco-editor/esm/vs/editor/editor.worker.js?url";
 import htmlWorkerUrl from "monaco-editor/esm/vs/language/html/html.worker.js?url";
 import jsonWorkerUrl from "monaco-editor/esm/vs/language/json/json.worker.js?url";
 import typeScriptWorkerUrl from "monaco-editor/esm/vs/language/typescript/ts.worker.js?url";
+import { registerProjectLanguageSupport } from "./monaco-language-support.js";
 
 type MonacoWorkerEnvironment = typeof globalThis & {
   MonacoEnvironment?: {
@@ -29,6 +30,7 @@ type MonacoWorkerEnvironment = typeof globalThis & {
 };
 
 loader.config({ monaco });
+registerProjectLanguageSupport(monaco);
 
 monaco.editor.defineTheme("codex-collab-light", {
   base: "vs",
