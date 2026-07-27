@@ -637,6 +637,20 @@ export interface WorkspaceSummary {
   syncedAt: string | null;
 }
 
+export interface WorkspaceOverview extends Omit<WorkspaceSummary, "history"> {
+  historyCount: number;
+}
+
+export interface WorkspaceSyncState extends Omit<WorkspaceOverview, "files"> {
+  fileCount: number;
+}
+
+export interface WorkspaceHistoryResult {
+  selectedThreadId: string | null;
+  history: CodexRecordEntry[];
+  syncedAt: string | null;
+}
+
 export interface CreateHostPairingResponse {
   sessionId: string;
   pairingToken: string;

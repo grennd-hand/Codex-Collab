@@ -531,6 +531,14 @@ function bearerToken(request: IncomingMessage): string {
   return authorization.slice("Bearer ".length).trim();
 }
 
+function prefersMinimalResponse(request: IncomingMessage): boolean {
+  const prefer = request.headers.prefer;
+  const values = Array.isArray(prefer) ? prefer : prefer ? [prefer] : [];
+  return values
+    .flatMap((value) => value.split(","))
+    .some((value) => value.trim().toLowerCase() === "return=minimal");
+}
+
 function passkeyConfig(request: IncomingMessage): PasskeyRequestConfig {
   return resolvePasskeyConfig({
     ...(configuredPasskeyOrigin
@@ -1319,6 +1327,32 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    const workspaceOverviewMatch = url.pathname.match(
+      /^\/v1\/sessions\/([^/]+)\/workspace\/overview$/,
+    );
+    if (method === "GET" && workspaceOverviewMatch?.[1]) {
+      sendJson(response, 200, {
+        workspace: store.getWorkspaceOverview(
+          workspaceOverviewMatch[1],
+          bearerToken(request),
+        ),
+      });
+      return;
+    }
+
+    const hostWorkspaceSyncStateMatch = url.pathname.match(
+      /^\/v1\/sessions\/([^/]+)\/host\/workspace\/sync-state$/,
+    );
+    if (method === "GET" && hostWorkspaceSyncStateMatch?.[1]) {
+      sendJson(response, 200, {
+        syncState: store.getWorkspaceSyncState(
+          hostWorkspaceSyncStateMatch[1],
+          bearerToken(request),
+        ),
+      });
+      return;
+    }
+
     const workspaceRuntimeMatch = url.pathname.match(
       /^\/v1\/sessions\/([^/]+)\/workspace\/runtime$/,
     );
@@ -1331,17 +1365,31 @@ const server = createServer(async (request, response) => {
       ) {
         throw new ProtocolError(400, "invalid_request", "Codex runtime status is invalid");
       }
-      const result = store.publishCodexRuntimeStatus(
-        workspaceRuntimeMatch[1],
-        bearerToken(request),
-        body.status as CodexRuntimeStatus,
-      );
+      const minimal = prefersMinimalResponse(request);
+      const result = minimal
+        ? store.publishCodexRuntimeStatus(
+            workspaceRuntimeMatch[1],
+            bearerToken(request),
+            body.status as CodexRuntimeStatus,
+            true,
+          )
+        : store.publishCodexRuntimeStatus(
+            workspaceRuntimeMatch[1],
+            bearerToken(request),
+            body.status as CodexRuntimeStatus,
+          );
       if (result.changed) {
         broadcast(workspaceRuntimeMatch[1], "workspace.updated", {
           codexRuntimeStatus: result.workspace.codexRuntimeStatus,
+          changedScopes: ["runtime"],
         });
       }
-      sendJson(response, 200, { workspace: result.workspace });
+      sendJson(
+        response,
+        200,
+        minimal ? { syncState: result.workspace } : { workspace: result.workspace },
+        minimal ? { "preference-applied": "return=minimal" } : {},
+      );
       return;
     }
 
@@ -1362,6 +1410,7 @@ const server = createServer(async (request, response) => {
       broadcast(workspaceCatalogMatch[1], "workspace.updated", {
         hostConnected: true,
         taskCount: workspace.threads.length,
+        changedScopes: ["catalog"],
       });
       sendJson(response, 200, { workspace });
       return;
@@ -1383,6 +1432,7 @@ const server = createServer(async (request, response) => {
       broadcast(hostWorkspaceSelectionMatch[1], "workspace.updated", {
         selectedThreadId: workspace.selectedThreadId,
         syncedAt: null,
+        changedScopes: ["selection"],
       });
       sendJson(response, 200, { workspace });
       return;
@@ -1397,6 +1447,7 @@ const server = createServer(async (request, response) => {
       broadcast(workspaceSelectionMatch[1], "workspace.updated", {
         selectedThreadId: workspace.selectedThreadId,
         syncedAt: null,
+        changedScopes: ["selection"],
       });
       sendJson(response, 200, { workspace });
       return;
@@ -1405,22 +1456,49 @@ const server = createServer(async (request, response) => {
     const workspaceHistoryMatch = url.pathname.match(
       /^\/v1\/sessions\/([^/]+)\/workspace\/history$/,
     );
+    if (method === "GET" && workspaceHistoryMatch?.[1]) {
+      sendJson(response, 200, {
+        workspaceHistory: store.getWorkspaceHistory(
+          workspaceHistoryMatch[1],
+          bearerToken(request),
+        ),
+      });
+      return;
+    }
     if (method === "PUT" && workspaceHistoryMatch?.[1]) {
       const body = await readJson(request, 3_000_000);
-      const workspace = store.publishWorkspaceHistory(
-        workspaceHistoryMatch[1],
-        bearerToken(request),
-        {
-          threadId: requiredString(body.threadId, "threadId", 120),
-          history: parseHistory(body.history),
-        },
-      );
+      const input = {
+        threadId: requiredString(body.threadId, "threadId", 120),
+        history: parseHistory(body.history),
+      };
+      const minimal = prefersMinimalResponse(request);
+      const workspace = minimal
+        ? store.publishWorkspaceHistory(
+            workspaceHistoryMatch[1],
+            bearerToken(request),
+            input,
+            true,
+          )
+        : store.publishWorkspaceHistory(
+            workspaceHistoryMatch[1],
+            bearerToken(request),
+            input,
+          );
       broadcast(workspaceHistoryMatch[1], "workspace.updated", {
         selectedThreadId: workspace.selectedThreadId,
         syncedAt: workspace.syncedAt,
-        historyCount: workspace.history.length,
+        historyCount:
+          "historyCount" in workspace
+            ? workspace.historyCount
+            : workspace.history.length,
+        changedScopes: ["history"],
       });
-      sendJson(response, 200, { workspace });
+      sendJson(
+        response,
+        200,
+        minimal ? { syncState: workspace } : { workspace },
+        minimal ? { "preference-applied": "return=minimal" } : {},
+      );
       return;
     }
 
@@ -1429,20 +1507,41 @@ const server = createServer(async (request, response) => {
     );
     if (method === "PUT" && workspaceSnapshotMatch?.[1]) {
       const body = await readJson(request, 9_000_000);
-      const workspace = store.publishWorkspaceSnapshot(
-        workspaceSnapshotMatch[1],
-        bearerToken(request),
-        {
-          threadId: requiredString(body.threadId, "threadId", 120),
-          history: parseHistory(body.history),
-          files: parseWorkspaceFiles(body.files),
-        },
-      );
+      const input = {
+        threadId: requiredString(body.threadId, "threadId", 120),
+        history: parseHistory(body.history),
+        files: parseWorkspaceFiles(body.files),
+      };
+      const minimal = prefersMinimalResponse(request);
+      const workspace = minimal
+        ? store.publishWorkspaceSnapshot(
+            workspaceSnapshotMatch[1],
+            bearerToken(request),
+            input,
+            true,
+          )
+        : store.publishWorkspaceSnapshot(
+            workspaceSnapshotMatch[1],
+            bearerToken(request),
+            input,
+          );
       broadcast(workspaceSnapshotMatch[1], "workspace.updated", {
         selectedThreadId: workspace.selectedThreadId,
         syncedAt: workspace.syncedAt,
+        historyCount:
+          "historyCount" in workspace
+            ? workspace.historyCount
+            : workspace.history.length,
+        fileCount:
+          "fileCount" in workspace ? workspace.fileCount : workspace.files.length,
+        changedScopes: ["history", "files"],
       });
-      sendJson(response, 200, { workspace });
+      sendJson(
+        response,
+        200,
+        minimal ? { syncState: workspace } : { workspace },
+        minimal ? { "preference-applied": "return=minimal" } : {},
+      );
       return;
     }
 

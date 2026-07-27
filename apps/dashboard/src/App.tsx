@@ -78,6 +78,8 @@ import type {
   RealtimeEnvelope,
   RealtimeTicketResponse,
   Session,
+  WorkspaceHistoryResult,
+  WorkspaceOverview,
   WorkspaceSummary,
 } from "@codex-collab/protocol";
 import {
@@ -168,6 +170,10 @@ import {
   isWorkspaceRefreshAbort,
   shouldApplyWorkspaceResponse,
 } from "./app/workspace-refresh.js";
+import {
+  mergeWorkspaceHistory,
+  mergeWorkspaceOverview,
+} from "./app/workspace-state.js";
 const IdeWorkspace = lazy(() => import("./ide/IdeWorkspace.js"));
 
 const brand: BrandVariants = {
@@ -408,6 +414,7 @@ export function App() {
   const workspacePriorityFileReadsRef = useRef(0);
   const workspaceRefreshPendingRef = useRef(false);
   const workspaceRefreshResumeTimerRef = useRef<number | undefined>(undefined);
+  const workspaceHistoryRequestedAtRef = useRef(0);
   const workspaceSessionIdRef = useRef<string | null>(null);
   const ideOpenFileSequenceRef = useRef(0);
   const workspaceFileCacheRef = useRef(new WorkspaceFileCache());
@@ -429,6 +436,7 @@ export function App() {
     workspaceRefreshAbortRef.current = null;
     workspacePriorityFileReadsRef.current = 0;
     workspaceRefreshPendingRef.current = false;
+    workspaceHistoryRequestedAtRef.current = 0;
     if (workspaceRefreshResumeTimerRef.current !== undefined) {
       window.clearTimeout(workspaceRefreshResumeTimerRef.current);
       workspaceRefreshResumeTimerRef.current = undefined;
@@ -646,7 +654,7 @@ export function App() {
     };
   }, [credentialValidated, saveCredential, session, showError, token]);
 
-  const refreshWorkspace = useCallback(async () => {
+  const refreshWorkspace = useCallback(async (includeHistory = true) => {
     if (!session || !token || !approved) {
       return null;
     }
@@ -662,24 +670,50 @@ export function App() {
     const controller = new AbortController();
     workspaceRefreshAbortRef.current = controller;
     workspaceRefreshPendingRef.current = false;
-    const request = requestJson<{ workspace: WorkspaceSummary }>(
-      `/v1/sessions/${sessionId}/workspace`,
-      { headers: authHeaders(), signal: controller.signal },
-    )
-      .then((result) => {
-        if (
-          workspaceSessionIdRef.current === sessionId &&
-          shouldApplyWorkspaceResponse(
-            requestSequence,
-            workspaceAppliedSequenceRef.current,
-          )
-        ) {
-          workspaceAppliedSequenceRef.current = requestSequence;
-          setWorkspaceSummary(result.workspace);
-          setConversationLoading(workspaceNeedsConversationLoad(result.workspace));
-        }
-        return result.workspace;
-      })
+    const request = (async (): Promise<WorkspaceSummary | null> => {
+      const result = await requestJson<{ workspace: WorkspaceOverview }>(
+        `/v1/sessions/${sessionId}/workspace/overview`,
+        { headers: authHeaders(), signal: controller.signal },
+      );
+      const overview = result.workspace;
+      let overviewSummary: WorkspaceSummary = { ...overview, history: [] };
+      if (
+        workspaceSessionIdRef.current === sessionId &&
+        shouldApplyWorkspaceResponse(
+          requestSequence,
+          workspaceAppliedSequenceRef.current,
+        )
+      ) {
+        workspaceAppliedSequenceRef.current = requestSequence;
+        setWorkspaceSummary((current) => {
+          overviewSummary = mergeWorkspaceOverview(current, overview);
+          return overviewSummary;
+        });
+      }
+      if (!includeHistory || workspacePriorityFileReadsRef.current > 0) {
+        return overviewSummary;
+      }
+      const historyResult = await requestJson<{
+        workspaceHistory: WorkspaceHistoryResult;
+      }>(`/v1/sessions/${sessionId}/workspace/history`, {
+        headers: authHeaders(),
+        signal: controller.signal,
+      });
+      const workspaceHistory = historyResult.workspaceHistory;
+      if (
+        workspaceSessionIdRef.current === sessionId &&
+        workspaceAppliedSequenceRef.current === requestSequence &&
+        workspaceHistory.selectedThreadId === overview.selectedThreadId
+      ) {
+        const completeWorkspace = mergeWorkspaceHistory(overview, workspaceHistory);
+        if (!completeWorkspace) return overviewSummary;
+        setWorkspaceSummary(completeWorkspace);
+        setConversationLoading(workspaceNeedsConversationLoad(completeWorkspace));
+        workspaceHistoryRequestedAtRef.current = Date.now();
+        return completeWorkspace;
+      }
+      return overviewSummary;
+    })()
       .catch((caught: unknown) => {
         if (isWorkspaceRefreshAbort(caught)) {
           return null;
@@ -687,7 +721,9 @@ export function App() {
         throw caught;
       })
       .finally(() => {
-        if (workspaceRefreshAbortRef.current === controller) {
+        if (
+          workspaceRefreshAbortRef.current === controller
+        ) {
           workspaceRefreshAbortRef.current = null;
         }
         if (workspaceRefreshInFlightRef.current === request) {
@@ -1021,10 +1057,45 @@ export function App() {
         }
         if (envelope.type === "workspace.updated") {
           pushActivity("共享工作区已更新", "Codex 记录或文件发生变化", "success");
-          void refreshWorkspace().catch(showError);
+          const payload = envelope.payload as {
+            changedScopes?: string[];
+            codexRuntimeStatus?: WorkspaceSummary["codexRuntimeStatus"];
+          };
+          const scopes = payload.changedScopes ?? [];
+          if (
+            scopes.length === 1 &&
+            scopes[0] === "runtime" &&
+            payload.codexRuntimeStatus
+          ) {
+            setWorkspaceSummary((current) =>
+              current
+                ? { ...current, codexRuntimeStatus: payload.codexRuntimeStatus! }
+                : current,
+            );
+            if (payload.codexRuntimeStatus === "running") {
+              workspaceHistoryRequestedAtRef.current = 0;
+              return;
+            }
+          }
+          const historyChanged =
+            scopes.length === 0 ||
+            scopes.includes("history") ||
+            scopes.includes("selection");
+          const terminalRuntime =
+            scopes.includes("runtime") &&
+            payload.codexRuntimeStatus !== undefined &&
+            payload.codexRuntimeStatus !== "running";
+          const includeHistory =
+            terminalRuntime ||
+            (historyChanged &&
+              Date.now() - workspaceHistoryRequestedAtRef.current >= 15_000);
+          if (includeHistory) {
+            workspaceHistoryRequestedAtRef.current = Date.now();
+          }
+          void refreshWorkspace(includeHistory).catch(showError);
         }
         if ((envelope.type as string) === "file.operation.updated") {
-          void refreshWorkspace().catch(showError);
+          void refreshWorkspace(false).catch(showError);
         }
       });
       socket.addEventListener("close", (event) => {

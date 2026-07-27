@@ -5,6 +5,8 @@ import {
   type CodexRuntimeStatus,
   type CodexThreadCatalogEntry,
   type Message,
+  type WorkspaceSummary,
+  type WorkspaceSyncState,
 } from "@codex-collab/protocol";
 import {
   CodexAppServerClient,
@@ -32,6 +34,15 @@ export interface WorkspaceSyncResult {
   syncedAt: string | null;
   historyCount: number;
   fileCount: number;
+}
+
+function syncStateFromSummary(workspace: WorkspaceSummary): WorkspaceSyncState {
+  const { history, files, ...state } = workspace;
+  return {
+    ...state,
+    historyCount: history.length,
+    fileCount: files.length,
+  };
 }
 
 function catalogEntry(thread: CodexThreadSummary): CodexThreadCatalogEntry {
@@ -285,7 +296,7 @@ export class WorkspaceSyncService {
     const profile = await this.profiles.read();
     if (!profile || profile.role !== "owner") return null;
     const relay = new RelayClient(profile.relayUrl);
-    const workspace = await relay.getWorkspace(
+    const workspace = await relay.getWorkspaceSyncState(
       profile.sessionId,
       profile.memberToken,
     );
@@ -363,7 +374,10 @@ export class WorkspaceSyncService {
         return { selectedThreadId: null, syncedAt: null, historyCount: 0, fileCount: 0 };
       }
       const relay = new RelayClient(profile.relayUrl);
-      let workspace = await relay.getWorkspace(profile.sessionId, profile.memberToken);
+      let workspace = await relay.getWorkspaceSyncState(
+        profile.sessionId,
+        profile.memberToken,
+      );
       const { projectSandbox: sandbox, codexConfigSandbox } =
         await openWorkspaceSandboxes(profile.projectRoot, profile.codexConfigRoot);
       const localThreads = await this.codex.listThreads(sandbox.getRoot());
@@ -381,14 +395,16 @@ export class WorkspaceSyncService {
             ? null
             : localThreads.find((thread) => !observed.has(thread.id)) ?? null;
       if (!catalogsMatch(workspace.threads, catalog)) {
-        workspace = await relay.publishWorkspaceCatalog(
-          profile.sessionId,
-          profile.memberToken,
-          {
-            deviceLabel: hostname(),
-            rootLabel: basename(sandbox.getRoot()) || sandbox.getRoot(),
-            threads: catalog,
-          },
+        workspace = syncStateFromSummary(
+          await relay.publishWorkspaceCatalog(
+            profile.sessionId,
+            profile.memberToken,
+            {
+              deviceLabel: hostname(),
+              rootLabel: basename(sandbox.getRoot()) || sandbox.getRoot(),
+              threads: catalog,
+            },
+          ),
         );
       }
 
@@ -415,10 +431,12 @@ export class WorkspaceSyncService {
           }
         }
         if (!selectionDeferred) {
-          workspace = await relay.selectWorkspaceThread(
-            profile.sessionId,
-            profile.memberToken,
-            newestDiscoveredThread.id,
+          workspace = syncStateFromSummary(
+            await relay.selectWorkspaceThread(
+              profile.sessionId,
+              profile.memberToken,
+              newestDiscoveredThread.id,
+            ),
           );
           selectedLocalThread = newestDiscoveredThread;
           selectedRuntimeBusy = undefined;
@@ -443,8 +461,8 @@ export class WorkspaceSyncService {
         return {
           selectedThreadId: workspace.selectedThreadId,
           syncedAt: workspace.syncedAt,
-          historyCount: workspace.history.length,
-          fileCount: workspace.files.length,
+          historyCount: workspace.historyCount,
+          fileCount: workspace.fileCount,
         };
       }
 
@@ -501,17 +519,15 @@ export class WorkspaceSyncService {
         return {
           selectedThreadId: workspace.selectedThreadId,
           syncedAt: workspace.syncedAt,
-          historyCount: workspace.history.length,
-          fileCount: workspace.files.length,
+          historyCount: workspace.historyCount,
+          fileCount: workspace.fileCount,
         };
       }
 
-      const history = historyChanged
-        ? await this.codex.readThreadHistory(
-            workspace.selectedThreadId,
-            selectedLocalThread.path,
-          )
-        : workspace.history;
+      const history = await this.codex.readThreadHistory(
+        workspace.selectedThreadId,
+        selectedLocalThread.path,
+      );
       const historyDigest = workspaceHistoryDigest(history);
       const historyNeedsPublish =
         historyChanged &&
@@ -526,8 +542,8 @@ export class WorkspaceSyncService {
         return {
           selectedThreadId: workspace.selectedThreadId,
           syncedAt: workspace.syncedAt,
-          historyCount: workspace.history.length,
-          fileCount: workspace.files.length,
+          historyCount: workspace.historyCount,
+          fileCount: workspace.fileCount,
         };
       }
 
@@ -551,8 +567,8 @@ export class WorkspaceSyncService {
         return {
           selectedThreadId: imported.selectedThreadId,
           syncedAt: imported.syncedAt,
-          historyCount: imported.history.length,
-          fileCount: imported.files.length,
+          historyCount: imported.historyCount,
+          fileCount: imported.fileCount,
         };
       }
 
@@ -582,8 +598,8 @@ export class WorkspaceSyncService {
       return {
         selectedThreadId: imported.selectedThreadId,
         syncedAt: imported.syncedAt,
-        historyCount: imported.history.length,
-        fileCount: imported.files.length,
+        historyCount: imported.historyCount,
+        fileCount: imported.fileCount,
       };
     } finally {
       this.active = false;

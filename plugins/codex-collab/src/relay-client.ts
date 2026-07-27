@@ -20,12 +20,27 @@ import type {
   WorkspaceFileOperationClaim,
   WorkspaceFileOperationConfirmation,
   WorkspaceSummary,
+  WorkspaceSyncState,
 } from "@codex-collab/protocol";
 
 interface RelayErrorBody {
   error?: {
     code?: string;
     message?: string;
+  };
+}
+
+type WorkspaceSyncResponse =
+  | { syncState: WorkspaceSyncState; workspace?: never }
+  | { workspace: WorkspaceSummary; syncState?: never };
+
+function toWorkspaceSyncState(response: WorkspaceSyncResponse): WorkspaceSyncState {
+  if (response.syncState) return response.syncState;
+  const { history, files, ...workspace } = response.workspace;
+  return {
+    ...workspace,
+    historyCount: history.length,
+    fileCount: files.length,
   };
 }
 
@@ -250,6 +265,24 @@ export class RelayClient {
     return result.workspace;
   }
 
+  async getWorkspaceSyncState(
+    sessionId: string,
+    memberToken: string,
+  ): Promise<WorkspaceSyncState> {
+    try {
+      const result = await this.request<WorkspaceSyncResponse>(
+        `/v1/sessions/${encodeURIComponent(sessionId)}/host/workspace/sync-state`,
+        { headers: { authorization: `Bearer ${memberToken}` } },
+      );
+      return toWorkspaceSyncState(result);
+    } catch (caught) {
+      if (!(caught instanceof RelayRequestError) || caught.status !== 404) throw caught;
+      return toWorkspaceSyncState({
+        workspace: await this.getWorkspace(sessionId, memberToken),
+      });
+    }
+  }
+
   async createWorkspaceFileOperation(
     sessionId: string,
     memberToken: string,
@@ -408,16 +441,19 @@ export class RelayClient {
       history: CodexRecordEntry[];
       files: WorkspaceFileContent[];
     },
-  ): Promise<WorkspaceSummary> {
-    const result = await this.request<{ workspace: WorkspaceSummary }>(
+  ): Promise<WorkspaceSyncState> {
+    const result = await this.request<WorkspaceSyncResponse>(
       `/v1/sessions/${encodeURIComponent(sessionId)}/workspace/snapshot`,
       {
         method: "PUT",
-        headers: { authorization: `Bearer ${memberToken}` },
+        headers: {
+          authorization: `Bearer ${memberToken}`,
+          prefer: "return=minimal",
+        },
         body: JSON.stringify(input),
       },
     );
-    return result.workspace;
+    return toWorkspaceSyncState(result);
   }
 
   async publishWorkspaceHistory(
@@ -427,32 +463,38 @@ export class RelayClient {
       threadId: string;
       history: CodexRecordEntry[];
     },
-  ): Promise<WorkspaceSummary> {
-    const result = await this.request<{ workspace: WorkspaceSummary }>(
+  ): Promise<WorkspaceSyncState> {
+    const result = await this.request<WorkspaceSyncResponse>(
       `/v1/sessions/${encodeURIComponent(sessionId)}/workspace/history`,
       {
         method: "PUT",
-        headers: { authorization: `Bearer ${memberToken}` },
+        headers: {
+          authorization: `Bearer ${memberToken}`,
+          prefer: "return=minimal",
+        },
         body: JSON.stringify(input),
       },
     );
-    return result.workspace;
+    return toWorkspaceSyncState(result);
   }
 
   async publishCodexRuntimeStatus(
     sessionId: string,
     memberToken: string,
     status: CodexRuntimeStatus,
-  ): Promise<WorkspaceSummary> {
-    const result = await this.request<{ workspace: WorkspaceSummary }>(
+  ): Promise<WorkspaceSyncState> {
+    const result = await this.request<WorkspaceSyncResponse>(
       `/v1/sessions/${encodeURIComponent(sessionId)}/workspace/runtime`,
       {
         method: "PUT",
-        headers: { authorization: `Bearer ${memberToken}` },
+        headers: {
+          authorization: `Bearer ${memberToken}`,
+          prefer: "return=minimal",
+        },
         body: JSON.stringify({ status }),
       },
     );
-    return result.workspace;
+    return toWorkspaceSyncState(result);
   }
 
   private async request<T = Record<string, unknown>>(

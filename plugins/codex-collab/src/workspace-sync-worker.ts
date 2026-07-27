@@ -83,10 +83,10 @@ let realtimeConnecting = false;
 let realtimeConnectionEpoch = 0;
 let blockedRealtimeProfileKey: string | null = null;
 
-async function runSync(): Promise<void> {
+async function runSync(queueIfRunning = false): Promise<void> {
   if (stopping) return;
   if (syncRunning) {
-    syncRequested = true;
+    if (queueIfRunning) syncRequested = true;
     return;
   }
   syncRunning = true;
@@ -116,7 +116,7 @@ async function forwardRealtimeCommand(): Promise<void> {
       error instanceof Error ? error.message : String(error),
     );
   } finally {
-    void runSync();
+    void runSync(true);
   }
 }
 
@@ -239,7 +239,7 @@ async function ensureRealtimeConnection(): Promise<void> {
         envelope.sessionId === profile.sessionId &&
         envelope.type === "file.operation.updated"
       ) {
-        void runSync();
+        void runSync(true);
       }
     } catch {
       // Ignore malformed realtime payloads and retain polling as fallback.

@@ -1906,26 +1906,34 @@ describe("SessionStore", () => {
         "running",
       ).workspace.codexRuntimeStatus,
     ).toBe("running");
-    store.publishWorkspaceSnapshot(created.session.id, host.memberToken, {
-      threadId: "thread-1",
-      history: [
-        {
-          id: "entry-1",
-          role: "user",
-          text: "Run the full test suite",
-          createdAt: "2026-07-25T00:00:00.000Z",
-        },
-      ],
-      files: [
-        {
-          path: "README.md",
-          content: "# Codex Collab",
-          size: 14,
-          modifiedAt: "2026-07-25T00:00:00.000Z",
-          sha256: createHash("sha256").update("# Codex Collab").digest("hex"),
-        },
-      ],
-    });
+    const minimalSnapshot = store.publishWorkspaceSnapshot(
+      created.session.id,
+      host.memberToken,
+      {
+        threadId: "thread-1",
+        history: [
+          {
+            id: "entry-1",
+            role: "user",
+            text: "Run the full test suite",
+            createdAt: "2026-07-25T00:00:00.000Z",
+          },
+        ],
+        files: [
+          {
+            path: "README.md",
+            content: "# Codex Collab",
+            size: 14,
+            modifiedAt: "2026-07-25T00:00:00.000Z",
+            sha256: createHash("sha256").update("# Codex Collab").digest("hex"),
+          },
+        ],
+      },
+      true,
+    );
+    expect(minimalSnapshot).toMatchObject({ historyCount: 1, fileCount: 1 });
+    expect(minimalSnapshot).not.toHaveProperty("history");
+    expect(minimalSnapshot).not.toHaveProperty("files");
 
     const rowBefore = store.db
       .prepare(
@@ -1965,6 +1973,33 @@ describe("SessionStore", () => {
     expect(workspace.history[0]?.text).toBe("Run the full test suite");
     expect(workspace.files[0]?.path).toBe("README.md");
     expect(workspace.threads).toEqual([]);
+    const ownerOverview = store.getWorkspaceOverview(
+      created.session.id,
+      created.memberToken,
+    );
+    expect(ownerOverview.historyCount).toBe(1);
+    expect(ownerOverview.files[0]).not.toHaveProperty("content");
+    expect(ownerOverview.threads).toHaveLength(1);
+    expect(ownerOverview).not.toHaveProperty("history");
+    const guestOverview = store.getWorkspaceOverview(
+      created.session.id,
+      guest.memberToken,
+    );
+    expect(guestOverview.threads).toEqual([]);
+    expect(store.getWorkspaceHistory(created.session.id, guest.memberToken)).toMatchObject({
+      selectedThreadId: "thread-1",
+      history: [{ text: "Run the full test suite" }],
+    });
+    const hostSyncState = store.getWorkspaceSyncState(
+      created.session.id,
+      host.memberToken,
+    );
+    expect(hostSyncState).toMatchObject({ historyCount: 1, fileCount: 1 });
+    expect(hostSyncState).not.toHaveProperty("history");
+    expect(hostSyncState).not.toHaveProperty("files");
+    expect(() =>
+      store.getWorkspaceSyncState(created.session.id, created.memberToken),
+    ).toThrowError(/host|token/i);
     expect(
       store.getWorkspaceFile(created.session.id, guest.memberToken, "README.md").content,
     ).toBe("# Codex Collab");

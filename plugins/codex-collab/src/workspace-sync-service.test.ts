@@ -1,6 +1,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { WorkspaceSummary, WorkspaceSyncState } from "@codex-collab/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { LocalProfile } from "./local-profile.js";
 import { RelayClient } from "./relay-client.js";
@@ -38,6 +39,15 @@ const ownerPrompt = {
   completedAt: null,
   createdAt: "2026-07-25T00:00:00.000Z",
 };
+
+function syncState(workspace: WorkspaceSummary): WorkspaceSyncState {
+  const { history, files, ...state } = workspace;
+  return {
+    ...state,
+    historyCount: history.length,
+    fileCount: files.length,
+  };
+}
 
 describe("Codex prompt forwarding", () => {
   it("records a prompt only after the app-server accepts it", async () => {
@@ -521,30 +531,30 @@ describe("workspace live history sync", () => {
     const listMessages = vi
       .spyOn(RelayClient.prototype, "listMessages")
       .mockResolvedValue([]);
-    vi.spyOn(RelayClient.prototype, "getWorkspace")
-      .mockResolvedValueOnce(workspace)
-      .mockResolvedValue({
+    vi.spyOn(RelayClient.prototype, "getWorkspaceSyncState")
+      .mockResolvedValueOnce(syncState(workspace))
+      .mockResolvedValue(syncState({
         ...workspace,
         history: liveHistory,
         syncedAt: "2026-07-25T00:00:02.000Z",
-      });
+      }));
     const publishRuntimeStatus = vi
       .spyOn(RelayClient.prototype, "publishCodexRuntimeStatus")
-      .mockResolvedValue(workspace);
+      .mockResolvedValue(syncState(workspace));
     const publishHistory = vi
       .spyOn(RelayClient.prototype, "publishWorkspaceHistory")
-      .mockResolvedValue({
+      .mockResolvedValue(syncState({
         ...workspace,
         history: liveHistory,
         syncedAt: "2026-07-25T00:00:02.000Z",
-      });
+      }));
     const publishSnapshot = vi
       .spyOn(RelayClient.prototype, "publishWorkspaceSnapshot")
-      .mockResolvedValue({
+      .mockResolvedValue(syncState({
         ...workspace,
         history: liveHistory,
         syncedAt: "2026-07-25T00:00:03.000Z",
-      });
+      }));
     const profiles = {
       read: vi.fn().mockResolvedValue({ ...profile, projectRoot: directory }),
       update: vi.fn().mockResolvedValue(profile),
@@ -642,7 +652,9 @@ describe("workspace live history sync", () => {
       codexRuntimeStatus: "unavailable" as const,
       syncedAt: null,
     };
-    vi.spyOn(RelayClient.prototype, "getWorkspace").mockResolvedValue(workspace);
+    vi.spyOn(RelayClient.prototype, "getWorkspaceSyncState").mockResolvedValue(
+      syncState(workspace),
+    );
     vi.spyOn(RelayClient.prototype, "publishWorkspaceCatalog").mockResolvedValue({
       ...workspace,
       threads: threads.map(({ path: _path, ...thread }) => thread),
@@ -703,7 +715,9 @@ describe("workspace live history sync", () => {
       codexRuntimeStatus: "unavailable" as const,
       syncedAt: null,
     };
-    vi.spyOn(RelayClient.prototype, "getWorkspace").mockResolvedValue(workspace);
+    vi.spyOn(RelayClient.prototype, "getWorkspaceSyncState").mockResolvedValue(
+      syncState(workspace),
+    );
     const publishCatalog = vi.spyOn(RelayClient.prototype, "publishWorkspaceCatalog");
     const update = vi.fn().mockResolvedValue(profile);
     const profiles = {
@@ -773,19 +787,21 @@ describe("workspace live history sync", () => {
         createdAt: null,
       },
     ];
-    vi.spyOn(RelayClient.prototype, "getWorkspace").mockResolvedValue(initialWorkspace);
+    vi.spyOn(RelayClient.prototype, "getWorkspaceSyncState").mockResolvedValue(
+      syncState(initialWorkspace),
+    );
     const selectThread = vi
       .spyOn(RelayClient.prototype, "selectWorkspaceThread")
       .mockResolvedValue(selectedWorkspace);
     vi.spyOn(RelayClient.prototype, "listMessages").mockResolvedValue([]);
     vi.spyOn(RelayClient.prototype, "publishCodexRuntimeStatus").mockResolvedValue(
-      selectedWorkspace,
+      syncState(selectedWorkspace),
     );
-    vi.spyOn(RelayClient.prototype, "publishWorkspaceSnapshot").mockResolvedValue({
+    vi.spyOn(RelayClient.prototype, "publishWorkspaceSnapshot").mockResolvedValue(syncState({
       ...selectedWorkspace,
       history,
       syncedAt: "2026-07-27T00:00:00.000Z",
-    });
+    }));
     const update = vi.fn().mockResolvedValue(profile);
     const profiles = {
       read: vi.fn().mockResolvedValue({
@@ -892,7 +908,9 @@ describe("workspace live history sync", () => {
       selectedThread: catalogWorkspace.threads[0]!,
       syncedAt: null,
     };
-    vi.spyOn(RelayClient.prototype, "getWorkspace").mockResolvedValue(initialWorkspace);
+    vi.spyOn(RelayClient.prototype, "getWorkspaceSyncState").mockResolvedValue(
+      syncState(initialWorkspace),
+    );
     const publishCatalog = vi
       .spyOn(RelayClient.prototype, "publishWorkspaceCatalog")
       .mockResolvedValue(catalogWorkspace);
@@ -901,14 +919,14 @@ describe("workspace live history sync", () => {
       .mockResolvedValue(selectedWorkspace);
     vi.spyOn(RelayClient.prototype, "listMessages").mockResolvedValue([]);
     vi.spyOn(RelayClient.prototype, "publishCodexRuntimeStatus")
-      .mockResolvedValue(selectedWorkspace);
+      .mockResolvedValue(syncState(selectedWorkspace));
     const publishSnapshot = vi
       .spyOn(RelayClient.prototype, "publishWorkspaceSnapshot")
-      .mockResolvedValue({
+      .mockResolvedValue(syncState({
         ...selectedWorkspace,
         history: newHistory,
         syncedAt: "2026-07-26T00:00:03.000Z",
-      });
+      }));
     const update = vi.fn().mockResolvedValue(profile);
     const profiles = {
       read: vi.fn().mockResolvedValue({

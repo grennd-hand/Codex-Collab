@@ -27,7 +27,10 @@ import {
   type WorkspaceFileOperationConfirmation,
   type WorkspaceFileOperationKind,
   type WorkspaceFileOperationStatus,
+  type WorkspaceHistoryResult,
+  type WorkspaceOverview,
   type WorkspaceSummary,
+  type WorkspaceSyncState,
   codexConfigRelativePath,
   containsLikelySecret,
   isPublishableCodexConfigPath,
@@ -108,6 +111,7 @@ interface WorkspaceStateRow {
   catalog_json: string;
   selected_thread_id: string | null;
   history_json: string;
+  history_count: number;
   codex_runtime_status: CodexRuntimeStatus;
   synced_at: string | null;
 }
@@ -464,6 +468,7 @@ export class SessionStore {
         catalog_json TEXT NOT NULL DEFAULT '[]',
         selected_thread_id TEXT,
         history_json TEXT NOT NULL DEFAULT '[]',
+        history_count INTEGER NOT NULL DEFAULT 0,
         codex_runtime_status TEXT NOT NULL DEFAULT 'unavailable'
           CHECK (codex_runtime_status IN ('unavailable', 'idle', 'running')),
         synced_at TEXT
@@ -556,6 +561,14 @@ export class SessionStore {
     );
     this.ensureColumn("workspace_state", "host_token_id", "TEXT");
     this.ensureColumn("workspace_state", "host_generation", "TEXT");
+    this.ensureColumn(
+      "workspace_state",
+      "history_count",
+      "INTEGER NOT NULL DEFAULT 0",
+    );
+    this.db.exec(
+      "UPDATE workspace_state SET history_count = json_array_length(history_json)",
+    );
     this.ensureColumn("workspace_file_operations", "host_generation", "TEXT");
     this.ensureColumn("workspace_file_operations", "lease_id", "TEXT");
     this.ensureColumn("workspace_file_operations", "lease_expires_at", "TEXT");
@@ -601,6 +614,7 @@ export class SessionStore {
           UPDATE workspace_state
           SET host_token_id = NULL, host_generation = NULL,
               catalog_json = '[]', selected_thread_id = NULL, history_json = '[]',
+              history_count = 0,
               codex_runtime_status = 'unavailable', synced_at = NULL;
         `);
         this.db.exec("COMMIT");
@@ -1897,6 +1911,7 @@ export class SessionStore {
             catalog_json = '[]',
             selected_thread_id = NULL,
             history_json = '[]',
+            history_count = 0,
             codex_runtime_status = 'unavailable',
             synced_at = NULL
         `)
@@ -1933,6 +1948,7 @@ export class SessionStore {
       input.threads.some((thread) => thread.id === current.selected_thread_id);
     const selectedThreadId = selectedStillExists ? current.selected_thread_id : null;
     const historyJson = selectedStillExists ? current?.history_json ?? "[]" : "[]";
+    const historyCount = selectedStillExists ? current?.history_count ?? 0 : 0;
     const codexRuntimeStatus = selectedStillExists
       ? current?.codex_runtime_status ?? "unavailable"
       : "unavailable";
@@ -1944,8 +1960,9 @@ export class SessionStore {
         .prepare(`
           INSERT INTO workspace_state
             (session_id, host_device_label, root_label, host_token_id, host_generation,
-             catalog_json, selected_thread_id, history_json, codex_runtime_status, synced_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             catalog_json, selected_thread_id, history_json, history_count,
+             codex_runtime_status, synced_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(session_id) DO UPDATE SET
             host_device_label = excluded.host_device_label,
             root_label = excluded.root_label,
@@ -1954,6 +1971,7 @@ export class SessionStore {
             catalog_json = excluded.catalog_json,
             selected_thread_id = excluded.selected_thread_id,
             history_json = excluded.history_json,
+            history_count = excluded.history_count,
             codex_runtime_status = excluded.codex_runtime_status,
             synced_at = excluded.synced_at
         `)
@@ -1966,6 +1984,7 @@ export class SessionStore {
           JSON.stringify(input.threads),
           selectedThreadId,
           historyJson,
+          historyCount,
           codexRuntimeStatus,
           syncedAt,
         );
@@ -2016,7 +2035,7 @@ export class SessionStore {
       this.db
         .prepare(`
           UPDATE workspace_state
-          SET selected_thread_id = ?, history_json = '[]',
+          SET selected_thread_id = ?, history_json = '[]', history_count = 0,
               codex_runtime_status = 'unavailable', synced_at = NULL
           WHERE session_id = ?
         `)
@@ -2038,7 +2057,27 @@ export class SessionStore {
       history: CodexRecordEntry[];
       files: WorkspaceFileContent[];
     },
-  ): WorkspaceSummary {
+  ): WorkspaceSummary;
+  publishWorkspaceSnapshot(
+    sessionId: string,
+    memberToken: string,
+    input: {
+      threadId: string;
+      history: CodexRecordEntry[];
+      files: WorkspaceFileContent[];
+    },
+    returnMinimal: true,
+  ): WorkspaceSyncState;
+  publishWorkspaceSnapshot(
+    sessionId: string,
+    memberToken: string,
+    input: {
+      threadId: string;
+      history: CodexRecordEntry[];
+      files: WorkspaceFileContent[];
+    },
+    returnMinimal = false,
+  ): WorkspaceSummary | WorkspaceSyncState {
     this.requireCurrentHost(sessionId, memberToken);
     const state = this.workspaceState(sessionId);
     if (!state?.selected_thread_id || state.selected_thread_id !== input.threadId) {
@@ -2120,16 +2159,18 @@ export class SessionStore {
       }
       this.db
         .prepare(`
-          UPDATE workspace_state SET history_json = ?, synced_at = ?
+          UPDATE workspace_state SET history_json = ?, history_count = ?, synced_at = ?
           WHERE session_id = ?
         `)
-        .run(JSON.stringify(input.history), syncedAt, sessionId);
+        .run(JSON.stringify(input.history), input.history.length, syncedAt, sessionId);
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");
       throw error;
     }
-    return this.getWorkspace(sessionId, memberToken);
+    return returnMinimal
+      ? this.getWorkspaceSyncState(sessionId, memberToken)
+      : this.getWorkspace(sessionId, memberToken);
   }
 
   publishWorkspaceHistory(
@@ -2139,7 +2180,25 @@ export class SessionStore {
       threadId: string;
       history: CodexRecordEntry[];
     },
-  ): WorkspaceSummary {
+  ): WorkspaceSummary;
+  publishWorkspaceHistory(
+    sessionId: string,
+    memberToken: string,
+    input: {
+      threadId: string;
+      history: CodexRecordEntry[];
+    },
+    returnMinimal: true,
+  ): WorkspaceSyncState;
+  publishWorkspaceHistory(
+    sessionId: string,
+    memberToken: string,
+    input: {
+      threadId: string;
+      history: CodexRecordEntry[];
+    },
+    returnMinimal = false,
+  ): WorkspaceSummary | WorkspaceSyncState {
     this.requireCurrentHost(sessionId, memberToken);
     const state = this.workspaceState(sessionId);
     if (!state?.selected_thread_id || state.selected_thread_id !== input.threadId) {
@@ -2152,18 +2211,35 @@ export class SessionStore {
     const syncedAt = now();
     this.db
       .prepare(`
-        UPDATE workspace_state SET history_json = ?, synced_at = ?
+        UPDATE workspace_state SET history_json = ?, history_count = ?, synced_at = ?
         WHERE session_id = ?
       `)
-      .run(JSON.stringify(input.history), syncedAt, sessionId);
-    return this.getWorkspace(sessionId, memberToken);
+      .run(JSON.stringify(input.history), input.history.length, syncedAt, sessionId);
+    return returnMinimal
+      ? this.getWorkspaceSyncState(sessionId, memberToken)
+      : this.getWorkspace(sessionId, memberToken);
   }
 
   publishCodexRuntimeStatus(
     sessionId: string,
     memberToken: string,
     status: CodexRuntimeStatus,
-  ): { workspace: WorkspaceSummary; changed: boolean } {
+  ): { workspace: WorkspaceSummary; changed: boolean };
+  publishCodexRuntimeStatus(
+    sessionId: string,
+    memberToken: string,
+    status: CodexRuntimeStatus,
+    returnMinimal: true,
+  ): { workspace: WorkspaceSyncState; changed: boolean };
+  publishCodexRuntimeStatus(
+    sessionId: string,
+    memberToken: string,
+    status: CodexRuntimeStatus,
+    returnMinimal = false,
+  ): {
+    workspace: WorkspaceSummary | WorkspaceSyncState;
+    changed: boolean;
+  } {
     this.requireCurrentHost(sessionId, memberToken);
     const state = this.workspaceState(sessionId);
     if (!state) {
@@ -2179,13 +2255,59 @@ export class SessionStore {
         .run(status, sessionId);
     }
     return {
-      workspace: this.getWorkspace(sessionId, memberToken),
+      workspace: returnMinimal
+        ? this.getWorkspaceSyncState(sessionId, memberToken)
+        : this.getWorkspace(sessionId, memberToken),
       changed,
     };
   }
 
+  getWorkspaceOverview(sessionId: string, memberToken: string): WorkspaceOverview {
+    const member = this.requireBrowserMember(sessionId, memberToken, true);
+    return this.workspaceOverview(sessionId, member.role === "owner");
+  }
+
+  getWorkspaceHistory(
+    sessionId: string,
+    memberToken: string,
+  ): WorkspaceHistoryResult {
+    this.requireBrowserMember(sessionId, memberToken, true);
+    const state = this.workspaceState(sessionId);
+    if (!state?.host_token_id || !state.host_generation) {
+      return { selectedThreadId: null, history: [], syncedAt: null };
+    }
+    return {
+      selectedThreadId: state.selected_thread_id,
+      history: this.parseHistory(state.history_json),
+      syncedAt: state.synced_at,
+    };
+  }
+
+  getWorkspaceSyncState(
+    sessionId: string,
+    memberToken: string,
+  ): WorkspaceSyncState {
+    this.requireCurrentHost(sessionId, memberToken);
+    const overview = this.workspaceOverview(sessionId, true);
+    const { files, ...state } = overview;
+    return { ...state, fileCount: files.length };
+  }
+
   getWorkspace(sessionId: string, memberToken: string): WorkspaceSummary {
     const member = this.requireMember(sessionId, memberToken, true);
+    const overview = this.workspaceOverview(sessionId, member.role === "owner");
+    const state = this.workspaceState(sessionId);
+    return {
+      ...overview,
+      history:
+        overview.hostConnected && state ? this.parseHistory(state.history_json) : [],
+    };
+  }
+
+  private workspaceOverview(
+    sessionId: string,
+    includeThreadCatalog: boolean,
+  ): WorkspaceOverview {
     const state = this.workspaceState(sessionId);
     if (!state?.host_token_id || !state.host_generation) {
       return {
@@ -2195,7 +2317,7 @@ export class SessionStore {
         threads: [],
         selectedThreadId: null,
         selectedThread: null,
-        history: [],
+        historyCount: 0,
         files: [],
         codexRuntimeStatus: "unavailable",
         syncedAt: null,
@@ -2214,10 +2336,10 @@ export class SessionStore {
       hostConnected: true,
       hostDeviceLabel: state.host_device_label,
       rootLabel: state.root_label,
-      threads: member.role === "owner" ? fullCatalog : [],
+      threads: includeThreadCatalog ? fullCatalog : [],
       selectedThreadId: state.selected_thread_id,
       selectedThread,
-      history: this.parseHistory(state.history_json),
+      historyCount: state.history_count,
       files: rows.map((row) => this.toWorkspaceFile(row)),
       codexRuntimeStatus: state.codex_runtime_status,
       syncedAt: state.synced_at,
@@ -2709,6 +2831,7 @@ export class SessionStore {
         );
         UPDATE workspace_state
         SET catalog_json = '[]', selected_thread_id = NULL, history_json = '[]',
+            history_count = 0,
             codex_runtime_status = 'unavailable', synced_at = NULL
         WHERE host_token_id IS NULL OR host_generation IS NULL;
       `);
@@ -3432,7 +3555,8 @@ export class SessionStore {
     return this.db
       .prepare(`
         SELECT session_id, host_device_label, root_label, catalog_json, selected_thread_id,
-               host_token_id, host_generation, history_json, codex_runtime_status, synced_at
+               host_token_id, host_generation, history_json, history_count,
+               codex_runtime_status, synced_at
         FROM workspace_state WHERE session_id = ?
       `)
       .get(sessionId) as WorkspaceStateRow | undefined;
