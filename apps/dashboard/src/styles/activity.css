@@ -1,0 +1,73 @@
+.activity-list {
+  display: grid;
+}
+
+.activity-item {
+  min-height: 76px;
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: 8px;
+}
+
+.activity-line {
+  position: relative;
+}
+
+.activity-line::after {
+  position: absolute;
+  top: 18px;
+  bottom: 0;
+  left: 5px;
+  width: 1px;
+  background: var(--colorNeutralStroke2);
+  content: "";
+}
+
+.activity-item:last-child .activity-line::after {
+  display: none;
+}
+
+.activity-line span {
+  position: absolute;
+  top: 6px;
+  left: 1px;
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--colorNeutralBackground2);
+  border-radius: 50%;
+  background: var(--colorBrandBackground);
+  box-shadow: 0 0 0 1px var(--colorBrandBackground);
+}
+
+.activity-item.success .activity-line span {
+  background: var(--colorStatusSuccessForeground1);
+  box-shadow: 0 0 0 1px var(--colorStatusSuccessForeground1);
+}
+
+.activity-item.warning .activity-line span {
+  background: var(--colorStatusWarningForeground1);
+  box-shadow: 0 0 0 1px var(--colorStatusWarningForeground1);
+}
+
+.activity-item.danger .activity-line span {
+  background: var(--colorStatusDangerForeground1);
+  box-shadow: 0 0 0 1px var(--colorStatusDangerForeground1);
+}
+
+.activity-item strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.activity-item p {
+  margin: 3px 0 2px;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.activity-item time {
+  font-size: 11px;
+}
+

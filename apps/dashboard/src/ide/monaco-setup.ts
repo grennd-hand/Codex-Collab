@@ -6,6 +6,10 @@ import htmlWorkerUrl from "monaco-editor/esm/vs/language/html/html.worker.js?url
 import jsonWorkerUrl from "monaco-editor/esm/vs/language/json/json.worker.js?url";
 import typeScriptWorkerUrl from "monaco-editor/esm/vs/language/typescript/ts.worker.js?url";
 import { registerProjectLanguageSupport } from "./monaco-language-support.js";
+import {
+  CODEX_COLLAB_DARK_EDITOR_COLORS,
+  CODEX_COLLAB_LIGHT_EDITOR_COLORS,
+} from "./monaco-theme.js";
 
 type MonacoWorkerEnvironment = typeof globalThis & {
   MonacoEnvironment?: {
@@ -44,11 +48,7 @@ monaco.editor.defineTheme("codex-collab-light", {
     { token: "tag", foreground: "3158A6" },
     { token: "attribute.name", foreground: "76518A" },
   ],
-  colors: {
-    "editor.lineHighlightBackground": "F4F7FB",
-    "editorIndentGuide.background1": "DDE3EA",
-    "editorIndentGuide.activeBackground1": "8AA4C6",
-  },
+  colors: CODEX_COLLAB_LIGHT_EDITOR_COLORS,
 });
 
 monaco.editor.defineTheme("codex-collab-dark", {
@@ -63,9 +63,5 @@ monaco.editor.defineTheme("codex-collab-dark", {
     { token: "tag", foreground: "82AAFF" },
     { token: "attribute.name", foreground: "C792EA" },
   ],
-  colors: {
-    "editor.lineHighlightBackground": "202938",
-    "editorIndentGuide.background1": "2D3748",
-    "editorIndentGuide.activeBackground1": "58739B",
-  },
+  colors: CODEX_COLLAB_DARK_EDITOR_COLORS,
 });

@@ -1,0 +1,301 @@
+:root {
+  font-family: "Segoe UI Variable", "Segoe UI", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  min-width: 320px;
+  background: #f5f7fb;
+}
+
+html[data-theme="dark"] body {
+  background: #111318;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+.app-provider {
+  min-height: 100dvh;
+  padding: 16px 0;
+  color: var(--colorNeutralForeground1);
+  background:
+    linear-gradient(var(--colorNeutralStroke3) 1px, transparent 1px) 0 0 / 32px 32px,
+    linear-gradient(90deg, var(--colorNeutralStroke3) 1px, transparent 1px) 0 0 / 32px 32px,
+    var(--colorNeutralBackground2);
+}
+
+.app-frame {
+  width: min(1540px, calc(100% - 32px));
+  min-height: calc(100dvh - 32px);
+  margin: 0 auto;
+  overflow: hidden;
+  border: 1px solid var(--colorNeutralStroke2);
+  border-radius: 16px;
+  background: var(--colorNeutralBackground1);
+  box-shadow: var(--shadow16);
+}
+
+.topbar {
+  min-height: 72px;
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  border-bottom: 1px solid var(--colorNeutralStroke2);
+}
+
+.brand-lockup,
+.topbar-actions,
+.composer-actions {
+  display: flex;
+  align-items: center;
+}
+
+.brand-lockup {
+  min-width: 0;
+  gap: 12px;
+}
+
+.brand-mark {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  color: var(--colorNeutralForegroundOnBrand);
+  background: var(--colorBrandBackground);
+  font-size: 22px;
+}
+
+.brand-lockup h1,
+.panel-heading h2,
+.chat-heading h2,
+.message-empty h3 {
+  margin: 0;
+  font-family: "Segoe UI Variable Display", "Segoe UI Variable", "Segoe UI", sans-serif;
+}
+
+.brand-lockup h1 {
+  font-size: 20px;
+  font-weight: 650;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.product-context {
+  margin-bottom: 2px;
+  color: var(--colorNeutralForeground3);
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.topbar-actions {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.room-switch {
+  min-width: 124px;
+  flex: 0 0 auto;
+}
+
+.stable-icon-button {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  flex: 0 0 32px;
+  padding: 0;
+  transition: none;
+}
+
+.stable-icon-button::after {
+  transition: none;
+}
+
+.account-button {
+  max-width: 150px;
+}
+
+.account-button-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbar-thread-control {
+  min-width: 240px;
+  max-width: 460px;
+  flex: 1 1 360px;
+  margin-left: auto;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.topbar-thread-control > svg {
+  color: var(--colorBrandForeground1);
+  font-size: 20px;
+}
+
+.topbar-thread-control > div {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.topbar-thread-control label {
+  color: var(--colorNeutralForeground3);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.topbar-thread-control .fui-Select,
+.topbar-thread-control select {
+  min-width: 0;
+  width: 100%;
+}
+
+.connection-badge {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.error-region {
+  padding: 12px 16px 0;
+  background: var(--colorNeutralBackground1);
+}
+
+.workspace {
+  height: calc(100dvh - 106px);
+  min-height: 520px;
+  overflow: hidden;
+}
+
+.workspace > .workspace-layout-split,
+.workspace .workspace-layout-split {
+  width: 100%;
+  height: 100%;
+}
+
+.workspace-file-dock {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-right: 1px solid var(--colorNeutralStroke2);
+  background: var(--colorNeutralBackground2);
+}
+
+.workspace-file-dock-loading {
+  height: 100%;
+  padding: 58px 14px 14px;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+
+.workspace-file-dock-loading .fui-Skeleton {
+  display: grid;
+  gap: 12px;
+}
+
+.workspace-with-files .activity-panel,
+.workspace-editor-expanded .people-panel,
+.workspace-editor-expanded .activity-panel {
+  display: none;
+}
+
+.people-panel,
+.activity-panel,
+.chat-panel {
+  min-width: 0;
+}
+
+.people-panel,
+.activity-panel {
+  padding: 20px;
+  overflow-y: auto;
+  background: var(--colorNeutralBackground2);
+}
+
+.people-panel {
+  padding: 0;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  border-right: 1px solid var(--colorNeutralStroke2);
+}
+
+.activity-panel {
+  border-left: 1px solid var(--colorNeutralStroke2);
+}
+
+.panel-heading,
+.chat-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.panel-heading {
+  min-height: 44px;
+  margin-bottom: 14px;
+}
+
+.panel-heading h2,
+.peer-chat-heading h2 {
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.panel-heading p,
+.panel-heading span,
+.member-copy span,
+.handoff-rail span,
+.handoff-rail p,
+.activity-item p,
+.activity-item time,
+.dialog-intro {
+  color: var(--colorNeutralForeground3);
+}
+
+.panel-heading p,
+.panel-heading span {
+  margin: 3px 0 0;
+  font-size: 12px;
+}
+

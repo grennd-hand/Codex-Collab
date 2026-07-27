@@ -1,0 +1,458 @@
+.execution-process {
+  width: min(94%, 760px);
+  margin: 2px auto 18px;
+  overflow: hidden;
+  border: 1px solid var(--colorNeutralStroke2);
+  border-radius: 10px;
+  background: var(--colorNeutralBackground2);
+  box-shadow: var(--shadow2);
+}
+
+.execution-process.running {
+  border-color: var(--colorBrandStroke2);
+}
+
+.execution-process.failed {
+  border-color: var(--colorStatusDangerBorder1);
+}
+
+.execution-process.completed.collapsed {
+  margin-top: 0;
+  margin-bottom: 6px;
+  border: 0;
+  border-bottom: 1px solid var(--colorNeutralStroke2);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.execution-process.completed.collapsed .execution-process-heading {
+  min-height: 38px;
+  background: transparent;
+}
+
+.execution-process.completed.collapsed .execution-process-heading > button {
+  min-height: 38px;
+  padding: 6px 2px;
+  gap: 6px;
+}
+
+.execution-process.completed.collapsed .execution-process-status-icon {
+  display: none;
+}
+
+.execution-process.completed.collapsed .execution-process-title {
+  flex: 0 0 auto;
+  display: block;
+}
+
+.execution-process.completed.collapsed .execution-process-title strong {
+  color: var(--colorNeutralForeground3);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.execution-process.completed.collapsed .execution-process-meta {
+  margin-right: auto;
+  font-size: 11px;
+}
+
+.execution-process.completed.collapsed .execution-process-chevron {
+  transform: rotate(-90deg);
+}
+
+.execution-process-heading {
+  min-height: 48px;
+  background: var(--colorNeutralBackground1);
+}
+
+.execution-process.expanded .execution-process-heading {
+  border-bottom: 1px solid var(--colorNeutralStroke2);
+}
+
+.execution-process-heading > button {
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 11px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.execution-process-heading > button:hover {
+  background: var(--colorNeutralBackground2Hover);
+}
+
+.execution-process-heading > button:focus-visible {
+  outline: 2px solid var(--colorBrandStroke1);
+  outline-offset: -2px;
+}
+
+.execution-process-status-icon {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--colorNeutralForeground3);
+  background: var(--colorNeutralBackground3);
+}
+
+.execution-process-status-icon svg {
+  font-size: 15px;
+}
+
+.execution-process.running .execution-process-status-icon {
+  color: var(--colorBrandForeground1);
+  background: var(--colorBrandBackground2);
+}
+
+.execution-process.completed .execution-process-status-icon {
+  color: var(--colorStatusSuccessForeground1);
+  background: var(--colorStatusSuccessBackground1);
+}
+
+.execution-process.failed .execution-process-status-icon {
+  color: var(--colorStatusDangerForeground1);
+  background: var(--colorStatusDangerBackground1);
+}
+
+.execution-process-title {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 1px;
+}
+
+.execution-process-title strong {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.execution-process-title > span {
+  overflow: hidden;
+  color: var(--colorNeutralForeground3);
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.execution-process-meta {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--colorNeutralForeground3);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.execution-process-chevron {
+  flex: 0 0 auto;
+  color: var(--colorNeutralForeground3);
+  font-size: 16px;
+  transition: transform 160ms ease;
+}
+
+.execution-process.expanded .execution-process-chevron {
+  transform: rotate(180deg);
+}
+
+.execution-step-list {
+  padding: 4px 10px 8px;
+}
+
+.execution-step {
+  min-width: 0;
+  border-bottom: 1px solid var(--colorNeutralStroke3);
+}
+
+.execution-step:last-child {
+  border-bottom: 0;
+}
+
+.execution-step-disclosure {
+  width: 100%;
+  min-height: 30px;
+  padding: 3px 2px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  overflow: hidden;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.execution-step-disclosure:hover {
+  background: var(--colorNeutralBackground1Hover);
+}
+
+.execution-step-disclosure:focus-visible {
+  outline: 2px solid var(--colorBrandStroke1);
+  outline-offset: -2px;
+}
+
+.execution-step-marker {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  color: var(--colorNeutralForeground3);
+}
+
+.execution-step-marker svg {
+  font-size: 13px;
+}
+
+.execution-step.running .execution-step-marker {
+  color: var(--colorBrandForeground1);
+}
+
+.execution-step.completed .execution-step-marker {
+  color: var(--colorStatusSuccessForeground1);
+}
+
+.execution-step.failed .execution-step-marker {
+  color: var(--colorStatusDangerForeground1);
+}
+
+.execution-step-disclosure > strong {
+  flex: 0 0 auto;
+  color: var(--colorNeutralForeground2);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.execution-step-preview {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--colorNeutralForeground3);
+  font: 11px/1.35 "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.execution-step-output-count,
+.execution-step-disclosure time {
+  flex: 0 0 auto;
+  color: var(--colorNeutralForeground3);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.execution-step-chevron {
+  flex: 0 0 auto;
+  color: var(--colorNeutralForeground3);
+  font-size: 14px;
+  transform: rotate(-90deg);
+  transition: transform 120ms ease;
+}
+
+.execution-step.expanded .execution-step-chevron {
+  transform: rotate(0);
+}
+
+.execution-step-content {
+  min-width: 0;
+  margin: 0 2px 6px 24px;
+  padding: 5px 9px 9px;
+  border-left: 2px solid var(--colorNeutralStroke2);
+  background: var(--colorNeutralBackground1);
+}
+
+.execution-step.running .execution-step-content {
+  border-left-color: var(--colorBrandStroke1);
+}
+
+.execution-step.failed .execution-step-content {
+  border-left-color: var(--colorStatusDangerBorder1);
+}
+
+.execution-step-content > .ide-file-changes {
+  margin-top: 8px;
+}
+
+.execution-step-summary {
+  margin: 0;
+  color: var(--colorNeutralForeground3);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.execution-input,
+.execution-output-viewer {
+  margin-top: 9px;
+  min-width: 0;
+}
+
+.execution-details {
+  margin-top: 8px;
+  min-width: 0;
+  border-top: 1px solid var(--colorNeutralStroke3);
+}
+
+.execution-details > summary {
+  min-height: 30px;
+  padding: 7px 1px 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  color: var(--colorNeutralForeground2);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.execution-details > summary:hover {
+  color: var(--colorBrandForeground1);
+}
+
+.execution-details > summary small {
+  flex: 0 0 auto;
+  color: var(--colorNeutralForeground3);
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.execution-details[open] > summary {
+  padding-bottom: 1px;
+}
+
+.execution-detail-body {
+  min-width: 0;
+}
+
+.execution-input > span,
+.reasoning-source-content > span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--colorNeutralForeground3);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.reasoning-source-content {
+  margin-top: 9px;
+  min-width: 0;
+}
+
+.reasoning-source-content .readable-output p {
+  white-space: pre-wrap;
+}
+
+.execution-input pre {
+  margin: 0;
+  padding: 9px 10px;
+  max-height: 132px;
+  overflow: auto;
+  border: 1px solid var(--colorNeutralStroke3);
+  border-radius: 6px;
+  color: var(--colorNeutralForeground2);
+  background: var(--colorNeutralBackground2);
+  font: 11px/1.55 "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.execution-output-viewer {
+  overflow: hidden;
+  border: 1px solid var(--colorNeutralStroke2);
+  border-radius: 8px;
+  background: var(--colorNeutralBackground2);
+}
+
+.execution-output-toolbar {
+  min-height: 34px;
+  padding: 0 6px 0 11px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--colorNeutralStroke3);
+  background: var(--colorNeutralBackground3);
+}
+
+.execution-output-toolbar strong {
+  color: var(--colorNeutralForeground2);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.execution-output-toolbar small {
+  color: var(--colorNeutralForeground3);
+  font-size: 10px;
+}
+
+.execution-output-toolbar button {
+  min-width: 58px;
+  margin-left: auto;
+}
+
+.execution-output-viewer pre {
+  margin: 0;
+  padding: 11px 12px;
+  max-height: min(38dvh, 340px);
+  overflow: auto;
+  scrollbar-gutter: stable both-edges;
+  overscroll-behavior: contain;
+  color: var(--colorNeutralForeground2);
+  background: var(--colorNeutralBackground1);
+  font: 11px/1.58 "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  white-space: pre;
+  overflow-wrap: normal;
+  tab-size: 2;
+}
+
+.execution-output-viewer.long pre {
+  height: clamp(220px, 36dvh, 360px);
+  max-height: none;
+}
+
+.execution-output-viewer pre:focus-visible {
+  outline: 2px solid var(--colorBrandStroke1);
+  outline-offset: -2px;
+}
+
+.execution-output-footer {
+  min-height: 28px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--colorNeutralStroke3);
+  color: var(--colorNeutralForeground3);
+  background: var(--colorNeutralBackground3);
+  font-size: 10px;
+}
+
+.execution-output-result {
+  font-weight: 650;
+}
+
+.execution-output-result.completed {
+  color: var(--colorStatusSuccessForeground1);
+}
+
+.execution-output-result.running {
+  color: var(--colorBrandForeground1);
+}
+
+.execution-output-result.failed {
+  color: var(--colorStatusDangerForeground1);
+}
+

@@ -1,6 +1,6 @@
 import type { WorkspaceSummary, WorkspaceSyncState } from "@codex-collab/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { RelayClient } from "./relay-client.js";
+import { RelayClient, RelayRequestError } from "./relay-client.js";
 
 const syncState: WorkspaceSyncState = {
   hostConnected: true,
@@ -40,6 +40,27 @@ describe("RelayClient compact workspace synchronization", () => {
     vi.unstubAllGlobals();
   });
 
+  it("sends owner recovery credentials in the request body instead of the URL", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({}));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new RelayClient("https://relay.example.com").recoverSession({
+      sessionId: "room/one",
+      recoveryKey: "ccr_secret",
+      deviceLabel: "Owner PC",
+    });
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      "https://relay.example.com/v1/sessions/recover",
+    );
+    expect(String(fetchMock.mock.calls[0]?.[0])).not.toContain("ccr_secret");
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      sessionId: "room/one",
+      recoveryKey: "ccr_secret",
+      deviceLabel: "Owner PC",
+    });
+  });
+
   it("loads the host-only compact sync state", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ syncState }));
     vi.stubGlobal("fetch", fetchMock);
@@ -76,6 +97,29 @@ describe("RelayClient compact workspace synchronization", () => {
     expect(String(fetchMock.mock.calls[1]?.[0])).toContain(
       "/v1/sessions/session-1/workspace",
     );
+  });
+
+  it("preserves non-404 relay errors without leaking or retrying the bearer token", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse(
+        { error: { code: "forbidden", message: "Host access required" } },
+        403,
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const request = new RelayClient(
+      "https://relay.example.com",
+    ).getWorkspaceSyncState("session/one", "host-secret");
+    await expect(request).rejects.toEqual(
+      new RelayRequestError(403, "forbidden", "Host access required"),
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("session%2Fone");
+    expect(String(fetchMock.mock.calls[0]?.[0])).not.toContain("host-secret");
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      headers: expect.objectContaining({ authorization: "Bearer host-secret" }),
+    });
   });
 
   it("requests a minimal response for history uploads and accepts a legacy reply", async () => {

@@ -6,10 +6,8 @@ import {
   useImperativeHandle,
   useRef,
   useState,
-  type CSSProperties,
   type KeyboardEvent,
   type PointerEvent,
-  type ReactNode,
 } from "react";
 import {
   clampSplitSize,
@@ -21,58 +19,17 @@ import {
   type SplitOrientation,
   type SplitSizeBounds,
 } from "./split-size.js";
+import {
+  getLocalStorage,
+  type PointerResizeSession,
+  type ResizableSplitPaneHandle,
+  type ResizableSplitPaneProps,
+  type SplitPaneStyle,
+} from "./resizable-split-pane-types.js";
+import { ResizableSplitPaneView } from "./ResizableSplitPaneView.js";
 import "./resizable-split-pane.css";
 
-export interface ResizableSplitPaneHandle {
-  getPrimarySize(): number;
-  reset(): void;
-  setPrimarySize(size: number): void;
-}
-
-export interface ResizableSplitPaneProps {
-  primary: ReactNode;
-  secondary: ReactNode;
-  defaultPrimarySize: number;
-  orientation?: SplitOrientation;
-  minPrimarySize?: number;
-  maxPrimarySize?: number;
-  minSecondarySize?: number;
-  separatorSize?: number;
-  keyboardStep?: number;
-  storageKey?: string;
-  separatorLabel?: string;
-  primaryLabel?: string;
-  secondaryLabel?: string;
-  disabled?: boolean;
-  className?: string;
-  primaryClassName?: string;
-  secondaryClassName?: string;
-  style?: CSSProperties;
-  onPrimarySizeChange?: (size: number) => void;
-}
-
-interface PointerResizeSession {
-  pointerId: number;
-  originCoordinate: number;
-  originSize: number;
-}
-
-type SplitPaneStyle = CSSProperties & {
-  "--split-primary-size": string;
-  "--split-separator-size": string;
-};
-
-function classNames(...values: Array<string | undefined>): string {
-  return values.filter(Boolean).join(" ");
-}
-
-function getLocalStorage(): Storage | null {
-  try {
-    return typeof window === "undefined" ? null : window.localStorage;
-  } catch {
-    return null;
-  }
-}
+export type { ResizableSplitPaneHandle, ResizableSplitPaneProps } from "./resizable-split-pane-types.js";
 
 export const ResizableSplitPane = forwardRef<
   ResizableSplitPaneHandle,
@@ -312,55 +269,30 @@ export const ResizableSplitPane = forwardRef<
   };
 
   return (
-    <div
-      ref={containerRef}
-      className={classNames("resizable-split-pane", className)}
-      data-orientation={orientation}
-      style={splitStyle}
-    >
-      <div
-        id={primaryId}
-        className={classNames(
-          "resizable-split-pane__pane",
-          "resizable-split-pane__primary",
-          primaryClassName,
-        )}
-        aria-label={primaryLabel}
-      >
-        {primary}
-      </div>
-      <div
-        ref={separatorRef}
-        className="resizable-split-pane__separator"
-        role="separator"
-        tabIndex={disabled ? -1 : 0}
-        aria-label={separatorLabel}
-        aria-controls={`${primaryId} ${secondaryId}`}
-        aria-disabled={disabled || undefined}
-        aria-orientation={orientation === "horizontal" ? "vertical" : "horizontal"}
-        aria-valuemin={Math.round(bounds.min)}
-        aria-valuemax={Number.isFinite(bounds.max) ? Math.round(bounds.max) : undefined}
-        aria-valuenow={Math.round(primarySize)}
-        aria-valuetext={`${Math.round(primarySize)} 像素`}
-        title="拖动调整大小，双击恢复默认"
-        onDoubleClick={reset}
-        onKeyDown={handleKeyDown}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={finishPointerResize}
-        onPointerCancel={finishPointerResize}
-      />
-      <div
-        id={secondaryId}
-        className={classNames(
-          "resizable-split-pane__pane",
-          "resizable-split-pane__secondary",
-          secondaryClassName,
-        )}
-        aria-label={secondaryLabel}
-      >
-        {secondary}
-      </div>
-    </div>
+    <ResizableSplitPaneView
+      bounds={bounds}
+      className={className}
+      containerRef={containerRef}
+      disabled={disabled}
+      onDoubleClick={reset}
+      onKeyDown={handleKeyDown}
+      onPointerCancel={finishPointerResize}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={finishPointerResize}
+      orientation={orientation}
+      primary={primary}
+      primaryClassName={primaryClassName}
+      primaryId={primaryId}
+      primaryLabel={primaryLabel}
+      primarySize={primarySize}
+      secondary={secondary}
+      secondaryClassName={secondaryClassName}
+      secondaryId={secondaryId}
+      secondaryLabel={secondaryLabel}
+      separatorLabel={separatorLabel}
+      separatorRef={separatorRef}
+      splitStyle={splitStyle}
+    />
   );
 });

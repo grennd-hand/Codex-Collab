@@ -1,0 +1,211 @@
+.composer {
+  position: relative;
+  padding: 16px 22px 18px;
+  border-top: 1px solid var(--colorNeutralStroke2);
+  background: var(--colorNeutralBackground2);
+}
+
+.composer-surface {
+  padding: 10px;
+  border: 1px solid var(--colorNeutralStroke1);
+  border-radius: 12px;
+  background: var(--colorNeutralBackground1);
+  box-shadow: 0 6px 20px color-mix(in srgb, var(--colorBrandBackground) 9%, transparent);
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.composer-surface:hover {
+  border-color: var(--colorNeutralStroke1Hover);
+}
+
+.composer-surface:focus-within {
+  border-color: var(--colorBrandStroke1);
+  box-shadow:
+    0 0 0 2px var(--colorBrandStroke2),
+    0 8px 24px color-mix(in srgb, var(--colorBrandBackground) 13%, transparent);
+}
+
+.composer.dragging .composer-surface {
+  border-color: var(--colorBrandStroke1);
+  outline: 2px solid var(--colorBrandStroke2);
+  outline-offset: 2px;
+}
+
+.composer .fui-Textarea {
+  width: 100%;
+  min-height: 76px;
+  padding: 2px;
+  border: 1px solid var(--colorNeutralStroke3);
+  border-radius: 8px;
+  background: var(--colorNeutralBackground2);
+  box-shadow: none;
+}
+
+.composer .fui-Textarea::after {
+  display: none;
+}
+
+.composer textarea {
+  min-height: 70px;
+  padding: 8px 10px;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.composer textarea::placeholder,
+.peer-chat-composer input::placeholder {
+  color: var(--colorNeutralForeground3);
+  opacity: 1;
+}
+
+.pending-attachments {
+  padding: 2px 4px 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.attachment-preparing {
+  min-height: 30px;
+  padding: 2px 6px 8px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--colorNeutralForeground3);
+  font-size: 12px;
+}
+
+.pending-attachments > span {
+  min-width: 0;
+  max-width: min(100%, 320px);
+  height: 34px;
+  padding: 0 3px 0 8px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto 24px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--colorNeutralStroke2);
+  border-radius: 6px;
+  background: var(--colorNeutralBackground2);
+  font-size: 12px;
+}
+
+.pending-attachments > span > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pending-attachments small {
+  color: var(--colorNeutralForeground3);
+}
+
+.pending-attachments button {
+  min-width: 24px;
+  width: 24px;
+  height: 24px;
+}
+
+.composer-capability-note {
+  padding: 2px 4px 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  color: var(--colorNeutralForeground3);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.composer-capability-note strong {
+  color: var(--colorNeutralForeground2);
+  font-weight: 650;
+}
+
+.composer-toolbar {
+  min-width: 0;
+  margin-top: 9px;
+  padding-top: 9px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 8px;
+  border-top: 1px solid var(--colorNeutralStroke3);
+}
+
+.composer-tools {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.composer-tools > button,
+.composer-actions > button {
+  flex: 0 0 auto;
+}
+
+.composer-tools select {
+  width: auto;
+  max-width: 150px;
+  min-height: 30px;
+  font-size: 12px;
+}
+
+.composer-tools .fui-Checkbox {
+  min-height: 30px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.composer-actions {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  gap: 4px;
+  margin: 0;
+}
+
+.composer-actions button {
+  box-shadow: 0 3px 10px color-mix(in srgb, var(--colorBrandBackground) 22%, transparent);
+}
+
+.composer-actions button:not(:disabled):active {
+  transform: translateY(1px) scale(0.98);
+}
+
+.custom-permission-panel {
+  margin-top: 8px;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: minmax(132px, 0.8fr) minmax(172px, 1fr) minmax(220px, 1.6fr);
+  align-items: end;
+  gap: 8px 12px;
+  border-top: 1px solid var(--colorNeutralStroke3);
+  border-radius: 6px;
+  background: var(--colorNeutralBackground2);
+}
+
+.custom-permission-panel .fui-Field {
+  min-width: 0;
+}
+
+.custom-permission-panel label {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.custom-permission-panel select {
+  width: 100%;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.custom-permission-panel p {
+  margin: 0 0 2px;
+  color: var(--colorNeutralForeground3);
+  font-size: 11px;
+  line-height: 1.4;
+}
+

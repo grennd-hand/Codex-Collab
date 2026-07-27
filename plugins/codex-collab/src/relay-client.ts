@@ -14,6 +14,7 @@ import type {
   MessageDeliveryStatus,
   MessageKind,
   RealtimeTicketResponse,
+  RecoverSessionResponse,
   WorkspaceFileContent,
   WorkspaceFileAccess,
   WorkspaceFileOperation,
@@ -22,13 +23,12 @@ import type {
   WorkspaceSummary,
   WorkspaceSyncState,
 } from "@codex-collab/protocol";
+import {
+  RelayHttpTransport,
+  RelayRequestError,
+} from "./relay-http-transport.js";
 
-interface RelayErrorBody {
-  error?: {
-    code?: string;
-    message?: string;
-  };
-}
+export { RelayRequestError } from "./relay-http-transport.js";
 
 type WorkspaceSyncResponse =
   | { syncState: WorkspaceSyncState; workspace?: never }
@@ -44,19 +44,12 @@ function toWorkspaceSyncState(response: WorkspaceSyncResponse): WorkspaceSyncSta
   };
 }
 
-export class RelayRequestError extends Error {
-  constructor(
-    public readonly status: number,
-    public readonly code: string,
-    message: string,
-  ) {
-    super(message);
-    this.name = "RelayRequestError";
-  }
-}
-
 export class RelayClient {
-  constructor(private readonly baseUrl: string) {}
+  private readonly transport: RelayHttpTransport;
+
+  constructor(baseUrl: string) {
+    this.transport = new RelayHttpTransport(baseUrl);
+  }
 
   async health(): Promise<Record<string, unknown>> {
     return this.request("/health");
@@ -68,6 +61,17 @@ export class RelayClient {
     deviceLabel?: string;
   }): Promise<CreateSessionResponse> {
     return this.request("/v1/sessions", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  }
+
+  async recoverSession(input: {
+    sessionId: string;
+    recoveryKey: string;
+    deviceLabel?: string;
+  }): Promise<RecoverSessionResponse> {
+    return this.request("/v1/sessions/recover", {
       method: "POST",
       body: JSON.stringify(input),
     });
@@ -198,25 +202,12 @@ export class RelayClient {
     messageId: string,
     attachment: MessageAttachment,
   ): Promise<Uint8Array> {
-    const response = await fetch(
-      new URL(
-        `/v1/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(
-          messageId,
-        )}/attachments/${encodeURIComponent(attachment.id)}`,
-        this.baseUrl,
-      ),
-      {
-        headers: { authorization: `Bearer ${memberToken}` },
-        signal: AbortSignal.timeout(15_000),
-      },
+    const content = await this.transport.requestBytes(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(
+        messageId,
+      )}/attachments/${encodeURIComponent(attachment.id)}`,
+      { authorization: `Bearer ${memberToken}` },
     );
-    if (!response.ok) {
-      const body = (await response.json()) as RelayErrorBody;
-      throw new Error(
-        body.error?.message ?? `Relay attachment request failed with ${response.status}`,
-      );
-    }
-    const content = new Uint8Array(await response.arrayBuffer());
     if (content.length !== attachment.size) {
       throw new Error(`Relay attachment size mismatch for ${attachment.name}`);
     }
@@ -501,22 +492,6 @@ export class RelayClient {
     path: string,
     init: RequestInit = {},
   ): Promise<T> {
-    const response = await fetch(new URL(path, this.baseUrl), {
-      ...init,
-      headers: {
-        "content-type": "application/json",
-        ...init.headers,
-      },
-      signal: AbortSignal.timeout(15_000),
-    });
-    const body = (await response.json()) as T & RelayErrorBody;
-    if (!response.ok) {
-      throw new RelayRequestError(
-        response.status,
-        body.error?.code ?? "request_failed",
-        body.error?.message ?? `Relay request failed with ${response.status}`,
-      );
-    }
-    return body;
+    return this.transport.request<T>(path, init);
   }
 }

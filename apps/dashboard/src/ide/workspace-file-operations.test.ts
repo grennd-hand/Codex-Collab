@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiRequestError } from "../api-client.js";
+import { ApiRequestError } from "../shared/api/api-client.js";
 import {
   readWorkspaceFileOperation,
   saveResultFromOperation,

@@ -7,7 +7,7 @@ import {
   completedExecutionDurationLabel,
   elapsedExecutionLabel,
   executionProcessPresentation,
-} from "./app/ExecutionProcess.js";
+} from "./features/timeline/ExecutionProcess.js";
 import {
   canMemberStopCodex,
   chatMessageBody,
@@ -18,7 +18,7 @@ import {
   restoreComposerControlFocus,
   shouldShowExecutionStatus,
   workspaceNeedsConversationLoad,
-} from "./app/codex-controls.js";
+} from "./features/composer/codex-controls.js";
 
 function command(
   kind: "codex_prompt" | "codex_stop",
@@ -257,9 +257,11 @@ describe("Codex client-style task process", () => {
     );
     expect(running).toContain('aria-expanded="true"');
     expect(running).toContain("折叠任务过程");
-    expect(running).toContain("正在运行");
     expect(running).toContain('role="status"');
-    expect(running).toContain("查看正在执行的内容");
+    expect(running).toContain('aria-label="展开 运行测试"');
+    expect(running).toContain('class="execution-step command running collapsed"');
+    expect(running).toContain('title="npm test"');
+    expect(running).not.toContain("execution-output-viewer");
 
     const anchoredRunning = renderToStaticMarkup(
       createElement(ExecutionProcess, {
@@ -289,11 +291,11 @@ describe("Codex client-style task process", () => {
             role: "command",
             text: [
               "tool: exec_command",
-              "status: running",
+              "status: failed",
               "input:",
               '{"cmd":"npm test"}',
               "output:",
-              `first line\\n${"x".repeat(2_100)}\\nlast line`,
+              `first line\\n${"x".repeat(2_100)}\\nlast line\\nexit_code: 1`,
             ].join("\n"),
             createdAt: null,
           },
@@ -319,8 +321,9 @@ describe("Codex client-style task process", () => {
       }),
     );
     expect(activeReasoning).toContain("正在执行");
-    expect(activeReasoning).toContain("Codex 正在分析当前任务并规划下一步。");
-    expect(activeReasoning).toContain("查看 Codex 原始摘要");
+    expect(activeReasoning).toContain("Analyzing invite reuse behavior");
+    expect(activeReasoning).toContain('aria-label="展开 分析与计划"');
+    expect(activeReasoning).not.toContain("查看 Codex 原始摘要");
     expect(activeReasoning).not.toContain("全部步骤已完成");
 
     const markdownReasoning = renderToStaticMarkup(
@@ -336,7 +339,8 @@ describe("Codex client-style task process", () => {
         ],
       }),
     );
-    expect(markdownReasoning).toContain("<strong>Investigating relay DNS</strong>");
+    expect(markdownReasoning).toContain("Investigating relay DNS");
+    expect(markdownReasoning).not.toContain("<strong>Investigating relay DNS</strong>");
     expect(markdownReasoning).not.toContain("**Investigating relay DNS**");
 
     const codeReasoning = renderToStaticMarkup(
@@ -352,8 +356,9 @@ describe("Codex client-style task process", () => {
         ],
       }),
     );
-    expect(codeReasoning).toContain("readable-code");
-    expect(codeReasoning).toContain("<pre>const ready = true;\nconsole.log(ready);</pre>");
+    expect(codeReasoning).toContain("const ready = true;");
+    expect(codeReasoning).not.toContain("readable-code");
+    expect(codeReasoning).not.toContain("<pre>const ready = true;");
   });
 
   it("formats a compact live elapsed-time label", () => {

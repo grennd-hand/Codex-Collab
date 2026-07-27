@@ -1,0 +1,401 @@
+@media (min-width: 981px) {
+  .workspace
+    .resizable-split-pane__pane
+    > [data-workspace-panel] {
+    height: 100%;
+  }
+}
+
+@media (max-width: 1120px) {
+  .topbar-thread-control {
+    max-width: 340px;
+  }
+
+  .activity-panel {
+    display: none;
+  }
+
+  .workspace-layout-split--chat-activity {
+    grid-template-columns: minmax(0, 1fr) 0 0 !important;
+  }
+
+  .workspace-layout-split--chat-activity > .resizable-split-pane__separator,
+  .workspace-layout-split--chat-activity > .resizable-split-pane__secondary {
+    display: none;
+  }
+}
+
+@media (max-width: 980px) and (min-width: 761px) {
+  .workspace:not(.workspace-editor-expanded)
+    .resizable-split-pane__pane
+    > [data-workspace-panel] {
+    height: 100%;
+  }
+
+  .workspace-with-files:not(.workspace-editor-expanded) .people-panel {
+    display: none;
+  }
+
+  .workspace-with-files:not(.workspace-editor-expanded)
+    .workspace-layout-split--people-chat {
+    grid-template-columns: 0 0 minmax(0, 1fr) !important;
+  }
+
+  .workspace-with-files:not(.workspace-editor-expanded)
+    .workspace-layout-split--people-chat
+    > .resizable-split-pane__separator,
+  .workspace-with-files:not(.workspace-editor-expanded)
+    .workspace-layout-split--people-chat
+    > .resizable-split-pane__primary {
+    display: none;
+  }
+
+  .workspace.workspace-editor-expanded {
+    height: auto;
+    display: block;
+  }
+
+  .workspace-editor-expanded > .workspace-layout-split--files-chat {
+    display: block;
+  }
+
+  .workspace-editor-expanded
+    > .workspace-layout-split--files-chat
+    > .resizable-split-pane__separator {
+    display: none;
+  }
+
+  .workspace-editor-expanded .workspace-file-dock {
+    height: min(72dvh, 760px);
+    border-right: 0;
+    border-bottom: 1px solid var(--colorNeutralStroke2);
+  }
+
+  .workspace-editor-expanded .chat-panel {
+    height: min(72dvh, 760px);
+    min-height: 0;
+  }
+}
+
+@media (max-width: 760px) {
+  .app-provider {
+    padding: 0;
+  }
+
+  .app-frame {
+    width: 100%;
+    min-height: 100dvh;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .topbar {
+    min-height: 64px;
+    padding: 10px 12px;
+    flex-wrap: wrap;
+  }
+
+  .topbar-thread-control {
+    order: 3;
+    min-width: 0;
+    max-width: none;
+    flex: 1 0 100%;
+    margin-left: 0;
+  }
+
+  .product-context,
+  .invite-button {
+    display: none;
+  }
+
+  .room-switch {
+    min-width: auto;
+  }
+
+  .room-switch .fui-Switch__label {
+    display: none;
+  }
+
+  .workspace-button {
+    min-width: 32px;
+    padding-inline: 6px;
+  }
+
+  .workspace-button-label {
+    display: none;
+  }
+
+  .account-button {
+    min-width: 32px;
+    padding-inline: 6px;
+  }
+
+  .account-button-label {
+    display: none;
+  }
+
+  .workspace-dialog-surface {
+    width: calc(100vw - 20px);
+    max-height: calc(100dvh - 20px);
+  }
+
+  .workspace-dialog-content {
+    min-height: 0;
+  }
+
+  .workspace-data-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .brand-mark {
+    width: 36px;
+    height: 36px;
+  }
+
+  .brand-lockup h1 {
+    font-size: 18px;
+  }
+
+  .workspace {
+    height: auto;
+    min-height: 0;
+    display: block;
+    overflow: visible;
+  }
+
+  .workspace.workspace-with-files {
+    display: block;
+  }
+
+  .workspace .workspace-layout-split {
+    display: block;
+    height: auto;
+    overflow: visible;
+  }
+
+  .workspace
+    .workspace-layout-split
+    > .resizable-split-pane__separator {
+    display: none;
+  }
+
+  .workspace
+    .workspace-layout-split
+    > .resizable-split-pane__pane {
+    overflow: visible;
+  }
+
+  .workspace-file-dock {
+    height: min(42dvh, 430px);
+    border-right: 0;
+    border-bottom: 1px solid var(--colorNeutralStroke2);
+  }
+
+  .workspace-editor-expanded .workspace-file-dock {
+    height: min(72dvh, 760px);
+  }
+
+  .people-panel {
+    height: min(54dvh, 520px);
+    max-height: none;
+    padding: 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--colorNeutralStroke2);
+  }
+
+  .member-section {
+    padding: 10px 14px 12px;
+  }
+
+  .member-section-body {
+    max-height: min(26dvh, 240px);
+  }
+
+  .handoff-rail {
+    min-height: 50px;
+    margin: 12px 0 0;
+    padding: 9px 12px 9px 44px;
+  }
+
+  .handoff-rail::before {
+    top: 8px;
+    bottom: 8px;
+  }
+
+  .handoff-icon {
+    top: 13px;
+  }
+
+  .handoff-rail p {
+    display: none;
+  }
+
+  .peer-chat-heading {
+    min-height: 58px;
+  }
+
+  .chat-panel {
+    height: max(520px, calc(100dvh - 127px));
+    min-height: 0;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+
+  .chat-heading {
+    min-height: 66px;
+    padding: 10px 14px;
+  }
+
+  .chat-heading h2 {
+    font-size: 17px;
+  }
+
+  .message-stream {
+    padding: 16px 14px;
+  }
+
+  .message {
+    width: 91%;
+  }
+
+  .execution-process {
+    width: 100%;
+  }
+
+  .execution-process-heading > button {
+    padding-inline: 10px;
+  }
+
+  .execution-process-meta {
+    gap: 6px;
+  }
+
+  .execution-step-list {
+    padding-inline: 9px;
+  }
+
+  .execution-output-viewer.long pre {
+    height: min(34dvh, 280px);
+  }
+
+  .execution-output-footer {
+    align-items: flex-start;
+    flex-direction: column;
+    justify-content: center;
+    gap: 1px;
+    padding-block: 5px;
+  }
+
+  .composer {
+    padding: 12px 14px 14px;
+  }
+
+  .composer-toolbar {
+    align-items: flex-end;
+  }
+
+  .composer-tools {
+    flex: 1;
+  }
+
+  .composer-tools select {
+    max-width: 128px;
+  }
+
+  .composer-actions {
+    display: flex;
+  }
+
+  .composer-actions button {
+    width: 32px;
+  }
+
+  .custom-permission-panel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .custom-permission-panel p {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 480px) {
+  .topbar-actions {
+    gap: 2px;
+  }
+
+  .connection-badge {
+    width: 12px !important;
+    min-width: 12px !important;
+    height: 12px !important;
+    padding: 0 !important;
+    overflow: hidden;
+    border-radius: 50%;
+    font-size: 0 !important;
+    line-height: 0 !important;
+  }
+
+  .message-meta span:nth-child(2) {
+    display: none;
+  }
+
+  .execution-process-meta > span:first-child:not(:last-child) {
+    display: none;
+  }
+
+  .execution-step-output-count,
+  .execution-step-disclosure time {
+    display: none;
+  }
+
+  .account-room-item {
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+  }
+
+  .account-room-item > .fui-Badge {
+    display: none;
+  }
+
+  .workspace-dialog-surface {
+    width: 100vw;
+    max-height: 100dvh;
+    border-radius: 0;
+  }
+
+  .workspace-section-heading {
+    align-items: flex-start;
+  }
+
+  .file-browser {
+    grid-template-columns: 1fr;
+  }
+
+  .file-browser nav {
+    max-height: 180px;
+    border-right: 0;
+    border-bottom: 1px solid var(--colorNeutralStroke2);
+  }
+
+  .file-preview {
+    min-height: 220px;
+  }
+
+  .custom-permission-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .custom-permission-panel p {
+    grid-column: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

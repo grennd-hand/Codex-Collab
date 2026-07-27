@@ -1,0 +1,126 @@
+@media (max-width: 900px) {
+  .ide-titlebar {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .ide-context {
+    display: none;
+  }
+
+  .ide-workbench {
+    position: relative;
+  }
+
+  .ide-workbench-split {
+    display: block;
+  }
+
+  .ide-workbench-split > .resizable-split-pane__primary {
+    position: absolute;
+    inset: 0 auto 0 0;
+    z-index: 2;
+    width: min(82vw, 320px);
+    display: none;
+    box-shadow: var(--shadow16);
+  }
+
+  .ide-workbench-split > .resizable-split-pane__separator {
+    display: none;
+  }
+
+  .ide-workbench-split > .resizable-split-pane__secondary {
+    height: 100%;
+  }
+
+  .ide-mobile-explorer-toggle {
+    display: inline-flex !important;
+  }
+
+  .ide-explorer {
+    position: static;
+    width: 100%;
+    display: none;
+    box-shadow: none;
+  }
+
+  .ide-shell.explorer-mobile-open
+    .ide-workbench-split
+    > .resizable-split-pane__primary,
+  .ide-shell.explorer-mobile-open .ide-explorer {
+    display: grid;
+  }
+
+  .ide-shell-embedded.ide-shell-editor-expanded .ide-workbench {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ide-shell-explorer-only .ide-explorer {
+    position: static;
+    width: auto;
+    display: grid;
+    box-shadow: none;
+  }
+
+  .ide-editor-pane {
+    grid-column: 1;
+  }
+}
+
+@media (max-width: 640px) {
+  .ide-titlebar {
+    padding-left: 10px;
+  }
+
+  .ide-title-copy span {
+    display: none;
+  }
+
+  .ide-commandbar {
+    padding-left: 8px;
+  }
+
+  .ide-editor-actions .fui-Badge {
+    display: none;
+  }
+
+  .ide-readonly-notice {
+    min-height: 34px;
+  }
+
+  .ide-conflict-bar {
+    padding-block: 8px;
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .ide-conflict-bar > div {
+    width: calc(100% - 28px);
+  }
+
+  .ide-conflict-bar span {
+    white-space: normal;
+  }
+
+  .ide-conflict-bar .fui-Button {
+    flex: 1 1 150px;
+  }
+
+  .ide-editor-stage .monaco-editor .minimap {
+    display: none;
+  }
+
+  .ide-statusbar span:nth-child(3) {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ide-shell *,
+  .ide-shell *::before,
+  .ide-shell *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

@@ -1,4 +1,4 @@
-import { ApiRequestError, requestJson } from "../api-client.js";
+import { ApiRequestError, requestJson } from "../shared/api/api-client.js";
 import type {
   IdeFileDocument,
   IdeFileOperationStatus,

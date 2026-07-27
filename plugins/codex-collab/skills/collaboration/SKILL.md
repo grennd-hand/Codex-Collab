@@ -12,7 +12,9 @@ Use the `collab_*` MCP tools for shared sessions. Keep the owner as the security
 1. Check `collab_health`.
 2. If the owner already created the room in the web dashboard, call `collab_pair_host` with the
    dashboard's short-lived pairing code and one explicit absolute project root.
-3. If there is no web room, call `collab_create_session` with one explicit absolute project root.
+3. If there is no web room, call `collab_create_session` with one explicit absolute project root,
+   then show the owner the returned recovery key and tell them to store it with the room ID. Never
+   write the recovery key into the project, profile, logs, or chat history after that handoff.
 4. After web pairing, tell the owner to select a task in **Codex 与文件**. The single-instance
    background worker imports visible messages, reasoning summaries, command output and the
    read-only file snapshot. Relay events wake it immediately, and it forwards approved members'
@@ -25,6 +27,8 @@ Use the `collab_*` MCP tools for shared sessions. Keep the owner as the security
 7. Use `collab_create_invite` to create a short-lived, low-use invite.
 8. For an invited device, call `collab_join_session`.
 9. Never call `collab_approve_member` until the owner explicitly accepts the displayed member.
+10. When an owner supplies a saved room ID and recovery key, use `collab_recover_session` to issue a
+    fresh local owner token. Do not echo or persist the recovery key.
 
 ## Bind Codex
 

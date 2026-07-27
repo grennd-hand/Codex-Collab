@@ -1,12 +1,10 @@
-import Editor, { DiffEditor, type OnMount } from "@monaco-editor/react";
+import type { OnMount } from "@monaco-editor/react";
 import {
   Badge,
   Button,
   MessageBar,
   MessageBarBody,
   MessageBarTitle,
-  Skeleton,
-  SkeletonItem,
 } from "@fluentui/react-components";
 import {
   CheckmarkCircleRegular,
@@ -20,6 +18,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { EditorTabState } from "./ide-tab-state.js";
 import { fileName } from "./ide-tab-state.js";
 import type { IdeOpenFileRequest } from "./types.js";
+import { IdeEditorStage } from "./IdeEditorStage.js";
 
 interface IdeEditorPaneProps {
   tabs: EditorTabState[];
@@ -217,112 +216,16 @@ export function IdeEditorPane({
         ) : null}
       </div>
 
-      <div className="ide-editor-stage">
-        {!activeTab ? (
-          <div className="ide-state ide-state-editor">
-            <DocumentRegular aria-hidden="true" />
-            <strong>打开一个项目文件</strong>
-            <span>从资源管理器选择文件。支持搜索、标签页和 Ctrl+S 保存。</span>
-          </div>
-        ) : null}
-        {activeTab?.status === "loading" ? (
-          <div className="ide-editor-loading" aria-label="正在读取文件">
-            <Skeleton>
-              <SkeletonItem style={{ width: "46%" }} />
-              <SkeletonItem style={{ width: "78%" }} />
-              <SkeletonItem style={{ width: "66%" }} />
-              <SkeletonItem style={{ width: "84%" }} />
-            </Skeleton>
-          </div>
-        ) : null}
-        {activeTab?.status === "error" ? (
-          <div className="ide-state ide-state-editor error">
-            <WarningRegular aria-hidden="true" />
-            <strong>无法打开文件</strong>
-            <span>{activeTab.error}</span>
-            <Button appearance="primary" onClick={() => onRetryFile(activeTab.path)}>
-              重试
-            </Button>
-          </div>
-        ) : null}
-        {activeTab?.status === "ready" && activeTab.conflict ? (
-          <DiffEditor
-            original={activeTab.conflict.remote.content}
-            modified={activeTab.value}
-            language={language}
-            theme={themeMode === "dark" ? "codex-collab-dark" : "codex-collab-light"}
-            options={{
-              automaticLayout: true,
-              readOnly: true,
-              renderSideBySide: true,
-              minimap: { enabled: false },
-              folding: true,
-              foldingStrategy: "auto",
-              showFoldingControls: "mouseover",
-              bracketPairColorization: { enabled: true },
-              guides: { indentation: true, bracketPairs: true },
-              fontFamily: '"Cascadia Code", "SFMono-Regular", Consolas, monospace',
-              fontSize: 13,
-              scrollBeyondLastLine: false,
-              wordWrap: "off",
-            }}
-          />
-        ) : null}
-        {activeTab?.status === "ready" && !activeTab.conflict ? (
-          <Editor
-            path={`codex-collab://workspace/${activeTab.path
-              .split("/")
-              .map(encodeURIComponent)
-              .join("/")}`}
-            height="100%"
-            width="100%"
-            value={activeTab.value}
-            language={language}
-            theme={themeMode === "dark" ? "codex-collab-dark" : "codex-collab-light"}
-            loading={<span className="ide-monaco-loading">正在启动编辑器</span>}
-            options={{
-              automaticLayout: true,
-              readOnly: activeFileReadOnly,
-              readOnlyMessage: {
-                value: activeReadOnlyReason,
-              },
-              accessibilityPageSize: 20,
-              fontFamily: '"Cascadia Code", "SFMono-Regular", Consolas, monospace',
-              fontLigatures: true,
-              fontSize: 13,
-              lineHeight: 20,
-              folding: true,
-              foldingStrategy: "auto",
-              foldingHighlight: true,
-              showFoldingControls: "mouseover",
-              unfoldOnClickAfterEndOfLine: true,
-              glyphMargin: true,
-              renderLineHighlight: "all",
-              bracketPairColorization: { enabled: true },
-              guides: {
-                indentation: true,
-                highlightActiveIndentation: true,
-                bracketPairs: true,
-                highlightActiveBracketPair: true,
-              },
-              matchBrackets: "always",
-              autoClosingBrackets: "languageDefined",
-              autoClosingQuotes: "languageDefined",
-              autoIndent: "full",
-              stickyScroll: { enabled: true, maxLineCount: 5 },
-              minimap: { enabled: true, maxColumn: 80, scale: 1 },
-              padding: { top: 10, bottom: 18 },
-              renderWhitespace: "selection",
-              scrollBeyondLastLine: false,
-              smoothScrolling: true,
-              tabSize: 2,
-              wordWrap: "off",
-            }}
-            onMount={handleEditorMount}
-            onChange={(value) => onUpdateValue(activeTab.path, value ?? "")}
-          />
-        ) : null}
-      </div>
+      <IdeEditorStage
+        activeTab={activeTab}
+        activeFileReadOnly={activeFileReadOnly}
+        activeReadOnlyReason={activeReadOnlyReason}
+        language={language}
+        themeMode={themeMode}
+        onEditorMount={handleEditorMount}
+        onRetryFile={onRetryFile}
+        onUpdateValue={onUpdateValue}
+      />
 
       <footer className="ide-statusbar">
         <span>{activePath ? language : "就绪"}</span>

@@ -10,6 +10,7 @@ approval boundary even when an invited member can submit prompts or edit an expl
 Run these before handing off a change:
 
 ```powershell
+npm run validate:architecture
 npm run typecheck
 npm test
 npm run build
@@ -33,6 +34,47 @@ process or an HTTP response alone is not sufficient validation.
 - Use optimistic file hashes for writes.
 - Use a separate Git worktree per active Codex writer.
 - Never silently overwrite a file after its expected hash has changed.
+
+## Karpathy coding rules
+
+Use these rules for implementation, review, refactoring, and every subagent assignment.
+
+### Think before coding
+
+- State assumptions and uncertainty before editing. If two interpretations would materially change
+  the result, surface both instead of silently choosing one.
+- Prefer the simpler valid approach and explain meaningful tradeoffs. Stop and clarify when the
+  intended behavior cannot be established from code, tests, or the task description.
+- Inspect the relevant implementation and tests first. Do not infer a system boundary from filenames
+  or line counts alone.
+
+### Keep the solution minimal
+
+- Write the minimum code required for the requested behavior. Do not add speculative features,
+  configurability, abstractions, or impossible-case error handling.
+- Do not create one-use helper layers merely to make a file shorter. Split only at a real state,
+  I/O, protocol, rendering, or business-domain boundary.
+- Before accepting a large implementation, ask whether the same outcome can be expressed clearly
+  with substantially less code. If so, simplify it.
+
+### Make surgical changes
+
+- Every changed line must trace to the current task. Do not reformat, rename, remove, or "improve"
+  adjacent code unless the requested change requires it.
+- Match existing project conventions and preserve public APIs unless changing the API is explicitly
+  part of the task.
+- Remove imports, variables, functions, and files made obsolete by the current change, but report
+  unrelated dead code instead of deleting it opportunistically.
+
+### Execute against verifiable goals
+
+- Translate each task into explicit success criteria before implementation. For a refactor, preserve
+  observable behavior and run the relevant tests before and after the structural change.
+- For every plan step, name its verification command or observable result. Continue iterating until
+  that check passes; do not report an unverified partial result as complete.
+- Line-count reduction alone is not success. A split is complete only when responsibilities are
+  clearer, dependencies remain intentional, tests pass, and the architecture guard can be tightened
+  without a new exception.
 
 ## UI/UX engineering rules
 
@@ -195,9 +237,19 @@ product is a high-density developer tool. Use `DESIGN_VARIANCE: 3`, `MOTION_INTE
 
 - Split by responsibility before splitting by line count. A component owns one interaction domain
   and one state owner; do not hide shared mutable state behind arbitrary tiny files.
-- Use these review triggers, not mechanical failure limits: presentational React component around 350
-  lines, state/protocol module around 600 lines, and page/orchestrator around 1200 lines. Exceeding a
-  trigger requires a written cohesion reason or a follow-up extraction in the same feature plan.
+- Treat 300 physical lines as the normal source-file budget. The default hard limits are 300 for a
+  presentational React component, 400 for a hook/controller or parser, 500 for a domain service or
+  repository, 350 for a route module, 500 for a feature stylesheet, and 600 for an executable entry
+  or application orchestrator. Tests may reach 700 lines when they are one coherent specification.
+  Generated code, vendored sources, migrations, and declarative protocol tables require an explicit
+  allowlist entry instead of silently weakening the general limit.
+- Treat 50 lines as the function review point and 100 lines as the default hard limit. A long JSX
+  render function is still a long function. Extract by state owner, interaction, route resource, or
+  data transformation rather than moving arbitrary line ranges into `helpers.ts`.
+- Line limits are guardrails, not permission to mix concerns until the last allowed line. Split
+  earlier when a file has two reasons to change, owns unrelated state machines, mixes I/O with data
+  transformation, or needs unrelated test fixtures. Do not evade a ceiling by renaming a large file,
+  creating `part2`, or moving the same monolith behind a facade.
 - Keep workspace IDE, member collaboration, peer chat, Codex timeline, composers, dialogs, and
   account/room UI in feature modules. `App.tsx` composes those modules and coordinates app-level
   state; it must not become their permanent rendering implementation.
