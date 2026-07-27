@@ -22,6 +22,8 @@ interface WorkspaceConnectionDialogProps {
   memberRole: Member["role"] | null;
   loading: boolean;
   hasSummary: boolean;
+  hostConnected: boolean;
+  rootLabel: string | null;
   pairingToken: string | null;
   pairingExpiresAt: string;
   pairingCopied: boolean;
@@ -36,6 +38,8 @@ export function WorkspaceConnectionDialog({
   memberRole,
   loading,
   hasSummary,
+  hostConnected,
+  rootLabel,
   pairingToken,
   pairingExpiresAt,
   pairingCopied,
@@ -48,12 +52,22 @@ export function WorkspaceConnectionDialog({
     <Dialog open={open} onOpenChange={(_, data) => onOpenChange(data.open)}>
       <DialogSurface className="workspace-dialog-surface">
         <DialogBody>
-          <DialogTitle>连接 Codex 工作区</DialogTitle>
+          <DialogTitle>
+            {hostConnected ? "切换配对工作区" : "连接 Codex 工作区"}
+          </DialogTitle>
           <DialogContent className="workspace-dialog-content">
             <p className="dialog-intro">
               文件只从房主明确授权的绝对项目根目录读取。
               .codex 配置目录始终作为单独的只读共享范围。
             </p>
+            {hostConnected && memberRole === "owner" ? (
+              <MessageBar intent="info">
+                <MessageBarBody>
+                  当前工作区：{rootLabel || "已连接的项目"}。生成新配对码不会立即断开；
+                  新主机认领后，旧主机令牌和旧目录缓存会自动失效。
+                </MessageBarBody>
+              </MessageBar>
+            ) : null}
             {loading && !hasSummary ? (
               <div className="workspace-dialog-loading">
                 <Skeleton><SkeletonItem /><SkeletonItem /></Skeleton>
@@ -64,7 +78,7 @@ export function WorkspaceConnectionDialog({
                 <div><span>主机连接</span><h3>连接房主的本机 Codex</h3></div>
                 {memberRole === "owner" ? (
                   <Button appearance="primary" disabled={loading} onClick={onCreatePairing}>
-                    生成一次性配对码
+                    {hostConnected ? "生成新的配对码" : "生成一次性配对码"}
                   </Button>
                 ) : null}
               </div>
@@ -90,7 +104,7 @@ export function WorkspaceConnectionDialog({
                   <p>
                     回到房主的 Codex 对话，让 Codex 使用
                     <strong> collab_pair_host </strong>
-                    认领此码，明确传入 projectRoot；如需配置文件，再单独传入
+                    认领此码，明确传入新的 projectRoot；如需配置文件，再单独传入
                     codexConfigRoot（例如用户目录下的 .codex 绝对路径）。
                   </p>
                   <span>

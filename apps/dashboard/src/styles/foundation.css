@@ -124,6 +124,30 @@ textarea {
   gap: 8px;
 }
 
+.topbar-panel-controls {
+  min-width: max-content;
+  flex: 0 0 auto;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid var(--colorNeutralStroke2);
+  border-radius: var(--borderRadiusMedium);
+  background: var(--colorNeutralBackground2);
+}
+
+.topbar-panel-controls .fui-Button {
+  min-width: 32px;
+  height: 30px;
+  min-height: 30px;
+  padding-inline: 8px;
+}
+
+.topbar-panel-controls .workspace-button {
+  margin-left: 2px;
+  border-left-color: var(--colorNeutralStroke2);
+}
+
 .room-switch {
   min-width: 124px;
   flex: 0 0 auto;
@@ -182,7 +206,7 @@ textarea {
   min-width: 240px;
   max-width: 460px;
   flex: 1 1 360px;
-  margin-left: auto;
+  margin-left: 0;
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr);
   align-items: center;

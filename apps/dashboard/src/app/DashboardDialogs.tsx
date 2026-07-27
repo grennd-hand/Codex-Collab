@@ -24,6 +24,8 @@ export function DashboardDialogs({ model }: { model: DashboardViewModel }) {
         memberRole={member?.role ?? null}
         loading={workspaceConnection.loading}
         hasSummary={Boolean(workspaceHistory.summary)}
+        hostConnected={Boolean(workspaceHistory.summary?.hostConnected)}
+        rootLabel={workspaceHistory.summary?.rootLabel ?? null}
         pairingToken={workspaceConnection.pairingToken}
         pairingExpiresAt={workspaceConnection.pairingExpiresAt}
         pairingCopied={workspaceConnection.pairingCopied}

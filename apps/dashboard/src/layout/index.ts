@@ -19,3 +19,4 @@ export {
   WorkspacePanelLayout,
   type WorkspacePanelName,
 } from "./WorkspacePanelLayout.js";
+export { useWorkspacePanelVisibility } from "./useWorkspacePanelVisibility.js";

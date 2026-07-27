@@ -6,7 +6,6 @@ import {
 } from "@fluentui/react-components";
 import {
   ChatMultipleRegular,
-  FolderOpenRegular,
   HistoryRegular,
   PersonAddRegular,
   SignOutRegular,
@@ -18,6 +17,7 @@ import type {
   WorkspaceSummary,
 } from "@codex-collab/protocol";
 import { HeaderIdentity } from "./HeaderIdentity.js";
+import { PanelVisibilityControls } from "./PanelVisibilityControls.js";
 import type { ThemeMode } from "./theme.js";
 
 export interface AppHeaderProps {
@@ -33,7 +33,11 @@ export interface AppHeaderProps {
     label: string;
     color: "success" | "warning" | "danger" | "informative";
   };
+  collaborationPanelVisible: boolean;
+  directoryPanelVisible: boolean;
   onSelectThread: (threadId: string) => void;
+  onToggleCollaborationPanel: () => void;
+  onToggleDirectoryPanel: () => void;
   onUpdateRoomStatus: (open: boolean) => void;
   onOpenWorkspace: () => void;
   onCreateInvite: () => void;
@@ -51,7 +55,11 @@ export function AppHeader({
   themeMode,
   hasSession,
   connectionStatus,
+  collaborationPanelVisible,
+  directoryPanelVisible,
   onSelectThread,
+  onToggleCollaborationPanel,
+  onToggleDirectoryPanel,
   onUpdateRoomStatus,
   onOpenWorkspace,
   onCreateInvite,
@@ -71,6 +79,18 @@ export function AppHeader({
           <h1>Codex Collab</h1>
         </div>
       </div>
+
+      {approved ? (
+        <PanelVisibilityControls
+          collaborationVisible={collaborationPanelVisible}
+          filesAvailable={Boolean(workspaceSummary?.hostConnected)}
+          filesVisible={directoryPanelVisible}
+          owner={owner}
+          onOpenWorkspace={onOpenWorkspace}
+          onToggleCollaboration={onToggleCollaborationPanel}
+          onToggleFiles={onToggleDirectoryPanel}
+        />
+      ) : null}
 
       {owner && approved && workspaceSummary?.hostConnected ? (
         <div className="topbar-thread-control">
@@ -109,17 +129,6 @@ export function AppHeader({
             aria-label={roomOpen ? "关闭房间" : "开启房间"}
             onChange={(_, data) => onUpdateRoomStatus(data.checked)}
           />
-        ) : null}
-        {approved && !workspaceSummary?.hostConnected ? (
-          <Button
-            appearance="secondary"
-            icon={<FolderOpenRegular />}
-            className="workspace-button"
-            aria-label="连接工作区"
-            onClick={onOpenWorkspace}
-          >
-            <span className="workspace-button-label">连接工作区</span>
-          </Button>
         ) : null}
         {owner && approved ? (
           <Button

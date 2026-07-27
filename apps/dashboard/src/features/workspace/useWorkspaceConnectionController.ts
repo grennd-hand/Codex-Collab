@@ -72,6 +72,9 @@ export function useWorkspaceConnectionController({
   };
 
   const openDialog = async () => {
+    setPairingToken("");
+    setPairingExpiresAt("");
+    setPairingCopied(false);
     setOpen(true);
     await reload();
   };

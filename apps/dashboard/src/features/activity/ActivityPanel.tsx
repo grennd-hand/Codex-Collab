@@ -10,14 +10,18 @@ export interface ActivityItem {
 
 export interface ActivityPanelProps {
   activities: ActivityItem[];
+  "data-workspace-panel"?: "activity";
 }
 
-export function ActivityPanel({ activities }: ActivityPanelProps) {
+export function ActivityPanel({
+  activities,
+  "data-workspace-panel": panelName = "activity",
+}: ActivityPanelProps) {
   return (
     <aside
       className="activity-panel"
       aria-label="任务活动"
-      data-workspace-panel="activity"
+      data-workspace-panel={panelName}
     >
       <div className="panel-heading">
         <div>

@@ -25,6 +25,13 @@
   }
 }
 
+@media (max-width: 1360px) {
+  .topbar-panel-controls .panel-control-label,
+  .topbar-panel-controls .workspace-button-label {
+    display: none;
+  }
+}
+
 @media (max-width: 980px) and (min-width: 761px) {
   .workspace:not(.workspace-editor-expanded)
     .resizable-split-pane__pane
@@ -97,11 +104,16 @@
   }
 
   .topbar-thread-control {
-    order: 3;
+    order: 4;
     min-width: 0;
     max-width: none;
     flex: 1 0 100%;
     margin-left: 0;
+  }
+
+  .topbar-panel-controls {
+    order: 3;
+    flex: 1 0 100%;
   }
 
   .product-context,

@@ -8,7 +8,10 @@ import { ActivityPanel } from "../features/activity/ActivityPanel.js";
 import { CollaborationPanel } from "../features/collaboration/CollaborationPanel.js";
 import { CodexComposer } from "../features/composer/CodexComposer.js";
 import { CodexTimeline } from "../features/timeline/CodexTimeline.js";
-import { WorkspacePanelLayout } from "../layout/index.js";
+import {
+  useWorkspacePanelVisibility,
+  WorkspacePanelLayout,
+} from "../layout/index.js";
 
 const IdeWorkspace = lazy(() => import("../ide/IdeWorkspace.js"));
 
@@ -67,6 +70,15 @@ export function DashboardWorkspaceView({
     workspaceReadOnly,
   } = model;
   const workspaceSummary = workspaceHistory.summary;
+  const panelStorageScope = `${session?.id ?? "anonymous"}:${
+    workspaceSummary?.selectedThreadId ?? "unselected"
+  }`;
+  const panelVisibility = useWorkspacePanelVisibility({
+    editorExpanded: workspaceFiles.editorExpanded,
+    scope: panelStorageScope,
+    setEditorExpanded: workspaceFiles.setEditorExpanded,
+    workspaceConnected,
+  });
 
   return (
     <>
@@ -80,7 +92,11 @@ export function DashboardWorkspaceView({
         themeMode={themeMode}
         hasSession={Boolean(session)}
         connectionStatus={connectionStatus}
+        collaborationPanelVisible={panelVisibility.collaborationVisible}
+        directoryPanelVisible={panelVisibility.filesVisible}
         onSelectThread={(threadId) => void workspaceConnection.selectThread(threadId)}
+        onToggleCollaborationPanel={panelVisibility.toggleCollaboration}
+        onToggleDirectoryPanel={panelVisibility.toggleFiles}
         onUpdateRoomStatus={(open) => void invite.updateRoomStatus(open)}
         onOpenWorkspace={() => void workspaceConnection.openDialog()}
         onCreateInvite={() => void invite.create()}
@@ -102,7 +118,9 @@ export function DashboardWorkspaceView({
           .join(" ")}
         withFiles={workspaceConnected}
         editorExpanded={workspaceFiles.editorExpanded}
-        storageScope={session?.id ?? "anonymous"}
+        showFiles={panelVisibility.filesVisible}
+        showPeople={panelVisibility.collaborationVisible}
+        storageScope={panelStorageScope}
       >
         {workspaceConnected && workspaceSummary ? (
           <section
@@ -163,6 +181,7 @@ export function DashboardWorkspaceView({
           </section>
         ) : null}
         <CollaborationPanel
+          data-workspace-panel="people"
           membersExpanded={membersExpanded}
           pendingMemberCount={pendingMemberCount}
           members={members}
@@ -265,7 +284,7 @@ export function DashboardWorkspaceView({
             onError={setError}
           />
         </main>
-        <ActivityPanel activities={activities} />
+        <ActivityPanel data-workspace-panel="activity" activities={activities} />
       </WorkspacePanelLayout>
     </>
   );

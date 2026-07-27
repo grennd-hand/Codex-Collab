@@ -24,6 +24,7 @@ import type { MemberIdentity } from "./member-identity.js";
 import { MembersPanel } from "./MembersPanel.js";
 
 export interface CollaborationPanelProps {
+  "data-workspace-panel"?: "people";
   membersExpanded: boolean;
   pendingMemberCount: number;
   members: Member[];
@@ -59,8 +60,8 @@ export interface CollaborationPanelProps {
   canSendChat: boolean;
   onSendChat: () => void;
 }
-
 export function CollaborationPanel({
+  "data-workspace-panel": panelName = "people",
   membersExpanded,
   pendingMemberCount,
   members,
@@ -97,7 +98,7 @@ export function CollaborationPanel({
     <aside
       className="people-panel"
       aria-label="协作成员"
-      data-workspace-panel="people"
+      data-workspace-panel={panelName}
     >
       <MembersPanel
         expanded={membersExpanded}

@@ -8,6 +8,8 @@ interface WorkspacePanelLayoutProps {
   className: string;
   withFiles: boolean;
   editorExpanded: boolean;
+  showFiles: boolean;
+  showPeople: boolean;
   storageScope: string;
 }
 
@@ -24,15 +26,18 @@ export function WorkspacePanelLayout({
   className,
   withFiles,
   editorExpanded,
+  showFiles,
+  showPeople,
   storageScope,
 }: WorkspacePanelLayoutProps) {
   const files = panel(children, "files");
   const people = panel(children, "people");
   const chat = panel(children, "chat");
   const activity = panel(children, "activity");
+  const filesVisible = withFiles && showFiles && Boolean(files);
 
   let content: ReactNode;
-  if (withFiles && files && editorExpanded) {
+  if (filesVisible && editorExpanded) {
     content = (
       <ResizableSplitPane
         className="workspace-layout-split workspace-layout-split--files-chat"
@@ -48,7 +53,7 @@ export function WorkspacePanelLayout({
         storageKey={`codex-collab:workspace:files-chat:${storageScope}`}
       />
     );
-  } else if (withFiles && files) {
+  } else if (filesVisible && showPeople && people) {
     content = (
       <ResizableSplitPane
         className="workspace-layout-split workspace-layout-split--files-rest"
@@ -78,7 +83,23 @@ export function WorkspacePanelLayout({
         storageKey={`codex-collab:workspace:files-rest:${storageScope}`}
       />
     );
-  } else {
+  } else if (filesVisible) {
+    content = (
+      <ResizableSplitPane
+        className="workspace-layout-split workspace-layout-split--files-timeline"
+        primary={files}
+        secondary={chat}
+        defaultPrimarySize={244}
+        minPrimarySize={210}
+        maxPrimarySize={480}
+        minSecondarySize={420}
+        separatorLabel="调整文件目录和 Codex 时间线宽度"
+        primaryLabel="项目文件"
+        secondaryLabel="Codex 时间线"
+        storageKey={`codex-collab:workspace:files-timeline:${storageScope}`}
+      />
+    );
+  } else if (showPeople && people) {
     content = (
       <ResizableSplitPane
         className="workspace-layout-split workspace-layout-split--people-rest"
@@ -107,6 +128,23 @@ export function WorkspacePanelLayout({
         storageKey={`codex-collab:workspace:people-rest:${storageScope}`}
       />
     );
+  } else if (activity) {
+    content = (
+      <ResizableSplitPane
+        className="workspace-layout-split workspace-layout-split--chat-activity"
+        primary={chat}
+        secondary={activity}
+        defaultPrimarySize={920}
+        minPrimarySize={420}
+        minSecondarySize={240}
+        separatorLabel="调整聊天和任务活动宽度"
+        primaryLabel="协作聊天"
+        secondaryLabel="任务活动"
+        storageKey={`codex-collab:workspace:chat-activity:${storageScope}`}
+      />
+    );
+  } else {
+    content = chat;
   }
 
   return <div className={className}>{content}</div>;
