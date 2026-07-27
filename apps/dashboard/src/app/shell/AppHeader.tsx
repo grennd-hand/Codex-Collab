@@ -8,7 +8,6 @@ import {
   ChatMultipleRegular,
   FolderOpenRegular,
   HistoryRegular,
-  PersonAccountsRegular,
   PersonAddRegular,
   SignOutRegular,
   WeatherMoonRegular,
@@ -18,6 +17,7 @@ import type {
   Member,
   WorkspaceSummary,
 } from "@codex-collab/protocol";
+import { HeaderIdentity } from "./HeaderIdentity.js";
 import type { ThemeMode } from "./theme.js";
 
 export interface AppHeaderProps {
@@ -136,17 +136,11 @@ export function AppHeader({
             创建邀请
           </Button>
         ) : null}
-        <Button
-          appearance="subtle"
-          icon={<PersonAccountsRegular />}
-          className="account-button"
-          aria-label={accountDisplayName ? "打开我的房间" : "登录账号"}
-          onClick={onOpenAccount}
-        >
-          <span className="account-button-label">
-            {accountDisplayName ?? "登录"}
-          </span>
-        </Button>
+        <HeaderIdentity
+          member={member}
+          accountDisplayName={accountDisplayName}
+          onOpenAccount={onOpenAccount}
+        />
         <Button
           appearance="subtle"
           className="stable-icon-button"

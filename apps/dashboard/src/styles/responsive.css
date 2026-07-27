@@ -135,6 +135,17 @@
     display: none;
   }
 
+  .room-identity {
+    width: 32px;
+    padding-inline: 6px;
+    justify-content: center;
+  }
+
+  .room-identity-name,
+  .room-identity-role {
+    display: none;
+  }
+
   .workspace-dialog-surface {
     width: calc(100vw - 20px);
     max-height: calc(100dvh - 20px);

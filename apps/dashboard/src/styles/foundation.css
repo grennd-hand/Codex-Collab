@@ -147,10 +147,41 @@ textarea {
   max-width: 150px;
 }
 
-.account-button-label {
+.account-button-label,
+.room-identity-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.room-identity,
+.room-identity-button {
+  max-width: 180px;
+}
+
+.room-identity {
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--colorNeutralStroke2);
+  border-radius: var(--borderRadiusMedium);
+  color: var(--colorNeutralForeground1);
+  background: var(--colorNeutralBackground3);
+  font-size: var(--fontSizeBase200);
+}
+
+.room-identity > svg {
+  flex: 0 0 auto;
+  color: var(--colorNeutralForeground2);
+}
+
+.room-identity-role {
+  flex: 0 0 auto;
+  color: var(--colorNeutralForeground3);
+  font-size: var(--fontSizeBase100);
 }
 
 .topbar-thread-control {
@@ -298,4 +329,3 @@ textarea {
   margin: 3px 0 0;
   font-size: 12px;
 }
-
