@@ -6,7 +6,7 @@ import {
   LockClosedRegular,
 } from "@fluentui/react-icons";
 import type { Member } from "@codex-collab/protocol";
-import type { RefObject } from "react";
+import { useLayoutEffect, useRef, type RefObject } from "react";
 import type { WorkspaceHistoryWindow } from "../../app/workspace-history-window.js";
 import type { IdeNavigationTarget } from "../../ide/types.js";
 import type { MemberIdentity } from "../collaboration/member-identity.js";
@@ -14,6 +14,7 @@ import type { CodexExecutionPhase } from "../composer/codex-controls.js";
 import type { UnifiedTimelineItem } from "./imported-timeline.js";
 import { shouldShowExecutionStatus } from "../composer/codex-controls.js";
 import { TimelineItemList } from "./TimelineItemList.js";
+import { historyScrollIntent } from "./history-scroll.js";
 
 interface CodexTimelineProps {
   streamRef: RefObject<HTMLElement | null>;
@@ -84,10 +85,17 @@ export function CodexTimeline({
   onRetry,
   onOpenFile,
 }: CodexTimelineProps) {
+  const previousScrollTopRef = useRef(0);
+
+  useLayoutEffect(() => {
+    previousScrollTopRef.current = streamRef.current?.scrollTop ?? 0;
+  }, [history.threadId, streamRef]);
+
   const jumpToLatest = () => {
     const stream = streamRef.current;
     if (!stream) return;
     stream.scrollTop = stream.scrollHeight;
+    previousScrollTopRef.current = stream.scrollTop;
     onPinnedChange(true);
   };
 
@@ -99,12 +107,14 @@ export function CodexTimeline({
       ref={streamRef}
       onScroll={(event) => {
         const stream = event.currentTarget;
-        onPinnedChange(
-          stream.scrollHeight - stream.scrollTop - stream.clientHeight < 96,
+        const intent = historyScrollIntent(
+          stream,
+          previousScrollTopRef.current,
+          history.hasOlder && !history.olderLoading,
         );
-        if (stream.scrollTop < 120 && history.hasOlder && !history.olderLoading) {
-          onLoadOlder();
-        }
+        previousScrollTopRef.current = stream.scrollTop;
+        onPinnedChange(intent.pinned);
+        if (intent.loadOlder) onLoadOlder();
       }}
     >
       {initialLoading ? (

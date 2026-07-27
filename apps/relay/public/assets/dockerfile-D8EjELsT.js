@@ -1,0 +1,1 @@
+import{S as e,x as t}from"./IdeWorkspace-BUJy-g0c.js";export{t as conf,e as language};

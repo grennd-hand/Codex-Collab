@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -363,7 +364,7 @@ export function App() {
     document.documentElement.style.colorScheme = themeMode;
   }, [themeMode]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const stream = messageStreamRef.current;
     if (
       stream &&
@@ -372,16 +373,16 @@ export function App() {
     ) {
       stream.scrollTop = stream.scrollHeight;
     }
-    const chatStream = chatStreamRef.current;
-    if (chatStream) {
-      chatStream.scrollTop = chatStream.scrollHeight;
-    }
   }, [
-    messages,
     workspaceSummary?.codexRuntimeStatus,
     workspaceHistoryWindow.items.length,
     workspaceHistoryWindow.items.at(-1)?.entry.text,
   ]);
+
+  useLayoutEffect(() => {
+    const chatStream = chatStreamRef.current;
+    if (chatStream) chatStream.scrollTop = chatStream.scrollHeight;
+  }, [messages.length, messages.at(-1)?.id]);
 
   useEffect(() => {
     if (

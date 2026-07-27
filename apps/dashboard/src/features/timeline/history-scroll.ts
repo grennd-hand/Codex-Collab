@@ -13,6 +13,31 @@ export interface PendingHistoryScrollRestore {
   anchor: HistoryScrollAnchor | null;
 }
 
+export interface HistoryScrollIntent {
+  pinned: boolean;
+  loadOlder: boolean;
+}
+
+export function historyScrollIntent(
+  stream: Pick<HTMLElement, "clientHeight" | "scrollHeight" | "scrollTop">,
+  previousScrollTop: number,
+  canLoadOlder: boolean,
+): HistoryScrollIntent {
+  const distanceFromBottom = Math.max(
+    0,
+    stream.scrollHeight - stream.scrollTop - stream.clientHeight,
+  );
+  const pinned = distanceFromBottom < 96;
+  return {
+    pinned,
+    loadOlder:
+      canLoadOlder &&
+      !pinned &&
+      stream.scrollTop < 120 &&
+      stream.scrollTop + 1 < previousScrollTop,
+  };
+}
+
 export function captureHistoryScrollAnchor(
   stream: HTMLElement | null,
 ): HistoryScrollAnchor | null {

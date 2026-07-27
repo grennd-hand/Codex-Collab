@@ -1,5 +1,5 @@
 import { ChevronDownRegular } from "@fluentui/react-icons";
-import { useEffect, useId, useState } from "react";
+import { useId, useLayoutEffect, useRef, useState } from "react";
 import type { CodexRecordEntry } from "@codex-collab/protocol";
 import type { IdeNavigationTarget } from "../../ide/types.js";
 import { presentExecutionEntries } from "./readable-output.js";
@@ -7,6 +7,7 @@ import { ExecutionStepCard } from "./ExecutionStepCard.js";
 import {
   completedExecutionDurationLabel,
   executionProcessPresentation,
+  resolveExecutionProcessExpanded,
 } from "./execution-process-presentation.js";
 import {
   ExecutionElapsedTime,
@@ -18,6 +19,7 @@ export {
   completedExecutionDurationLabel,
   elapsedExecutionLabel,
   executionProcessPresentation,
+  resolveExecutionProcessExpanded,
   type ExecutionProcessPresentation,
 } from "./execution-process-presentation.js";
 
@@ -45,7 +47,12 @@ export function ExecutionProcess({
     active && !finalized,
     finalized,
   );
-  const [expanded, setExpanded] = useState(presentation.defaultExpanded);
+  const [manualExpanded, setManualExpanded] = useState<boolean | null>(null);
+  const previousStatusRef = useRef(presentation.status);
+  const expanded = resolveExecutionProcessExpanded(
+    presentation.defaultExpanded,
+    manualExpanded,
+  );
   const contentId = useId();
   const runningStartedAt =
     presentation.status === "running"
@@ -64,9 +71,13 @@ export function ExecutionProcess({
         ? "折叠任务过程"
         : "展开任务过程";
 
-  useEffect(() => {
-    setExpanded(presentation.defaultExpanded);
-  }, [presentation.defaultExpanded, presentation.status]);
+  useLayoutEffect(() => {
+    const previousStatus = previousStatusRef.current;
+    previousStatusRef.current = presentation.status;
+    if (previousStatus !== presentation.status && presentation.status === "failed") {
+      setManualExpanded(null);
+    }
+  }, [presentation.status]);
   return (
     <section
       className={`execution-process ${presentation.status} ${
@@ -95,7 +106,7 @@ export function ExecutionProcess({
           aria-label={`${presentation.title}：${presentation.detail}，${
             presentation.progress
           }，${disclosureAction}`}
-          onClick={() => setExpanded((current) => !current)}
+          onClick={() => setManualExpanded(!expanded)}
         >
           <span className="execution-process-status-icon" aria-hidden="true">
             <ExecutionStatusIcon

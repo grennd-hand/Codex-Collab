@@ -28,6 +28,13 @@ export interface ExecutionProcessPresentation {
   defaultExpanded: boolean;
 }
 
+export function resolveExecutionProcessExpanded(
+  defaultExpanded: boolean,
+  manualExpanded: boolean | null,
+): boolean {
+  return manualExpanded ?? defaultExpanded;
+}
+
 export function executionProcessPresentation(
   records: readonly (Pick<ReadableExecution, "status" | "title"> &
     Partial<Pick<ReadableExecution, "role">>)[],
@@ -147,4 +154,3 @@ export function completedExecutionDurationLabel(
   const hours = Math.floor(minutes / 60);
   return `${hours} 小时 ${minutes % 60} 分`;
 }
-

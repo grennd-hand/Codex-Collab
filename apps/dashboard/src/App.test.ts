@@ -7,6 +7,7 @@ import {
   completedExecutionDurationLabel,
   elapsedExecutionLabel,
   executionProcessPresentation,
+  resolveExecutionProcessExpanded,
 } from "./features/timeline/ExecutionProcess.js";
 import {
   canMemberStopCodex,
@@ -122,6 +123,12 @@ describe("Codex execution controls", () => {
 });
 
 describe("Codex client-style task process", () => {
+  it("keeps a manual disclosure choice across realtime status updates", () => {
+    expect(resolveExecutionProcessExpanded(false, true)).toBe(true);
+    expect(resolveExecutionProcessExpanded(true, false)).toBe(false);
+    expect(resolveExecutionProcessExpanded(true, null)).toBe(true);
+  });
+
   it("keeps active and failed work open while completed work starts collapsed", () => {
     expect(
       executionProcessPresentation([

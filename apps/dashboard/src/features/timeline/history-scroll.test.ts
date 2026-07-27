@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   captureHistoryScrollAnchor,
+  historyScrollIntent,
   restoreHistoryScrollAnchor,
 } from "./history-scroll.js";
 
@@ -9,6 +10,25 @@ function rect(top: number, bottom = top + 20): DOMRect {
 }
 
 describe("history scroll anchors", () => {
+  it("loads older records only for a real upward scroll near the top", () => {
+    const stream = { clientHeight: 500, scrollHeight: 1_500, scrollTop: 80 };
+    expect(historyScrollIntent(stream, 160, true)).toEqual({
+      pinned: false,
+      loadOlder: true,
+    });
+    expect(historyScrollIntent(stream, 40, true).loadOlder).toBe(false);
+  });
+
+  it("does not auto-load older records while the short timeline is pinned", () => {
+    expect(
+      historyScrollIntent(
+        { clientHeight: 600, scrollHeight: 600, scrollTop: 0 },
+        0,
+        true,
+      ),
+    ).toEqual({ pinned: true, loadOlder: false });
+  });
+
   it("restores the same visible message after the surrounding layout reflows", () => {
     const anchor = {
       dataset: { historyAnchor: "message-42" },
