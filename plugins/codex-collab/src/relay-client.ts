@@ -344,7 +344,7 @@ export class RelayClient {
     memberToken: string,
     operationId: string,
     input:
-      | { status: "completed"; leaseId: string; file: WorkspaceFileContent }
+      | { status: "completed"; leaseId: string; file?: WorkspaceFileContent }
       | {
           status: "failed";
           leaseId: string;
@@ -431,6 +431,7 @@ export class RelayClient {
       threadId: string;
       history: CodexRecordEntry[];
       files: WorkspaceFileContent[];
+      directories?: string[];
     },
   ): Promise<WorkspaceSyncState> {
     const result = await this.request<WorkspaceSyncResponse>(

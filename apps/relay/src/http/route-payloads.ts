@@ -12,6 +12,7 @@ import {
   type WorkspaceFileContent,
   type WorkspaceFileOperation,
   type WorkspaceFileOperationEvent,
+  isPublishableWorkspaceDirectoryPath,
   ProtocolError,
 } from "@codex-collab/protocol";
 
@@ -221,11 +222,37 @@ export function parseWorkspaceFiles(value: unknown): WorkspaceFileContent[] {
   });
 }
 
+export function parseWorkspaceDirectories(value: unknown): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 2_000) {
+    throw new ProtocolError(
+      400,
+      "invalid_request",
+      "directories must contain at most 2000 paths",
+    );
+  }
+  return [...new Set(value.map((item, index) => {
+    const path = requiredString(item, `directories[${index}]`, 500)
+      .replaceAll("\\", "/")
+      .replace(/^\.\//, "")
+      .replace(/^\/+|\/+$/g, "");
+    if (!isPublishableWorkspaceDirectoryPath(path)) {
+      throw new ProtocolError(
+        400,
+        "invalid_request",
+        `directories[${index}] is unsafe`,
+      );
+    }
+    return path;
+  }))];
+}
+
 export function parseWorkspaceFileOperationRequest(
   body: Record<string, unknown>,
 ):
   | { kind: "read"; path: string }
-  | { kind: "write"; path: string; content: string; expectedSha256: string } {
+  | { kind: "write"; path: string; content: string; expectedSha256: string }
+  | { kind: "mkdir"; path: string } {
   const path = requiredString(body.path, "path", 500);
   if (body.kind === "read") {
     if (body.content !== undefined || body.expectedSha256 !== undefined) {
@@ -237,8 +264,18 @@ export function parseWorkspaceFileOperationRequest(
     }
     return { kind: "read", path };
   }
+  if (body.kind === "mkdir") {
+    if (body.content !== undefined || body.expectedSha256 !== undefined) {
+      throw new ProtocolError(
+        400,
+        "invalid_request",
+        "Directory operations do not accept content or expectedSha256",
+      );
+    }
+    return { kind: "mkdir", path };
+  }
   if (body.kind !== "write") {
-    throw new ProtocolError(400, "invalid_request", "kind must be read or write");
+    throw new ProtocolError(400, "invalid_request", "kind must be read, write, or mkdir");
   }
   if (typeof body.content !== "string") {
     throw new ProtocolError(400, "invalid_request", "content must be a string");

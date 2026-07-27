@@ -65,6 +65,18 @@ const CODEX_NON_CONFIG_DIRECTORIES = new Set([
   "tmp",
 ]);
 
+const PRIVATE_WORKSPACE_DIRECTORIES = new Set([
+  ".aws",
+  ".azure",
+  ".codex",
+  ".codex-collab",
+  ".git",
+  ".gnupg",
+  ".runtime-data",
+  ".ssh",
+  "node_modules",
+]);
+
 function workspacePathName(path: string): string {
   return path.replaceAll("\\", "/").split("/").at(-1) ?? "";
 }
@@ -91,6 +103,24 @@ export function isPublishableWorkspacePath(path: string): boolean {
   }
   const dot = name.lastIndexOf(".");
   return dot >= 0 && PUBLISHABLE_WORKSPACE_EXTENSIONS.has(name.slice(dot));
+}
+
+export function isPublishableWorkspaceDirectoryPath(path: string): boolean {
+  const normalized = path
+    .replaceAll("\\", "/")
+    .replace(/^\.\//, "")
+    .replace(/^\/+|\/+$/g, "")
+    .toLowerCase();
+  const segments = normalized.split("/").filter(Boolean);
+  return (
+    segments.length > 0 &&
+    !segments.some(
+      (segment) =>
+        segment === "." ||
+        segment === ".." ||
+        PRIVATE_WORKSPACE_DIRECTORIES.has(segment),
+    )
+  );
 }
 
 export function codexConfigRelativePath(path: string): string | null {
@@ -156,4 +186,3 @@ export function isWorkspacePathIgnored(
     );
   });
 }
-

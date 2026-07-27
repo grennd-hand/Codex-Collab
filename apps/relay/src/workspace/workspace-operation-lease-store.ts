@@ -172,25 +172,40 @@ export class WorkspaceOperationLeaseStore extends WorkspaceFileOperationStore {
         const existing = this.db
           .prepare("SELECT 1 AS present FROM workspace_files WHERE session_id = ? AND path = ?")
           .get(sessionId, row.path) as { present: number } | undefined;
-        if (!existing) {
+        const missingExistingFile = row.expected_sha256 !== "" && !existing;
+        const occupiedNewFilePath = row.expected_sha256 === "" && Boolean(existing);
+        if (missingExistingFile || occupiedNewFilePath) {
+          const errorCode = occupiedNewFilePath
+            ? "file_conflict"
+            : "workspace_file_not_found";
+          const errorMessage = occupiedNewFilePath
+            ? "A file now exists at the requested path"
+            : "The file is no longer present in the shared workspace";
           this.db
             .prepare(`
               UPDATE workspace_file_operations
               SET status = 'failed', request_content = NULL, lease_id = NULL,
                   lease_expires_at = NULL, lease_confirmed_at = NULL,
-                  error_code = 'workspace_file_not_found',
-                  error_message = 'The file is no longer present in the shared workspace',
+                  error_code = ?, error_message = ?,
                   completed_at = ?
               WHERE id = ? AND session_id = ? AND status = 'processing'
                 AND host_generation = ? AND lease_id = ?
             `)
-            .run(confirmedAt, operationId, sessionId, host.generation, leaseId);
+            .run(
+              errorCode,
+              errorMessage,
+              confirmedAt,
+              operationId,
+              sessionId,
+              host.generation,
+              leaseId,
+            );
           this.db.exec("COMMIT");
           transactionOpen = false;
           throw new ProtocolError(
             409,
-            "workspace_file_not_found",
-            "The file is no longer present in the shared workspace",
+            errorCode,
+            errorMessage,
           );
         }
         this.assertWorkspaceFileCapacity(
@@ -237,4 +252,3 @@ export class WorkspaceOperationLeaseStore extends WorkspaceFileOperationStore {
   }
 
 }
-

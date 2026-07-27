@@ -185,9 +185,9 @@ describe("SessionStore workspace limits", () => {
         kind: "write",
         path: "src/new-file.ts",
         content: "x",
-        expectedSha256: "a".repeat(64),
+        expectedSha256: "",
       }),
-    ).toThrowError(/already present|existing shared/i);
+    ).toThrowError(/capacity|limit/i);
 
     const update = store.createWorkspaceFileOperation(
       created.session.id,
@@ -295,9 +295,9 @@ describe("SessionStore workspace limits", () => {
         kind: "write",
         path: "src/another.ts",
         content: "y",
-        expectedSha256: "a".repeat(64),
+        expectedSha256: "",
       }),
-    ).toThrowError(/already present|existing shared/i);
+    ).toThrowError(/storage limit|capacity/i);
     expect(
       store.createWorkspaceFileOperation(created.session.id, created.memberToken, {
         kind: "write",

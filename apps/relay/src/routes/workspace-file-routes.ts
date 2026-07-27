@@ -83,7 +83,7 @@ export async function handleWorkspaceFileRoutes(
     ) {
       const body = await readJson(request, 2_100_000);
       let input:
-        | { status: "completed"; leaseId: string; file: WorkspaceFileContent }
+        | { status: "completed"; leaseId: string; file?: WorkspaceFileContent }
         | {
             status: "failed";
             leaseId: string;
@@ -95,7 +95,9 @@ export async function handleWorkspaceFileRoutes(
         input = {
           status: "completed",
           leaseId: requiredString(body.leaseId, "leaseId", 100),
-          file: parseWorkspaceOperationResultFile(body.file),
+          ...(body.file === undefined || body.file === null
+            ? {}
+            : { file: parseWorkspaceOperationResultFile(body.file) }),
         };
       } else if (body.status === "failed") {
         input = {

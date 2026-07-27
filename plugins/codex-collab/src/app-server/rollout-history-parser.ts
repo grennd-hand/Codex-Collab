@@ -20,6 +20,16 @@ interface RolloutItem {
   payload?: Record<string, unknown>;
 }
 
+function rolloutTurnId(payload: Record<string, unknown>): string | null {
+  if (typeof payload.turn_id === "string") return payload.turn_id;
+  const metadata = payload.internal_chat_message_metadata_passthrough;
+  return metadata &&
+    typeof metadata === "object" &&
+    "turn_id" in metadata &&
+    typeof metadata.turn_id === "string"
+    ? metadata.turn_id
+    : null;
+}
 
 function rolloutPatchInput(payload: Record<string, unknown>): string {
   if (!payload.changes || typeof payload.changes !== "object") return "";
@@ -111,12 +121,15 @@ export function extractCodexRolloutEntries(
       name: string;
       input: string;
       createdAt: string | null;
+      turnId: string | null;
       status?: "completed" | "failed";
       output?: string;
       fileChanges?: CodexFileChange[];
     }
   >();
   const commandToolNames = new Set(["apply_patch", "exec", "exec_command", "write_stdin"]);
+  const completedTurnIds = new Set<string>();
+  let activeTurnId: string | null = null;
 
   for (const line of lines) {
     let item: RolloutItem;
@@ -132,6 +145,17 @@ export function extractCodexRolloutEntries(
       typeof item.timestamp === "string" && !Number.isNaN(Date.parse(item.timestamp))
         ? new Date(item.timestamp).toISOString()
         : null;
+
+    if (item.type === "event_msg" && payloadType === "task_started") {
+      activeTurnId = rolloutTurnId(payload);
+      continue;
+    }
+    if (item.type === "event_msg" && payloadType === "task_complete") {
+      const turnId = rolloutTurnId(payload) ?? activeTurnId;
+      if (turnId) completedTurnIds.add(turnId);
+      if (!turnId || activeTurnId === turnId) activeTurnId = null;
+      continue;
+    }
 
     if (item.type === "event_msg" && payloadType === "patch_apply_end") {
       const input = rolloutPatchInput(payload);
@@ -216,6 +240,7 @@ export function extractCodexRolloutEntries(
       commandCalls.set(callId, {
         id: typeof payload.id === "string" ? payload.id : callId,
         name,
+        turnId: rolloutTurnId(payload) ?? activeTurnId,
         input:
           name === "apply_patch"
             ? safeApplyPatchCallInput(rolloutText(payload.arguments ?? payload.input))
@@ -260,8 +285,11 @@ export function extractCodexRolloutEntries(
   }
 
   for (const call of commandCalls.values()) {
+    const status =
+      call.status ??
+      (call.turnId && completedTurnIds.has(call.turnId) ? "completed" : "running");
     const text = redactSensitiveText(
-      rolloutCommandText(call.name, call.status ?? "running", call.input, call.output),
+      rolloutCommandText(call.name, status, call.input, call.output),
     );
     if (!text) continue;
     entries.push({
@@ -269,10 +297,16 @@ export function extractCodexRolloutEntries(
       role: "command",
       text: text.slice(0, 50_000),
       createdAt: call.createdAt,
-      ...(call.fileChanges?.length ? { fileChanges: call.fileChanges } : {}),
+      ...(call.fileChanges?.length
+        ? {
+            fileChanges: call.fileChanges.map((change) => ({
+              ...change,
+              lifecycle: status === "failed" ? "failed" as const : status,
+            })),
+          }
+        : {}),
     });
   }
   return limitRecordEntries(entries);
 }
-
 

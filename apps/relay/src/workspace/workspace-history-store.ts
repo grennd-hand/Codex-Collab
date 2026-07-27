@@ -12,7 +12,7 @@ import {
   containsLikelySecret,
   ProtocolError,
 } from "@codex-collab/protocol";
-import { WorkspaceHostStore } from "./workspace-host-store.js";
+import { WorkspaceDirectoryStore } from "./workspace-directory-store.js";
 import { paginateWorkspaceHistory } from "./workspace-history-pagination.js";
 import {
   type WorkspaceFileMetadataRow,
@@ -23,7 +23,7 @@ import {
   now,
 } from "../storage/session-store-types.js";
 
-export class WorkspaceHistoryStore extends WorkspaceHostStore {
+export class WorkspaceHistoryStore extends WorkspaceDirectoryStore {
   publishWorkspaceCatalog(
     sessionId: string,
     memberToken: string,
@@ -82,6 +82,7 @@ export class WorkspaceHistoryStore extends WorkspaceHostStore {
         );
       if (!selectedStillExists) {
         this.db.prepare("DELETE FROM workspace_files WHERE session_id = ?").run(sessionId);
+        this.clearWorkspaceDirectories(sessionId);
       }
       this.db.exec("COMMIT");
     } catch (error) {
@@ -133,6 +134,7 @@ export class WorkspaceHistoryStore extends WorkspaceHostStore {
         `)
         .run(threadId, sessionId);
       this.db.prepare("DELETE FROM workspace_files WHERE session_id = ?").run(sessionId);
+      this.clearWorkspaceDirectories(sessionId);
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");
@@ -149,6 +151,7 @@ export class WorkspaceHistoryStore extends WorkspaceHostStore {
       threadId: string;
       history: CodexRecordEntry[];
       files: WorkspaceFileContent[];
+      directories?: string[];
     },
   ): WorkspaceSummary;
   publishWorkspaceSnapshot(
@@ -158,6 +161,7 @@ export class WorkspaceHistoryStore extends WorkspaceHostStore {
       threadId: string;
       history: CodexRecordEntry[];
       files: WorkspaceFileContent[];
+      directories?: string[];
     },
     returnMinimal: true,
   ): WorkspaceSyncState;
@@ -168,6 +172,7 @@ export class WorkspaceHistoryStore extends WorkspaceHostStore {
       threadId: string;
       history: CodexRecordEntry[];
       files: WorkspaceFileContent[];
+      directories?: string[];
     },
     returnMinimal = false,
   ): WorkspaceSummary | WorkspaceSyncState {
@@ -211,6 +216,7 @@ export class WorkspaceHistoryStore extends WorkspaceHostStore {
         "The shared workspace file snapshot exceeds the session limit",
       );
     }
+    const requestedDirectories = input.directories ?? [];
     const syncedAt = now();
     this.db.exec("BEGIN IMMEDIATE");
     try {
@@ -250,6 +256,7 @@ export class WorkspaceHistoryStore extends WorkspaceHostStore {
           file.content,
         );
       }
+      this.replaceWorkspaceDirectories(sessionId, requestedDirectories);
       this.db
         .prepare(`
           UPDATE workspace_state SET history_json = ?, history_count = ?, synced_at = ?
@@ -440,6 +447,7 @@ export class WorkspaceHistoryStore extends WorkspaceHostStore {
         selectedThread: null,
         historyCount: 0,
         files: [],
+        directories: [],
         codexRuntimeStatus: "unavailable",
         syncedAt: null,
       };
@@ -462,6 +470,7 @@ export class WorkspaceHistoryStore extends WorkspaceHostStore {
       selectedThread,
       historyCount: state.history_count,
       files: rows.map((row) => this.toWorkspaceFile(row)),
+      directories: this.workspaceDirectories(sessionId),
       codexRuntimeStatus: state.codex_runtime_status,
       syncedAt: state.synced_at,
     };

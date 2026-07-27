@@ -229,6 +229,38 @@ describe("Codex record import", () => {
     ]);
   });
 
+  it("finalizes a dangling tool call when its rollout turn completes", () => {
+    const records = extractCodexRolloutEntries(
+      [
+        JSON.stringify({
+          timestamp: "2026-07-25T00:00:00.000Z",
+          type: "event_msg",
+          payload: { type: "task_started", turn_id: "turn-1" },
+        }),
+        JSON.stringify({
+          timestamp: "2026-07-25T00:00:01.000Z",
+          type: "response_item",
+          payload: {
+            type: "function_call",
+            id: "call-item",
+            call_id: "call-1",
+            name: "exec_command",
+            arguments: JSON.stringify({ cmd: "npm test" }),
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-07-25T00:00:02.000Z",
+          type: "event_msg",
+          payload: { type: "task_complete", turn_id: "turn-1" },
+        }),
+      ],
+      "thread-1",
+    );
+
+    expect(records).toHaveLength(1);
+    expect(records[0]?.text).toContain("status: completed");
+  });
+
   it("preserves rollout commentary and final-answer phases", () => {
     const records = extractCodexRolloutEntries(
       ["commentary", "final_answer"].map((phase, index) =>

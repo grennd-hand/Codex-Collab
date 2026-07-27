@@ -17,6 +17,7 @@ import {
   type WorkspaceFileOperationStatus,
   codexConfigRelativePath,
   isPublishableCodexConfigPath,
+  isPublishableWorkspaceDirectoryPath,
   isPublishableWorkspacePath,
   ProtocolError,
 } from "@codex-collab/protocol";
@@ -251,6 +252,32 @@ export function normalizeWorkspaceOperationPath(path: string): string {
   return normalized;
 }
 
+export function normalizeWorkspaceDirectoryPath(path: string): string {
+  const normalized = path.replaceAll("\\", "/");
+  if (
+    normalized.length === 0 ||
+    normalized.length > 500 ||
+    normalized.startsWith("/") ||
+    /^[A-Za-z]:/.test(normalized) ||
+    normalized.includes("\0") ||
+    normalized.split("/").some(
+      (segment) =>
+        !segment ||
+        segment === "." ||
+        segment === ".." ||
+        segment.endsWith(".") ||
+        segment.endsWith(" ") ||
+        segment.includes(":") ||
+        /[\u0000-\u001f<>"|?*]/.test(segment) ||
+        /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(segment),
+    ) ||
+    !isPublishableWorkspaceDirectoryPath(normalized)
+  ) {
+    throw new ProtocolError(400, "unsafe_workspace_path", "Use a safe relative directory path");
+  }
+  return normalized;
+}
+
 export function contentSha256(content: string): string {
   return createHash("sha256").update(content).digest("hex");
 }
@@ -262,6 +289,7 @@ export const MAX_FILE_OPERATION_RESULT_CONTENT_COUNT = 20;
 export const MAX_FILE_OPERATION_RESULT_CONTENT_BYTES = 10_000_000;
 export const FILE_OPERATION_LEASE_MS = 30_000;
 export const MAX_WORKSPACE_FILE_COUNT = 600;
+export const MAX_WORKSPACE_DIRECTORY_COUNT = 2_000;
 export const MAX_WORKSPACE_FILE_BYTES = 5_000_000;
 export const MAX_MEMBER_WRITE_OPERATIONS_PER_MINUTE = 30;
 export const MAX_MEMBER_WRITE_BYTES_PER_MINUTE = 4_000_000;
@@ -298,5 +326,3 @@ export function toAccount(row: AccountRow): Account {
     createdAt: row.created_at,
   };
 }
-
-

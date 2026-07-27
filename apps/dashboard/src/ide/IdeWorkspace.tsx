@@ -10,6 +10,7 @@ import "./ide-workspace.css";
 
 export default function IdeWorkspace({
   files,
+  directories = [],
   fileChanges = [],
   rootLabel,
   hostDeviceLabel,
@@ -21,6 +22,8 @@ export default function IdeWorkspace({
   loading = false,
   onReadFile,
   onSaveFile,
+  onCreateFile,
+  onCreateDirectory,
   onRefresh,
   openFileRequest = null,
   storageScope = "workspace",
@@ -31,6 +34,9 @@ export default function IdeWorkspace({
 }: IdeWorkspaceProps) {
   const workspace = useIdeWorkspaceState({
     files,
+    directories,
+    onCreateDirectory,
+    onCreateFile,
     onEditorExpandedChange,
     onReadFile,
     onSaveFile,
@@ -42,6 +48,8 @@ export default function IdeWorkspace({
     activePath,
     activeTab,
     closeTab,
+    createDirectory,
+    createFile,
     expandedDirectories,
     keepLocalDraft,
     loadFile,
@@ -73,6 +81,7 @@ export default function IdeWorkspace({
   const explorerPane = (
     <IdeExplorer
       fileCount={files.length}
+      directoryCount={directories.length}
       fileChanges={fileChanges}
       loading={loading}
       query={query}
@@ -80,6 +89,7 @@ export default function IdeWorkspace({
       activePath={activePath}
       expandedDirectories={expandedDirectories}
       forceExpanded={forceExpanded}
+      readOnly={readOnly}
       onQueryChange={setQuery}
       onToggleDirectory={(path) =>
         setExpandedDirectories((current) => {
@@ -90,6 +100,8 @@ export default function IdeWorkspace({
         })
       }
       onOpenFile={(path) => void loadFile(path)}
+      onCreateFile={createFile}
+      onCreateDirectory={createDirectory}
     />
   );
   const editorPane = (

@@ -53,7 +53,7 @@ export interface WorkspaceFileContent extends WorkspaceFile {
   content: string;
 }
 
-export type WorkspaceFileOperationKind = "read" | "write";
+export type WorkspaceFileOperationKind = "read" | "write" | "mkdir";
 export type WorkspaceFileOperationStatus =
   | "queued"
   | "processing"
@@ -108,8 +108,12 @@ export type CreateWorkspaceFileOperationRequest =
       kind: "write";
       path: string;
       content: string;
-      /** SHA-256 observed for the existing shared file. New-file creation is disabled. */
+      /** Existing file SHA-256, or an empty string to require that a new file does not exist. */
       expectedSha256: string;
+    }
+  | {
+      kind: "mkdir";
+      path: string;
     };
 
 export interface UpdateMemberWorkspaceFileAccessRequest {
@@ -125,6 +129,7 @@ export interface WorkspaceSummary {
   selectedThread: CodexThreadCatalogEntry | null;
   history: CodexRecordEntry[];
   files: WorkspaceFile[];
+  directories?: string[];
   codexRuntimeStatus: CodexRuntimeStatus;
   syncedAt: string | null;
 }
@@ -187,4 +192,3 @@ export interface RealtimeTicketResponse {
   ticket: string;
   expiresAt: string;
 }
-

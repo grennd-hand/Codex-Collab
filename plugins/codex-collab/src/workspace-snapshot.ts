@@ -5,6 +5,7 @@ import {
   type WorkspaceFileContent,
 } from "@codex-collab/protocol";
 import { FileSandbox } from "./file-sandbox.js";
+import { listSafeWorkspaceDirectories } from "./workspace-directory-sandbox.js";
 
 export {
   containsLikelySecret,
@@ -78,6 +79,15 @@ export async function buildWorkspaceSnapshot(
     maxTotalBytes: 4_000_000,
     ignoredPaths: await readCollabIgnore(sandbox),
   });
+}
+
+export async function buildWorkspaceDirectories(
+  sandbox: FileSandbox,
+): Promise<string[]> {
+  return listSafeWorkspaceDirectories(
+    sandbox.getRoot(),
+    await readCollabIgnore(sandbox),
+  );
 }
 
 export async function buildCodexConfigSnapshot(

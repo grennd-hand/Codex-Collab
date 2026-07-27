@@ -1,5 +1,6 @@
 import {
   Badge,
+  Button,
   Input,
   Skeleton,
   SkeletonItem,
@@ -8,16 +9,20 @@ import {
   ChevronDownRegular,
   ChevronRightRegular,
   DocumentRegular,
+  DocumentAddRegular,
+  FolderAddRegular,
   FolderOpenRegular,
   FolderRegular,
   SearchRegular,
 } from "@fluentui/react-icons";
 import type { CodexFileChange } from "@codex-collab/protocol";
-import { useMemo, type CSSProperties } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
 import type { IdeFileTreeNode } from "./file-tree.js";
+import { IdeCreateEntryDialog } from "./IdeCreateEntryDialog.js";
 
 interface IdeExplorerProps {
   fileCount: number;
+  directoryCount: number;
   loading: boolean;
   query: string;
   visibleTree: IdeFileTreeNode[];
@@ -25,9 +30,12 @@ interface IdeExplorerProps {
   expandedDirectories: ReadonlySet<string>;
   fileChanges: readonly CodexFileChange[];
   forceExpanded: boolean;
+  readOnly: boolean;
   onQueryChange: (value: string) => void;
   onToggleDirectory: (path: string) => void;
   onOpenFile: (path: string) => void;
+  onCreateFile: (path: string) => Promise<void>;
+  onCreateDirectory: (path: string) => Promise<void>;
 }
 
 function formatFileSize(size: number): string {
@@ -146,6 +154,7 @@ function ExplorerSkeleton() {
 
 export function IdeExplorer({
   fileCount,
+  directoryCount,
   loading,
   query,
   visibleTree,
@@ -153,10 +162,15 @@ export function IdeExplorer({
   expandedDirectories,
   fileChanges,
   forceExpanded,
+  readOnly,
   onQueryChange,
   onToggleDirectory,
   onOpenFile,
+  onCreateFile,
+  onCreateDirectory,
 }: IdeExplorerProps) {
+  const [createKind, setCreateKind] = useState<"file" | "directory" | null>(null);
+  const entryCount = fileCount + directoryCount;
   const changeByPath = useMemo(() => {
     const result = new Map<string, CodexFileChange>();
     for (const change of fileChanges) result.set(change.path.replaceAll("\\", "/"), change);
@@ -166,7 +180,29 @@ export function IdeExplorer({
     <aside className="ide-explorer" aria-label="文件资源管理器">
       <div className="ide-pane-heading">
         <strong>资源管理器</strong>
-        <Badge appearance="tint">{fileCount}</Badge>
+        <div className="ide-explorer-actions">
+          {!readOnly ? (
+            <>
+              <Button
+                appearance="subtle"
+                size="small"
+                icon={<DocumentAddRegular />}
+                title="新建文件"
+                aria-label="新建文件"
+                onClick={() => setCreateKind("file")}
+              />
+              <Button
+                appearance="subtle"
+                size="small"
+                icon={<FolderAddRegular />}
+                title="新建文件夹"
+                aria-label="新建文件夹"
+                onClick={() => setCreateKind("directory")}
+              />
+            </>
+          ) : null}
+          <Badge appearance="tint">{fileCount}</Badge>
+        </div>
       </div>
       <div className="ide-search">
         <Input
@@ -179,15 +215,15 @@ export function IdeExplorer({
         />
       </div>
       <div className="ide-tree" role="tree" aria-label="项目文件">
-        {loading && fileCount === 0 ? <ExplorerSkeleton /> : null}
-        {!loading && fileCount === 0 ? (
+        {loading && entryCount === 0 ? <ExplorerSkeleton /> : null}
+        {!loading && entryCount === 0 ? (
           <div className="ide-state ide-state-compact">
             <FolderOpenRegular aria-hidden="true" />
             <strong>没有可共享的文本文件</strong>
             <span>同步工作区后，安全范围内的文件会显示在这里。</span>
           </div>
         ) : null}
-        {fileCount > 0 && visibleTree.length === 0 ? (
+        {entryCount > 0 && visibleTree.length === 0 ? (
           <div className="ide-state ide-state-compact">
             <SearchRegular aria-hidden="true" />
             <strong>没有匹配文件</strong>
@@ -208,6 +244,12 @@ export function IdeExplorer({
           />
         ))}
       </div>
+      <IdeCreateEntryDialog
+        kind={createKind}
+        onClose={() => setCreateKind(null)}
+        onCreateFile={onCreateFile}
+        onCreateDirectory={onCreateDirectory}
+      />
     </aside>
   );
 }

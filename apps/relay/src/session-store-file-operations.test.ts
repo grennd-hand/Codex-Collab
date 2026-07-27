@@ -7,7 +7,7 @@ import { SessionStore } from "./session-store.js";
 import { createStore, publishIdeFile, selectIdeThread } from "./session-store-test-support.js";
 
 describe("SessionStore file operation leases", () => {
-  it("queues auditable host file operations behind explicit member write access", () => {
+  it("grants approved members auditable workspace write access", () => {
     const store = createStore();
     const created = store.createSession("IDE room", "Owner");
     const pairing = store.createHostPairing(created.session.id, created.memberToken, 10);
@@ -27,16 +27,8 @@ describe("SessionStore file operation leases", () => {
 
     expect(created.owner.workspaceFileAccess).toBe("workspace-write");
     expect(store.getCurrentMember(created.session.id, guest.memberToken).workspaceFileAccess).toBe(
-      "read-only",
+      "workspace-write",
     );
-    expect(() =>
-      store.createWorkspaceFileOperation(created.session.id, guest.memberToken, {
-        kind: "write",
-        path: "src/index.ts",
-        content: "export {};",
-        expectedSha256: originalSha256,
-      }),
-    ).toThrowError(/not granted/i);
 
     const read = store.createWorkspaceFileOperation(
       created.session.id,
@@ -46,13 +38,6 @@ describe("SessionStore file operation leases", () => {
     expect(read.status).toBe("queued");
     expect(read.resultFile).toBeNull();
 
-    const writable = store.updateMemberWorkspaceFileAccess(
-      created.session.id,
-      created.memberToken,
-      guest.member.id,
-      "workspace-write",
-    );
-    expect(writable.workspaceFileAccess).toBe("workspace-write");
     const write = store.createWorkspaceFileOperation(
       created.session.id,
       guest.memberToken,
@@ -271,6 +256,100 @@ describe("SessionStore file operation leases", () => {
         .prepare("SELECT result_content FROM workspace_file_operations WHERE id = ?")
         .get(secretRead.id),
     ).toEqual({ result_content: null });
+  });
+
+  it("creates a new file and an empty directory inside the approved root", () => {
+    const store = createStore();
+    const created = store.createSession("Create entries", "Owner");
+    const pairing = store.createHostPairing(created.session.id, created.memberToken, 10);
+    const host = store.claimHostPairing(pairing.pairingToken, "Owner PC", "Project");
+    selectIdeThread(store, created.session.id, created.memberToken, host.memberToken);
+    const invite = store.createInvite(created.session.id, created.memberToken, 60, 1);
+    const guest = store.joinInvite(invite.inviteToken, "Editor");
+    store.approveMember(created.session.id, created.memberToken, guest.member.id);
+
+    const fileOperation = store.createWorkspaceFileOperation(
+      created.session.id,
+      guest.memberToken,
+      {
+        kind: "write",
+        path: "src/new-file.ts",
+        content: "",
+        expectedSha256: "",
+      },
+    );
+    const fileClaim = store.claimNextWorkspaceFileOperation(
+      created.session.id,
+      host.memberToken,
+    ).operation!;
+    const confirmedFile = store.confirmWorkspaceFileOperationLease(
+      created.session.id,
+      host.memberToken,
+      fileOperation.id,
+      fileClaim.leaseId,
+    );
+    expect(confirmedFile.expectedSha256).toBe("");
+    store.completeWorkspaceFileOperation(
+      created.session.id,
+      host.memberToken,
+      fileOperation.id,
+      {
+        status: "completed",
+        leaseId: fileClaim.leaseId,
+        file: {
+          path: "src/new-file.ts",
+          content: "",
+          size: 0,
+          modifiedAt: "2026-07-28T00:00:00.000Z",
+          sha256: createHash("sha256").update("").digest("hex"),
+        },
+      },
+    );
+
+    const directoryOperation = store.createWorkspaceFileOperation(
+      created.session.id,
+      guest.memberToken,
+      { kind: "mkdir", path: "src/empty-folder" },
+    );
+    const directoryClaim = store.claimNextWorkspaceFileOperation(
+      created.session.id,
+      host.memberToken,
+    ).operation!;
+    store.confirmWorkspaceFileOperationLease(
+      created.session.id,
+      host.memberToken,
+      directoryOperation.id,
+      directoryClaim.leaseId,
+    );
+    store.completeWorkspaceFileOperation(
+      created.session.id,
+      host.memberToken,
+      directoryOperation.id,
+      { status: "completed", leaseId: directoryClaim.leaseId },
+    );
+
+    const workspace = store.getWorkspace(created.session.id, guest.memberToken);
+    expect(workspace.files.map((file) => file.path)).toContain("src/new-file.ts");
+    expect(workspace.directories).toContain("src/empty-folder");
+    expect(() =>
+      store.createWorkspaceFileOperation(created.session.id, guest.memberToken, {
+        kind: "write",
+        path: "src/new-file.ts",
+        content: "",
+        expectedSha256: "",
+      }),
+    ).toThrowError(/already exists/i);
+    store.db
+      .prepare("INSERT INTO workspace_directories (session_id, path) VALUES (?, ?)")
+      .run(created.session.id, "src/existing.ts");
+    expect(() =>
+      store.createWorkspaceFileOperation(created.session.id, guest.memberToken, {
+        kind: "write",
+        path: "src/existing.ts",
+        content: "",
+        expectedSha256: "",
+      }),
+    ).toThrowError(/already exists/i);
   });
 
   it("keeps queued file operations durable across relay restarts", async () => {

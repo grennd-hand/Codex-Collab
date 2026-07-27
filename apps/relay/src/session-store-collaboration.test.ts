@@ -78,6 +78,7 @@ describe("SessionStore collaboration and messages", () => {
       joined.member.id,
     );
     expect(approved.status).toBe("approved");
+    expect(approved.workspaceFileAccess).toBe("workspace-write");
     expect(() =>
       store.addMessage(
         created.session.id,

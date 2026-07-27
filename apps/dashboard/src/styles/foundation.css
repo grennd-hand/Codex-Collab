@@ -141,6 +141,16 @@ textarea {
   height: 30px;
   min-height: 30px;
   padding-inline: 8px;
+  color: var(--colorNeutralForeground1);
+}
+
+.topbar-panel-controls .fui-Button[aria-pressed="true"] {
+  color: var(--colorBrandForeground1);
+  background: var(--colorBrandBackground2);
+}
+
+.topbar-panel-controls .fui-Button:disabled {
+  color: var(--colorNeutralForegroundDisabled);
 }
 
 .topbar-panel-controls .workspace-button {

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { FileSandbox } from "./file-sandbox.js";
 import {
   buildWorkspaceSnapshot,
+  buildWorkspaceDirectories,
   buildCodexConfigSnapshot,
   containsLikelySecret,
   isPublishableCodexConfigPath,
@@ -100,6 +101,16 @@ describe("workspace snapshot", () => {
 
     const files = await buildWorkspaceSnapshot(await FileSandbox.create(root));
     expect(files.map((file) => file.path)).toEqual(["source.ts"]);
+  });
+
+  it("publishes safe empty directories without exposing private roots", async () => {
+    const root = await mkdtemp(join(tmpdir(), "codex-collab-directories-"));
+    temporaryRoots.push(root);
+    await mkdir(join(root, "src", "empty"), { recursive: true });
+    await mkdir(join(root, ".ssh", "private"), { recursive: true });
+
+    const directories = await buildWorkspaceDirectories(await FileSandbox.create(root));
+    expect(directories).toEqual(["src", "src/empty"]);
   });
 
   it("publishes an explicitly separate non-credential .codex configuration snapshot", async () => {

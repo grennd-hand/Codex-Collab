@@ -8,6 +8,7 @@ import {
 import {
   parseHistory,
   parseThreadCatalog,
+  parseWorkspaceDirectories,
   parseWorkspaceFiles,
 } from "../http/route-payloads.js";
 import type { RelayRouteContext } from "./route-context.js";
@@ -246,6 +247,7 @@ export async function handleWorkspaceSyncRoutes(
         threadId: requiredString(body.threadId, "threadId", 120),
         history: parseHistory(body.history),
         files: parseWorkspaceFiles(body.files),
+        directories: parseWorkspaceDirectories(body.directories),
       };
       const minimal = prefersMinimalResponse(request);
       const workspace = minimal

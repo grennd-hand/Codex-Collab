@@ -198,6 +198,31 @@
   text-transform: uppercase;
 }
 
+.ide-explorer-actions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.ide-explorer-actions .fui-Button {
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0;
+  color: var(--colorNeutralForeground2);
+}
+
+.ide-create-entry-dialog {
+  width: min(460px, calc(100vw - 32px));
+}
+
+.ide-create-entry-dialog p {
+  margin: 0 0 12px;
+  color: var(--colorNeutralForeground3);
+  font-size: var(--fontSizeBase200);
+}
+
 .ide-search {
   padding: 4px 8px;
 }
@@ -299,4 +324,3 @@
 .ide-tree-change-renamed {
   color: var(--colorPalettePurpleForeground2);
 }
-

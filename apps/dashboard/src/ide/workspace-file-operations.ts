@@ -6,7 +6,7 @@ import type {
   IdeSaveResult,
 } from "./types.js";
 
-type WorkspaceFileOperationKind = "read" | "write";
+type WorkspaceFileOperationKind = "read" | "write" | "mkdir";
 
 export interface WorkspaceFileOperation {
   id: string;
@@ -92,7 +92,8 @@ async function enqueueOperation(
   options: OperationClientOptions,
   body:
     | { kind: "read"; path: string }
-    | ({ kind: "write" } & IdeSaveRequest),
+    | ({ kind: "write" } & IdeSaveRequest)
+    | { kind: "mkdir"; path: string },
 ): Promise<WorkspaceFileOperation> {
   const queued = await requestJson<WorkspaceFileOperationResponse>(
     operationPath(options.sessionId),
@@ -122,6 +123,14 @@ export async function saveWorkspaceFileOperation(
 ): Promise<IdeSaveResult> {
   const operation = await enqueueOperation(options, { kind: "write", ...request });
   return saveResultFromOperation(operation);
+}
+
+export async function createWorkspaceDirectoryOperation(
+  options: OperationClientOptions,
+  path: string,
+): Promise<void> {
+  const operation = await enqueueOperation(options, { kind: "mkdir", path });
+  if (operation.status === "failed") throw operationError(operation);
 }
 
 export function saveResultFromOperation(

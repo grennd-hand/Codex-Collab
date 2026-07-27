@@ -6,6 +6,7 @@ import {
 } from "./file-tree.js";
 import {
   createLoadingTab,
+  createReadyTab,
   fileName,
   messageFromError,
   type EditorTabState,
@@ -15,6 +16,9 @@ import type { IdeSaveResult, IdeWorkspaceProps } from "./types.js";
 type IdeWorkspaceStateOptions = Pick<
   IdeWorkspaceProps,
   | "files"
+  | "directories"
+  | "onCreateDirectory"
+  | "onCreateFile"
   | "onEditorExpandedChange"
   | "onReadFile"
   | "onSaveFile"
@@ -25,6 +29,9 @@ type IdeWorkspaceStateOptions = Pick<
 
 export function useIdeWorkspaceState({
   files,
+  directories = [],
+  onCreateDirectory,
+  onCreateFile,
   onEditorExpandedChange,
   onReadFile,
   onSaveFile,
@@ -32,7 +39,10 @@ export function useIdeWorkspaceState({
   readOnly,
   storageScope = "workspace",
 }: IdeWorkspaceStateOptions) {
-  const tree = useMemo(() => buildFileTree(files), [files]);
+  const tree = useMemo(
+    () => buildFileTree(files, directories),
+    [directories, files],
+  );
   const [query, setQuery] = useState("");
   const visibleTree = useMemo(() => filterFileTree(tree, query), [query, tree]);
   const allDirectories = useMemo(() => collectDirectoryPaths(tree), [tree]);
@@ -150,6 +160,40 @@ export function useIdeWorkspaceState({
   );
 
   const activeTab = tabs.find((tab) => tab.path === activePath) ?? null;
+
+  const expandAncestors = useCallback((path: string) => {
+    const ancestorPaths = path
+      .replaceAll("\\", "/")
+      .split("/")
+      .slice(0, -1)
+      .map((_part, index, parts) => parts.slice(0, index + 1).join("/"));
+    setExpandedDirectories((current) => new Set([...current, ...ancestorPaths]));
+  }, []);
+
+  const createFile = useCallback(
+    async (path: string) => {
+      const document = await onCreateFile(path);
+      const nextTab = createReadyTab(document);
+      setTabs((current) => {
+        const next = [...current.filter((tab) => tab.path !== path), nextTab];
+        tabsRef.current = next;
+        return next;
+      });
+      setActivePath(path);
+      setMobileExplorerOpen(false);
+      onEditorExpandedChange?.(true);
+      expandAncestors(path);
+    },
+    [expandAncestors, onCreateFile, onEditorExpandedChange],
+  );
+
+  const createDirectory = useCallback(
+    async (path: string) => {
+      await onCreateDirectory(path);
+      setExpandedDirectories((current) => new Set([...current, path]));
+    },
+    [onCreateDirectory],
+  );
 
   useEffect(() => {
     if (
@@ -282,6 +326,8 @@ export function useIdeWorkspaceState({
     activePath,
     activeTab,
     closeTab,
+    createDirectory,
+    createFile,
     expandedDirectories,
     keepLocalDraft,
     loadFile,

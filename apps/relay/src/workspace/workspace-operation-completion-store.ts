@@ -17,7 +17,7 @@ export class WorkspaceOperationCompletionStore extends WorkspaceOperationLeaseSt
     memberToken: string,
     operationId: string,
     input:
-      | { status: "completed"; leaseId: string; file: WorkspaceFileContent }
+      | { status: "completed"; leaseId: string; file?: WorkspaceFileContent }
       | {
           status: "failed";
           leaseId: string;
@@ -47,6 +47,20 @@ export class WorkspaceOperationCompletionStore extends WorkspaceOperationLeaseSt
       throw new ProtocolError(403, permissionError.code, permissionError.message);
     }
     const file = input.file ?? null;
+    if (input.status === "completed" && row.kind !== "mkdir" && !file) {
+      throw new ProtocolError(
+        400,
+        "invalid_workspace_operation_result",
+        "Completed file operations require a file result",
+      );
+    }
+    if (row.kind === "mkdir" && file) {
+      throw new ProtocolError(
+        400,
+        "invalid_workspace_operation_result",
+        "Directory operations do not accept a file result",
+      );
+    }
     if (file) {
       const normalizedPath = normalizeWorkspaceOperationPath(file.path);
       if (normalizedPath !== row.path) {
@@ -160,6 +174,14 @@ export class WorkspaceOperationCompletionStore extends WorkspaceOperationLeaseSt
             file.content,
           );
       }
+      if (input.status === "completed" && row.kind === "mkdir") {
+        this.db
+          .prepare(`
+            INSERT INTO workspace_directories (session_id, path)
+            VALUES (?, ?) ON CONFLICT(session_id, path) DO NOTHING
+          `)
+          .run(sessionId, row.path);
+      }
       this.enforceWorkspaceFileOperationRetention(sessionId);
       this.db.exec("COMMIT");
     } catch (error) {
@@ -170,4 +192,3 @@ export class WorkspaceOperationCompletionStore extends WorkspaceOperationLeaseSt
   }
 
 }
-

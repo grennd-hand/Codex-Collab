@@ -54,36 +54,54 @@ function compareNodes(left: IdeFileTreeNode, right: IdeFileTreeNode): number {
   });
 }
 
-export function buildFileTree(files: readonly IdeWorkspaceFile[]): IdeFileTreeNode[] {
+export function buildFileTree(
+  files: readonly IdeWorkspaceFile[],
+  directories: readonly string[] = [],
+): IdeFileTreeNode[] {
   const roots = new Map<string, MutableTreeNode>();
 
-  for (const file of files) {
-    const normalized = normalizeWorkspacePath(file.path);
+  const ensureDirectory = (directoryPath: string): Map<string, MutableTreeNode> => {
+    const normalized = normalizeWorkspacePath(directoryPath);
     const segments = normalized.split("/").filter(Boolean);
-    if (segments.length === 0) continue;
-
     let current = roots;
     let parentPath = "";
-    segments.forEach((segment, index) => {
+    for (const segment of segments) {
       const path = parentPath ? `${parentPath}/${segment}` : segment;
-      const isFile = index === segments.length - 1;
       let node = current.get(segment);
       if (!node) {
         node = {
-          id: `${isFile ? "file" : "directory"}:${path}`,
+          id: `directory:${path}`,
           name: segment,
           path,
-          kind: isFile ? "file" : "directory",
-          file: isFile ? { ...file, path: normalized } : undefined,
+          kind: "directory",
           childMap: new Map(),
         };
         current.set(segment, node);
       }
-
       parentPath = path;
-      if (!isFile) {
-        current = node.childMap;
-      }
+      current = node.childMap;
+    }
+    return current;
+  };
+
+  for (const directory of directories) {
+    ensureDirectory(directory);
+  }
+
+  for (const file of files) {
+    const normalized = normalizeWorkspacePath(file.path);
+    const segments = normalized.split("/").filter(Boolean);
+    const name = segments.pop();
+    if (!name) continue;
+    const parentPath = segments.join("/");
+    const parent = ensureDirectory(parentPath);
+    parent.set(name, {
+      id: `file:${normalized}`,
+      name,
+      path: normalized,
+      kind: "file",
+      file: { ...file, path: normalized },
+      childMap: new Map(),
     });
   }
 

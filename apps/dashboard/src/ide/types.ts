@@ -46,6 +46,7 @@ export type IdeSaveResult =
 
 export interface IdeWorkspaceProps {
   files: readonly IdeWorkspaceFile[];
+  directories?: readonly string[];
   fileChanges?: readonly CodexFileChange[];
   rootLabel: string | null;
   hostDeviceLabel: string | null;
@@ -57,6 +58,8 @@ export interface IdeWorkspaceProps {
   loading?: boolean;
   onReadFile: (path: string) => Promise<IdeFileDocument>;
   onSaveFile: (request: IdeSaveRequest) => Promise<IdeSaveResult>;
+  onCreateFile: (path: string) => Promise<IdeFileDocument>;
+  onCreateDirectory: (path: string) => Promise<void>;
   onRefresh: () => void | Promise<void>;
   openFileRequest?: IdeOpenFileRequest | null;
   storageScope?: string;

@@ -149,6 +149,7 @@ export function DashboardWorkspaceView({
                   workspaceSummary.rootLabel ?? "root",
                 ].join(":")}
                 files={workspaceSummary.files}
+                directories={workspaceSummary.directories ?? []}
                 fileChanges={workspaceFileChanges}
                 rootLabel={workspaceSummary.rootLabel}
                 hostDeviceLabel={workspaceSummary.hostDeviceLabel}
@@ -171,6 +172,8 @@ export function DashboardWorkspaceView({
                 onEditorExpandedChange={workspaceFiles.setEditorExpanded}
                 onReadFile={workspaceFiles.readFile}
                 onSaveFile={workspaceFiles.saveFile}
+                onCreateFile={workspaceFiles.createFile}
+                onCreateDirectory={workspaceFiles.createDirectory}
                 onRefresh={workspaceConnection.reload}
                 openFileRequest={workspaceFiles.openFileRequest}
                 storageScope={`${session?.id ?? "session"}:${

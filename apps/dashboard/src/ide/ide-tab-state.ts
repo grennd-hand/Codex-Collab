@@ -40,3 +40,14 @@ export function createLoadingTab(path: string): EditorTabState {
     conflict: null,
   };
 }
+
+export function createReadyTab(document: IdeFileDocument): EditorTabState {
+  return {
+    ...createLoadingTab(document.path),
+    status: "ready",
+    value: document.content,
+    savedValue: document.content,
+    sha256: document.sha256,
+    savedNotice: true,
+  };
+}

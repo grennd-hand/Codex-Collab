@@ -14,6 +14,10 @@ import {
   runWindowsFileCas,
   type WindowsFileCasDebugOptions,
 } from "./windows-file-cas.js";
+import {
+  createSafeWorkspaceDirectory,
+  SKIPPED_WORKSPACE_DIRECTORIES,
+} from "./workspace-directory-sandbox.js";
 
 export interface SharedFile {
   path: string;
@@ -46,16 +50,6 @@ export interface FileSandboxTestHooks {
 const pathWriteLocks = new Map<string, Promise<void>>();
 const RECOVERY_TRANSACTION_LIMIT = 32;
 const RECOVERY_BYTE_LIMIT = 64_000_000;
-
-const SKIPPED_DIRECTORY_NAMES = new Set([
-  ".codex-collab",
-  ".git",
-  ".next",
-  ".runtime-data",
-  "coverage",
-  "dist",
-  "node_modules",
-]);
 
 function normalizedIgnoredPaths(paths: readonly string[]): string[] {
   return paths
@@ -123,7 +117,7 @@ export class FileSandbox {
           .split(sep)
           .join("/");
         if (
-          (entry.isDirectory() && SKIPPED_DIRECTORY_NAMES.has(entry.name)) ||
+          (entry.isDirectory() && SKIPPED_WORKSPACE_DIRECTORIES.has(entry.name)) ||
           pathIsIgnored(relativePath, ignored)
         ) {
           continue;
@@ -179,6 +173,10 @@ export class FileSandbox {
       sha256: sha256(bytes),
       modifiedAt: metadata.mtime.toISOString(),
     };
+  }
+
+  async createDirectory(relativePath: string): Promise<string> {
+    return createSafeWorkspaceDirectory(this.root, relativePath);
   }
 
   async write(

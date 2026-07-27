@@ -4,6 +4,7 @@ import {
   backfillInFlightMessageThreadIds,
   disconnectUnboundLegacyHosts,
 } from "./legacy-data-migrations.js";
+import { migrateWorkspaceOperationKinds } from "./workspace-schema-migrations.js";
 export function migrateSessionStore(db: DatabaseSync): void {
     const existingMemberTokenColumns = db
       .prepare("PRAGMA table_info(member_tokens)")
@@ -155,13 +156,22 @@ export function migrateSessionStore(db: DatabaseSync): void {
         content TEXT NOT NULL,
         PRIMARY KEY (session_id, path)
       );
+      CREATE TABLE IF NOT EXISTS workspace_directories (
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        path TEXT NOT NULL,
+        PRIMARY KEY (session_id, path)
+      );
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        key TEXT PRIMARY KEY,
+        applied_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS workspace_file_operations (
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
         requested_by_member_id TEXT NOT NULL REFERENCES members(id),
         requested_by_display_name TEXT NOT NULL,
         host_generation TEXT NOT NULL,
-        kind TEXT NOT NULL CHECK (kind IN ('read', 'write')),
+        kind TEXT NOT NULL CHECK (kind IN ('read', 'write', 'mkdir')),
         path TEXT NOT NULL,
         request_content TEXT,
         request_size INTEGER,
@@ -194,6 +204,8 @@ export function migrateSessionStore(db: DatabaseSync): void {
       CREATE INDEX IF NOT EXISTS account_memberships_session_idx
         ON account_memberships(session_id);
       CREATE INDEX IF NOT EXISTS workspace_files_session_idx ON workspace_files(session_id);
+      CREATE INDEX IF NOT EXISTS workspace_directories_session_idx
+        ON workspace_directories(session_id);
       CREATE INDEX IF NOT EXISTS workspace_file_operations_queue_idx
         ON workspace_file_operations(session_id, status, requested_at);
       CREATE INDEX IF NOT EXISTS workspace_file_operations_actor_idx
@@ -223,9 +235,20 @@ export function migrateSessionStore(db: DatabaseSync): void {
       "workspace_file_access",
       "TEXT NOT NULL DEFAULT 'read-only' CHECK (workspace_file_access IN ('read-only', 'workspace-write'))",
     );
-    db.exec(
-      "UPDATE members SET workspace_file_access = 'workspace-write' WHERE role = 'owner'",
-    );
+    db.exec("UPDATE members SET workspace_file_access = 'workspace-write' WHERE role = 'owner'");
+    const approvedMemberAccessMigration = "approved-members-workspace-write-v1";
+    const approvedMemberAccessApplied = db
+      .prepare("SELECT 1 AS present FROM schema_migrations WHERE key = ?")
+      .get(approvedMemberAccessMigration) as { present: number } | undefined;
+    if (!approvedMemberAccessApplied) {
+      db.exec(
+        "UPDATE members SET workspace_file_access = 'workspace-write' WHERE status = 'approved'",
+      );
+      db.prepare("INSERT INTO schema_migrations (key, applied_at) VALUES (?, ?)").run(
+        approvedMemberAccessMigration,
+        now(),
+      );
+    }
     migrateMessagesTable(db);
     ensureColumn(db, "messages", "selected_thread_id", "TEXT");
     ensureColumn(db, 
@@ -248,6 +271,7 @@ export function migrateSessionStore(db: DatabaseSync): void {
     ensureColumn(db, "workspace_file_operations", "lease_expires_at", "TEXT");
     ensureColumn(db, "workspace_file_operations", "lease_confirmed_at", "TEXT");
     ensureColumn(db, "workspace_file_operations", "request_size", "INTEGER");
+    migrateWorkspaceOperationKinds(db);
     db.exec(`
       UPDATE member_tokens
       SET token_purpose = 'account'

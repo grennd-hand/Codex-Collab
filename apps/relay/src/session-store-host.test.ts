@@ -359,7 +359,7 @@ describe("SessionStore migration and host boundaries", () => {
         content: "created",
         expectedSha256,
       }),
-    ).toThrowError(/already present|existing shared/i);
+    ).toThrowError(/no longer present/i);
     const queued = store.createWorkspaceFileOperation(
       created.session.id,
       created.memberToken,

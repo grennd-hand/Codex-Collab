@@ -196,6 +196,38 @@ describe("Codex rollout activity", () => {
     ).toBe(true);
   });
 
+  it("ignores a stale app-server inProgress status after the rollout closed the turn", () => {
+    expect(
+      isCodexThreadBusy(
+        {
+          openTurnIds: [],
+          latestObservedTurnId: "turn-2",
+          latestObservedAtMs: Date.parse("2026-07-25T00:02:00.000Z"),
+        },
+        [
+          { id: "turn-2", status: "completed" },
+          { id: "turn-1", status: "inProgress" },
+        ],
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps a newer app-server turn busy before its rollout start is persisted", () => {
+    expect(
+      isCodexThreadBusy(
+        {
+          openTurnIds: [],
+          latestObservedTurnId: "turn-1",
+          latestObservedAtMs: Date.parse("2026-07-25T00:02:00.000Z"),
+        },
+        [
+          { id: "turn-2", status: "inProgress" },
+          { id: "turn-1", status: "completed" },
+        ],
+      ),
+    ).toBe(true);
+  });
+
   it("keeps a recently writing rollout busy when its persisted turn is terminal", () => {
     const activity = extractCodexRolloutActivity([
       JSON.stringify({

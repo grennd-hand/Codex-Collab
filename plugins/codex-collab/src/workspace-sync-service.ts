@@ -18,6 +18,7 @@ import { processNextWorkspaceFileOperation } from "./workspace-file-operations.j
 import { openWorkspaceSandboxes } from "./workspace-roots.js";
 import {
   buildCodexConfigSnapshot,
+  buildWorkspaceDirectories,
   buildWorkspaceSnapshot,
 } from "./workspace-snapshot.js";
 import {
@@ -386,11 +387,12 @@ export class WorkspaceSyncService {
         };
       }
 
-      const [projectFiles, codexConfigFiles] = await Promise.all([
+      const [projectFiles, codexConfigFiles, directories] = await Promise.all([
         buildWorkspaceSnapshot(sandbox),
         codexConfigSandbox
           ? buildCodexConfigSnapshot(codexConfigSandbox)
           : Promise.resolve([]),
+        buildWorkspaceDirectories(sandbox),
       ]);
       const imported = await relay.publishWorkspaceSnapshot(
         profile.sessionId,
@@ -399,6 +401,7 @@ export class WorkspaceSyncService {
           threadId: workspace.selectedThreadId,
           history,
           files: [...projectFiles, ...codexConfigFiles],
+          directories,
         },
       );
       this.marker = {

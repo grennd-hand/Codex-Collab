@@ -165,6 +165,16 @@ export function isCodexThreadBusy(
   turns: ReadonlyArray<{ id: string; status?: CodexTurnStatus }>,
   nowMs = Date.now(),
 ): boolean {
+  if (
+    activity.latestObservedTurnId &&
+    !activity.openTurnIds.includes(activity.latestObservedTurnId)
+  ) {
+    const latestTurn = turns[0];
+    return Boolean(
+      latestTurn?.status === "inProgress" &&
+      latestTurn.id !== activity.latestObservedTurnId,
+    );
+  }
   if (turns.some((turn) => turn.status === "inProgress")) {
     return true;
   }
@@ -311,4 +321,3 @@ export function extractCodexRecordEntries(
 
   return limitRecordEntries(entries);
 }
-

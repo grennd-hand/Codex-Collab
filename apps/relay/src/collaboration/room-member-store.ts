@@ -343,7 +343,8 @@ export class RoomMemberStore extends AccountRoomStore {
     const approvedAt = now();
     const result = this.db
       .prepare(`
-        UPDATE members SET status = 'approved', approved_at = ?
+        UPDATE members
+        SET status = 'approved', approved_at = ?, workspace_file_access = 'workspace-write'
         WHERE id = ? AND session_id = ? AND status = 'pending'
       `)
       .run(approvedAt, targetMemberId, sessionId);

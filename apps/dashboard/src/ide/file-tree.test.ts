@@ -73,6 +73,17 @@ describe("resolveWorkspaceFilePath", () => {
     ).toBe("apps/relay/src/server.ts");
   });
 
+  it("keeps explicitly shared empty directories in the explorer", () => {
+    const tree = buildFileTree([file("src/App.tsx")], ["src", "src/empty"]);
+
+    expect(tree[0]?.children.map((node) => node.name)).toEqual(["empty", "App.tsx"]);
+    expect(tree[0]?.children[0]).toMatchObject({
+      kind: "directory",
+      path: "src/empty",
+      children: [],
+    });
+  });
+
   it("does not guess when a suffix is missing or ambiguous", () => {
     expect(resolveWorkspaceFilePath("missing.ts", files)).toBeNull();
     expect(

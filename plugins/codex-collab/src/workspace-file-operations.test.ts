@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -118,6 +118,43 @@ describe("workspace file operation host execution", () => {
       file: { content: "remote change" },
     });
     expect(await readFile(join(root, "shared.ts"), "utf8")).toBe("remote change");
+  });
+
+  it("creates new files and empty directories without overwriting existing paths", async () => {
+    const root = await tempRoot();
+    const sandbox = await FileSandbox.create(root);
+
+    const fileResult = await executeWorkspaceFileOperation(
+      operation({
+        kind: "write",
+        path: "src/new-file.ts",
+        requestContent: "",
+        expectedSha256: "",
+      }),
+      sandbox,
+    );
+    expect(fileResult).toMatchObject({
+      status: "completed",
+      file: { path: "src/new-file.ts", content: "" },
+    });
+
+    await expect(
+      executeWorkspaceFileOperation(
+        operation({ kind: "mkdir", path: "src/empty-folder" }),
+        sandbox,
+      ),
+    ).resolves.toEqual({ status: "completed" });
+    expect((await stat(join(root, "src", "empty-folder"))).isDirectory()).toBe(true);
+
+    await expect(
+      executeWorkspaceFileOperation(
+        operation({ kind: "mkdir", path: ".ssh/private" }),
+        sandbox,
+      ),
+    ).resolves.toMatchObject({
+      status: "failed",
+      errorCode: "workspace_file_not_shared",
+    });
   });
 
   it("rejects Codex configuration reads without an explicit config root", async () => {

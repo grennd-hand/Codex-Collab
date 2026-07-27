@@ -13,6 +13,7 @@ import {
   workspaceFileCacheKey,
 } from "../../ide/workspace-file-cache.js";
 import {
+  createWorkspaceDirectoryOperation,
   readWorkspaceFileOperation,
   saveWorkspaceFileOperation,
 } from "../../ide/workspace-file-operations.js";
@@ -168,6 +169,39 @@ export function useWorkspaceFileController({
     ],
   );
 
+  const createFile = useCallback(
+    async (path: string): Promise<IdeFileDocument> => {
+      if (!session) throw new Error("当前没有可用的协作会话。");
+      const result = await saveWorkspaceFileOperation(
+        { sessionId: session.id, headers: authHeaders(true) },
+        { path, content: "", expectedSha256: "" },
+      );
+      if (result.status === "conflict") {
+        throw new Error("该路径已经存在文件，请换一个名称。");
+      }
+      clearCache();
+      await refreshWorkspace();
+      onActivity("已创建项目文件", path, "success");
+      setError(null);
+      return result.file;
+    },
+    [authHeaders, clearCache, onActivity, refreshWorkspace, session, setError],
+  );
+
+  const createDirectory = useCallback(
+    async (path: string): Promise<void> => {
+      if (!session) throw new Error("当前没有可用的协作会话。");
+      await createWorkspaceDirectoryOperation(
+        { sessionId: session.id, headers: authHeaders(true) },
+        path,
+      );
+      await refreshWorkspace();
+      onActivity("已创建项目文件夹", path, "success");
+      setError(null);
+    },
+    [authHeaders, onActivity, refreshWorkspace, session, setError],
+  );
+
   const openFromExecution = useCallback(
     (target: IdeNavigationTarget) => {
       if (!summary) return;
@@ -200,6 +234,8 @@ export function useWorkspaceFileController({
 
   return {
     clearCache,
+    createDirectory,
+    createFile,
     editorExpanded,
     openFileRequest,
     openFromExecution,

@@ -6,7 +6,7 @@ import {
   containsLikelySecret,
   ProtocolError,
 } from "@codex-collab/protocol";
-import { WorkspaceHistoryStore } from "./workspace-history-store.js";
+import { WorkspaceEntryAdmissionStore } from "./workspace-entry-admission-store.js";
 import {
   type MemberRow,
   type WorkspaceFileOperationRow,
@@ -20,11 +20,12 @@ import {
   MAX_MEMBER_WRITE_OPERATIONS_PER_MINUTE,
   MAX_WORKSPACE_FILE_BYTES,
   MAX_WORKSPACE_FILE_COUNT,
+  normalizeWorkspaceDirectoryPath,
   normalizeWorkspaceOperationPath,
   now,
 } from "../storage/session-store-types.js";
 
-export class WorkspaceFileOperationStore extends WorkspaceHistoryStore {
+export class WorkspaceFileOperationStore extends WorkspaceEntryAdmissionStore {
   getWorkspaceFile(
     sessionId: string,
     memberToken: string,
@@ -48,7 +49,8 @@ export class WorkspaceFileOperationStore extends WorkspaceHistoryStore {
     memberToken: string,
     input:
       | { kind: "read"; path: string }
-      | { kind: "write"; path: string; content: string; expectedSha256: string },
+      | { kind: "write"; path: string; content: string; expectedSha256: string }
+      | { kind: "mkdir"; path: string },
   ): WorkspaceFileOperation {
     const member = this.requireBrowserMember(sessionId, memberToken, true);
     const state = this.workspaceState(sessionId);
@@ -62,7 +64,10 @@ export class WorkspaceFileOperationStore extends WorkspaceHistoryStore {
         "Select a Codex task before opening or editing workspace files",
       );
     }
-    const path = normalizeWorkspaceOperationPath(input.path);
+    const path =
+      input.kind === "mkdir"
+        ? normalizeWorkspaceDirectoryPath(input.path)
+        : normalizeWorkspaceOperationPath(input.path);
     if (codexConfigRelativePath(path) && input.kind !== "read") {
       throw new ProtocolError(
         403,
@@ -70,7 +75,7 @@ export class WorkspaceFileOperationStore extends WorkspaceHistoryStore {
         "Codex configuration is read-only in the collaboration editor",
       );
     }
-    if (input.kind === "write") {
+    if (input.kind !== "read") {
       this.requireRoomOpen(sessionId);
       if (member.role !== "owner" && member.workspaceFileAccess !== "workspace-write") {
         throw new ProtocolError(
@@ -79,6 +84,8 @@ export class WorkspaceFileOperationStore extends WorkspaceHistoryStore {
           "The owner has not granted this member workspace write access",
         );
       }
+    }
+    if (input.kind === "write") {
       const contentBytes = Buffer.byteLength(input.content);
       if (contentBytes > 2_000_000) {
         throw new ProtocolError(
@@ -101,23 +108,41 @@ export class WorkspaceFileOperationStore extends WorkspaceHistoryStore {
           "This file is not available to the collaboration editor",
         );
       }
-      if (!/^[a-f0-9]{64}$/.test(input.expectedSha256)) {
+      if (input.expectedSha256 !== "" && !/^[a-f0-9]{64}$/.test(input.expectedSha256)) {
         throw new ProtocolError(
           400,
           "invalid_expected_sha256",
-          "expectedSha256 must be the observed SHA-256 hash of an existing shared file",
+          "expectedSha256 must be an existing file hash or empty for a new file",
         );
       }
       const existing = this.db
         .prepare("SELECT 1 AS present FROM workspace_files WHERE session_id = ? AND path = ?")
         .get(sessionId, path) as { present: number } | undefined;
-      if (!existing) {
+      const existingDirectory =
+        input.expectedSha256 === ""
+          ? (this.db
+              .prepare(
+                "SELECT 1 AS present FROM workspace_directories WHERE session_id = ? AND path = ?",
+              )
+              .get(sessionId, path) as { present: number } | undefined)
+          : undefined;
+      if (input.expectedSha256 === "" && (existing || existingDirectory)) {
+        throw new ProtocolError(
+          409,
+          "file_conflict",
+          "A file or directory already exists at the requested path",
+        );
+      }
+      if (input.expectedSha256 !== "" && !existing) {
         throw new ProtocolError(
           404,
           "workspace_file_not_found",
-          "Only files already present in the shared workspace can be edited",
+          "The file is no longer present in the shared workspace",
         );
       }
+    }
+    if (input.kind === "mkdir") {
+      this.assertWorkspaceDirectoryAdmission(sessionId, path);
     }
 
     const operationId = randomUUID();
@@ -318,7 +343,7 @@ export class WorkspaceFileOperationStore extends WorkspaceHistoryStore {
       };
     }
     if (
-      row.kind === "write" &&
+      row.kind !== "read" &&
       requester.role !== "owner" &&
       requester.workspace_file_access !== "workspace-write"
     ) {
@@ -448,4 +473,3 @@ export class WorkspaceFileOperationStore extends WorkspaceHistoryStore {
   }
 
 }
-

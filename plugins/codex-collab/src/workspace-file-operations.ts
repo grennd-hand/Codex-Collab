@@ -7,6 +7,7 @@ import {
   codexConfigRelativePath,
   containsLikelySecret,
   isPublishableCodexConfigPath,
+  isPublishableWorkspaceDirectoryPath,
   isPublishableWorkspacePath,
   isWorkspacePathIgnored,
 } from "@codex-collab/protocol";
@@ -38,6 +39,7 @@ function failureCode(error: unknown): string {
   if ((error as NodeJS.ErrnoException).code === "ENOENT") return "workspace_file_not_found";
   if (error instanceof FileConflictError) return "file_conflict";
   const message = error instanceof Error ? error.message : String(error);
+  if (/already exists|occupied by a file/i.test(message)) return "file_conflict";
   if (/outside|symbolic link|approved root|relative path/i.test(message)) {
     return "unsafe_workspace_path";
   }
@@ -82,7 +84,7 @@ export async function executeWorkspaceFileOperation(
   projectSandbox: FileSandbox,
   codexConfigSandbox: FileSandbox | null = null,
 ): Promise<
-  | { status: "completed"; file: WorkspaceFileContent }
+  | { status: "completed"; file?: WorkspaceFileContent }
   | {
       status: "failed";
       errorCode: string;
@@ -127,8 +129,12 @@ export async function executeWorkspaceFileOperation(
   }
 
   const ignoredPaths = await readCollabIgnore(projectSandbox);
+  const publishablePath =
+    operation.kind === "mkdir"
+      ? isPublishableWorkspaceDirectoryPath(operation.path)
+      : isPublishableWorkspacePath(operation.path);
   if (
-    !isPublishableWorkspacePath(operation.path) ||
+    !publishablePath ||
     isWorkspacePathIgnored(operation.path, ignoredPaths, process.platform === "win32")
   ) {
     return {
@@ -153,6 +159,10 @@ export async function executeWorkspaceFileOperation(
         file,
       };
     }
+    if (operation.kind === "mkdir") {
+      await projectSandbox.createDirectory(operation.path);
+      return { status: "completed" };
+    }
     if (operation.requestContent === null || operation.expectedSha256 === null) {
       return {
         status: "failed",
@@ -167,13 +177,15 @@ export async function executeWorkspaceFileOperation(
         errorMessage: "This file is not available to the collaboration editor",
       };
     }
-    const existing = await projectSandbox.read(operation.path);
-    if (containsLikelySecret(existing.content)) {
-      return {
-        status: "failed",
-        errorCode: "workspace_file_not_shared",
-        errorMessage: "This file is not available to the collaboration editor",
-      };
+    if (operation.expectedSha256 !== "") {
+      const existing = await projectSandbox.read(operation.path);
+      if (containsLikelySecret(existing.content)) {
+        return {
+          status: "failed",
+          errorCode: "workspace_file_not_shared",
+          errorMessage: "This file is not available to the collaboration editor",
+        };
+      }
     }
     return {
       status: "completed",
