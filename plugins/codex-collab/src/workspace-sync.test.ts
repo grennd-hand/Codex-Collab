@@ -79,6 +79,49 @@ describe("workspace background sync", () => {
     expect(updated).not.toBe(original);
   });
 
+  it("changes the history digest when structured file activity changes", () => {
+    const base = {
+      id: "command-1",
+      role: "command" as const,
+      text: "tool: apply_patch\nstatus: completed",
+      createdAt: "2026-07-25T00:00:00.000Z",
+    };
+    const first = workspaceHistoryDigest([
+      {
+        ...base,
+        fileChanges: [
+          {
+            operationId: "patch-1:0",
+            taskId: "thread-1",
+            path: "src/App.tsx",
+            kind: "modified",
+            lifecycle: "completed",
+            additions: 1,
+            deletions: 0,
+          },
+        ],
+      },
+    ]);
+    const second = workspaceHistoryDigest([
+      {
+        ...base,
+        fileChanges: [
+          {
+            operationId: "patch-1:0",
+            taskId: "thread-1",
+            path: "src/App.tsx",
+            kind: "modified",
+            lifecycle: "completed",
+            additions: 2,
+            deletions: 0,
+          },
+        ],
+      },
+    ]);
+
+    expect(second).not.toBe(first);
+  });
+
   it("forwards pending Codex prompts from approved members in Relay order", () => {
     const pending = nextPendingCodexCommand(
       [

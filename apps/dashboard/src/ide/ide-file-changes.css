@@ -1,0 +1,213 @@
+.ide-file-changes {
+  --ide-change-added: var(--colorPaletteGreenForeground2);
+  --ide-change-modified: var(--colorBrandForeground1);
+  --ide-change-deleted: var(--colorPaletteRedForeground1);
+  --ide-change-renamed: var(--colorPalettePurpleForeground2);
+  min-width: 0;
+  border-block: 1px solid var(--ide-line, var(--colorNeutralStroke2));
+  background: var(--ide-pane, var(--colorNeutralBackground2));
+  color: var(--colorNeutralForeground1);
+}
+
+.ide-file-changes-summary {
+  width: 100%;
+  min-height: 34px;
+  padding: 0 10px;
+  display: grid;
+  grid-template-columns: 16px auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.ide-file-changes-summary:hover {
+  background: var(--colorNeutralBackground1Hover);
+}
+
+.ide-file-changes-summary:focus-visible,
+.ide-file-change-open:focus-visible,
+.ide-file-change-disclosure:focus-visible {
+  outline: 2px solid var(--colorBrandStroke1);
+  outline-offset: -2px;
+}
+
+.ide-file-changes-summary strong {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.ide-file-changes-chevron,
+.ide-file-change-disclosure {
+  display: grid;
+  place-items: center;
+}
+
+.ide-file-changes-count {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--colorNeutralForeground3);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ide-file-changes-totals,
+.ide-file-change-details {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+}
+
+.ide-change-additions {
+  color: var(--ide-change-added);
+}
+
+.ide-change-deletions {
+  color: var(--ide-change-deleted);
+}
+
+.ide-file-changes-list {
+  padding: 0 0 5px;
+}
+
+.ide-file-changes-empty {
+  padding: 10px 32px;
+  color: var(--colorNeutralForeground3);
+  font-size: 12px;
+}
+
+.ide-file-change {
+  min-width: 0;
+}
+
+.ide-file-change-row {
+  min-width: 0;
+  min-height: 30px;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 28px;
+  align-items: stretch;
+  padding: 0 5px 0 9px;
+}
+
+.ide-file-change-row:hover {
+  background: var(--colorNeutralBackground1Hover);
+}
+
+.ide-file-change-kind {
+  align-self: center;
+  font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.ide-file-change-added .ide-file-change-kind {
+  color: var(--ide-change-added);
+}
+
+.ide-file-change-modified .ide-file-change-kind {
+  color: var(--ide-change-modified);
+}
+
+.ide-file-change-deleted .ide-file-change-kind {
+  color: var(--ide-change-deleted);
+}
+
+.ide-file-change-renamed .ide-file-change-kind {
+  color: var(--ide-change-renamed);
+}
+
+.ide-file-change-open,
+.ide-file-change-disclosure {
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.ide-file-change-open {
+  padding: 3px 4px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  text-align: left;
+}
+
+.ide-file-change-open.active {
+  color: var(--colorBrandForeground1);
+  background: var(--colorNeutralBackground1Selected);
+  box-shadow: inset 2px 0 var(--colorBrandStroke1);
+}
+
+.ide-file-change-open:disabled {
+  color: var(--colorNeutralForegroundDisabled);
+  cursor: not-allowed;
+}
+
+.ide-file-change-name,
+.ide-file-change-parent {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ide-file-change-name {
+  font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+}
+
+.ide-file-change-parent {
+  color: var(--colorNeutralForeground3);
+  font-size: 10px;
+}
+
+.ide-file-change-disclosure {
+  padding: 0;
+  color: var(--colorNeutralForeground3);
+  font-size: 15px;
+}
+
+.ide-file-change-disclosure:hover {
+  color: var(--colorNeutralForeground1);
+  background: var(--colorNeutralBackground1Hover);
+}
+
+.ide-file-change-details {
+  min-height: 28px;
+  margin: 1px 9px 4px 32px;
+  padding: 0 9px;
+  border: 1px solid var(--colorNeutralStroke2);
+  border-radius: 4px;
+  background: var(--colorNeutralBackground1);
+}
+
+.ide-file-change-kind-label {
+  margin-left: auto;
+  color: var(--colorNeutralForeground3);
+}
+
+@media (max-width: 560px) {
+  .ide-file-changes-summary {
+    grid-template-columns: 16px auto minmax(0, 1fr);
+  }
+
+  .ide-file-changes-totals {
+    display: none;
+  }
+
+  .ide-file-change-open {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+
+  .ide-file-change-parent {
+    font-size: 9px;
+  }
+}

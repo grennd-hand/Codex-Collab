@@ -29,3 +29,41 @@ type MonacoWorkerEnvironment = typeof globalThis & {
 };
 
 loader.config({ monaco });
+
+monaco.editor.defineTheme("codex-collab-light", {
+  base: "vs",
+  inherit: true,
+  rules: [
+    { token: "comment", foreground: "5A6B55", fontStyle: "italic" },
+    { token: "keyword", foreground: "3158A6" },
+    { token: "string", foreground: "A33A2B" },
+    { token: "number", foreground: "0F6B60" },
+    { token: "type.identifier", foreground: "76518A" },
+    { token: "tag", foreground: "3158A6" },
+    { token: "attribute.name", foreground: "76518A" },
+  ],
+  colors: {
+    "editor.lineHighlightBackground": "F4F7FB",
+    "editorIndentGuide.background1": "DDE3EA",
+    "editorIndentGuide.activeBackground1": "8AA4C6",
+  },
+});
+
+monaco.editor.defineTheme("codex-collab-dark", {
+  base: "vs-dark",
+  inherit: true,
+  rules: [
+    { token: "comment", foreground: "8EA58A", fontStyle: "italic" },
+    { token: "keyword", foreground: "82AAFF" },
+    { token: "string", foreground: "ECC48D" },
+    { token: "number", foreground: "7FDBCA" },
+    { token: "type.identifier", foreground: "C792EA" },
+    { token: "tag", foreground: "82AAFF" },
+    { token: "attribute.name", foreground: "C792EA" },
+  ],
+  colors: {
+    "editor.lineHighlightBackground": "202938",
+    "editorIndentGuide.background1": "2D3748",
+    "editorIndentGuide.activeBackground1": "58739B",
+  },
+});

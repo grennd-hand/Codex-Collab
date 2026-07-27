@@ -1,9 +1,47 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiRequestError } from "../api-client.js";
 import {
+  readWorkspaceFileOperation,
   saveResultFromOperation,
   type WorkspaceFileOperation,
 } from "./workspace-file-operations.js";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe("readWorkspaceFileOperation", () => {
+  it("reads the synced Relay snapshot directly without queuing a Host operation", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          file: {
+            path: "src/App.tsx",
+            size: 12,
+            modifiedAt: "2026-07-27T00:00:00.000Z",
+            sha256: "current-hash",
+            content: "export {};",
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const file = await readWorkspaceFileOperation(
+      { sessionId: "session / 1", headers: { Authorization: "Bearer test" } },
+      "src/A B.tsx",
+    );
+
+    expect(file.sha256).toBe("current-hash");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, request] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(
+      "/v1/sessions/session%20%2F%201/workspace/file?path=src%2FA%20B.tsx",
+    );
+    expect(request.method).toBeUndefined();
+  });
+});
 
 function operation(
   values: Partial<WorkspaceFileOperation>,

@@ -18,6 +18,8 @@ import {
   type ExecutionStatus,
   type ReadableExecution,
 } from "../readable-output.js";
+import { IdeFileChanges } from "../ide/IdeFileChanges.js";
+import type { IdeNavigationTarget } from "../ide/types.js";
 
 function timeLabel(value: string): string {
   return new Date(value).toLocaleTimeString([], {
@@ -283,9 +285,11 @@ function ExecutionStatusIcon({
 function ExecutionStepCard({
   record,
   compact = false,
+  onOpenFile,
 }: {
   record: ReadableExecution;
   compact?: boolean;
+  onOpenFile?: (target: IdeNavigationTarget) => void;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(
     record.status === "running" || record.status === "failed",
@@ -341,6 +345,31 @@ function ExecutionStepCard({
               </div>
             </div>
           </details>
+        ) : null}
+        {record.fileChanges.length > 0 ? (
+          <IdeFileChanges
+            changes={record.fileChanges}
+            title={
+              record.status === "running"
+                ? "正在编辑文件"
+                : record.status === "failed"
+                  ? "文件编辑失败"
+                  : `编辑了 ${record.fileChanges.length} 个文件`
+            }
+            defaultExpanded={
+              record.status === "running" || record.status === "failed"
+            }
+            onOpenFile={
+              onOpenFile
+                ? (path, change) =>
+                    onOpenFile({
+                      path,
+                      ...(change.line ? { line: change.line } : {}),
+                      ...(change.column ? { column: change.column } : {}),
+                    })
+                : undefined
+            }
+          />
         ) : null}
         {record.role === "command" && (record.input || record.output) ? (
           <details className="execution-details" open={detailsOpen}>
@@ -418,11 +447,13 @@ export function ExecutionProcess({
   active = false,
   completedAt = null,
   sourceLabel = null,
+  onOpenFile,
 }: {
   entries: CodexRecordEntry[];
   active?: boolean;
   completedAt?: string | null;
   sourceLabel?: string | null;
+  onOpenFile?: (target: IdeNavigationTarget) => void;
 }) {
   const finalized = Boolean(completedAt);
   const records = presentExecutionEntries(entries, active && !finalized, finalized);
@@ -517,7 +548,11 @@ export function ExecutionProcess({
       {expanded ? (
         <div className="execution-step-list" id={contentId}>
           {records.map((record) => (
-            <ExecutionStepCard key={`codex-${record.id}`} record={record} />
+            <ExecutionStepCard
+              key={`codex-${record.id}`}
+              record={record}
+              onOpenFile={onOpenFile}
+            />
           ))}
         </div>
       ) : null}

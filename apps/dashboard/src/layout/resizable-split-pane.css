@@ -1,0 +1,103 @@
+.resizable-split-pane {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.resizable-split-pane[data-orientation="horizontal"] {
+  grid-template-columns:
+    minmax(0, var(--split-primary-size))
+    var(--split-separator-size)
+    minmax(0, 1fr);
+}
+
+.resizable-split-pane[data-orientation="vertical"] {
+  grid-template-rows:
+    minmax(0, var(--split-primary-size))
+    var(--split-separator-size)
+    minmax(0, 1fr);
+}
+
+.resizable-split-pane__pane {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.resizable-split-pane__separator {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  touch-action: none;
+  user-select: none;
+}
+
+.resizable-split-pane__separator::before {
+  position: absolute;
+  content: "";
+  background: var(--colorNeutralStroke2, #e0e0e0);
+}
+
+.resizable-split-pane[data-orientation="horizontal"]
+  > .resizable-split-pane__separator {
+  cursor: col-resize;
+}
+
+.resizable-split-pane[data-orientation="horizontal"]
+  > .resizable-split-pane__separator::before {
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+}
+
+.resizable-split-pane[data-orientation="vertical"]
+  > .resizable-split-pane__separator {
+  cursor: row-resize;
+}
+
+.resizable-split-pane[data-orientation="vertical"]
+  > .resizable-split-pane__separator::before {
+  right: 0;
+  bottom: 50%;
+  left: 0;
+  height: 1px;
+  transform: translateY(50%);
+}
+
+.resizable-split-pane__separator:hover::before,
+.resizable-split-pane__separator[data-resizing="true"]::before {
+  background: var(--colorBrandStroke1, #0f6cbd);
+}
+
+.resizable-split-pane__separator:focus-visible::before {
+  background: var(--colorBrandStroke1, #0f6cbd);
+  box-shadow: 0 0 0 1px var(--colorNeutralBackground1, #ffffff);
+}
+
+.resizable-split-pane[data-resizing="true"] {
+  user-select: none;
+}
+
+.resizable-split-pane[data-orientation="horizontal"][data-resizing="true"] {
+  cursor: col-resize;
+}
+
+.resizable-split-pane[data-orientation="vertical"][data-resizing="true"] {
+  cursor: row-resize;
+}
+
+@media (forced-colors: active) {
+  .resizable-split-pane__separator::before,
+  .resizable-split-pane__separator:hover::before,
+  .resizable-split-pane__separator:focus-visible::before {
+    background: CanvasText;
+  }
+}

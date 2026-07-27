@@ -163,9 +163,17 @@
 .ide-workbench {
   min-width: 0;
   min-height: 0;
-  display: grid;
-  grid-template-columns: 252px minmax(0, 1fr);
+  display: block;
   overflow: hidden;
+}
+
+.ide-workbench-split {
+  height: 100%;
+}
+
+.ide-workbench-split .ide-explorer {
+  height: 100%;
+  border-right: 0;
 }
 
 .ide-explorer {
@@ -267,6 +275,29 @@
   color: var(--ide-muted);
   font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
   font-size: 9px;
+}
+
+.ide-tree-change {
+  padding-inline: 4px;
+  font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.ide-tree-change-added {
+  color: var(--colorPaletteGreenForeground2);
+}
+
+.ide-tree-change-modified {
+  color: var(--colorBrandForeground1);
+}
+
+.ide-tree-change-deleted {
+  color: var(--colorPaletteRedForeground1);
+}
+
+.ide-tree-change-renamed {
+  color: var(--colorPalettePurpleForeground2);
 }
 
 .ide-editor-pane {
@@ -579,14 +610,13 @@
 
   .ide-workbench {
     position: relative;
-    grid-template-columns: minmax(0, 1fr);
   }
 
-  .ide-mobile-explorer-toggle {
-    display: inline-flex !important;
+  .ide-workbench-split {
+    display: block;
   }
 
-  .ide-explorer {
+  .ide-workbench-split > .resizable-split-pane__primary {
     position: absolute;
     inset: 0 auto 0 0;
     z-index: 2;
@@ -595,6 +625,28 @@
     box-shadow: var(--shadow16);
   }
 
+  .ide-workbench-split > .resizable-split-pane__separator {
+    display: none;
+  }
+
+  .ide-workbench-split > .resizable-split-pane__secondary {
+    height: 100%;
+  }
+
+  .ide-mobile-explorer-toggle {
+    display: inline-flex !important;
+  }
+
+  .ide-explorer {
+    position: static;
+    width: 100%;
+    display: none;
+    box-shadow: none;
+  }
+
+  .ide-shell.explorer-mobile-open
+    .ide-workbench-split
+    > .resizable-split-pane__primary,
   .ide-shell.explorer-mobile-open .ide-explorer {
     display: grid;
   }

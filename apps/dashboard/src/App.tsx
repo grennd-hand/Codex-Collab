@@ -109,8 +109,15 @@ import {
   readWorkspaceFileOperation,
   saveWorkspaceFileOperation,
 } from "./ide/workspace-file-operations.js";
+import {
+  WorkspaceFileCache,
+  workspaceFileCacheKey,
+} from "./ide/workspace-file-cache.js";
+import { resolveWorkspaceFilePath } from "./ide/file-tree.js";
 import type {
   IdeFileDocument,
+  IdeNavigationTarget,
+  IdeOpenFileRequest,
   IdeSaveRequest,
   IdeSaveResult,
 } from "./ide/types.js";
@@ -142,6 +149,8 @@ import {
   ExecutionProcess,
   ReadableOutput,
 } from "./app/ExecutionProcess.js";
+import { collectExecutionFileChanges } from "./readable-output.js";
+import { WorkspacePanelLayout } from "./layout/index.js";
 import {
   canMemberStopCodex,
   chatMessageBody,
@@ -337,6 +346,8 @@ export function App() {
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [workspaceEditorExpanded, setWorkspaceEditorExpanded] = useState(false);
   const [workspaceSummary, setWorkspaceSummary] = useState<WorkspaceSummary | null>(null);
+  const [ideOpenFileRequest, setIdeOpenFileRequest] =
+    useState<IdeOpenFileRequest | null>(null);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const [pairingToken, setPairingToken] = useState("");
   const [pairingExpiresAt, setPairingExpiresAt] = useState("");
@@ -385,6 +396,11 @@ export function App() {
   const loadedComposerKeyRef = useRef<string | null>(null);
   const linkedRoomKeyRef = useRef<string | null>(null);
   const workspaceRefreshSequenceRef = useRef(0);
+  const ideOpenFileSequenceRef = useRef(0);
+  const workspaceFileCacheRef = useRef(new WorkspaceFileCache());
+  const workspaceFileReadsRef = useRef(
+    new Map<string, Promise<IdeFileDocument>>(),
+  );
 
   const session = credential?.session ?? null;
   const member = credential?.member ?? null;
@@ -393,6 +409,12 @@ export function App() {
   const roomOpen = session?.roomStatus !== "closed";
   const supportsPasskeys = useMemo(passkeysAvailable, []);
   const composerStorageKey = session ? `codexCollabComposer:${session.id}` : null;
+
+  useEffect(() => {
+    workspaceFileCacheRef.current.clear();
+    workspaceFileReadsRef.current.clear();
+    setIdeOpenFileRequest(null);
+  }, [session?.id, workspaceSummary?.selectedThreadId]);
 
   const pushActivity = useCallback(
     (
@@ -1573,17 +1595,41 @@ export function App() {
   const readWorkspaceFile = useCallback(
     async (path: string): Promise<IdeFileDocument> => {
       if (!session) throw new Error("当前没有可用的协作会话。");
-      const file = await readWorkspaceFileOperation(
-        {
-          sessionId: session.id,
-          headers: authHeaders(true),
-        },
+      const metadata = workspaceSummary?.files.find((file) => file.path === path);
+      const key = workspaceFileCacheKey(
+        session.id,
+        workspaceSummary?.selectedThreadId ?? null,
         path,
+        metadata?.sha256 ?? "latest",
       );
-      setError(null);
-      return file;
+      const cached = workspaceFileCacheRef.current.get(key);
+      if (cached) return cached;
+      const existingRead = workspaceFileReadsRef.current.get(key);
+      if (existingRead) return existingRead;
+
+      const request = readWorkspaceFileOperation(
+        { sessionId: session.id, headers: authHeaders(true) },
+        path,
+      )
+        .then((file) => {
+          const authoritativeKey = workspaceFileCacheKey(
+            session.id,
+            workspaceSummary?.selectedThreadId ?? null,
+            path,
+            file.sha256,
+          );
+          workspaceFileCacheRef.current.set(authoritativeKey, file);
+          if (authoritativeKey === key) {
+            workspaceFileCacheRef.current.set(key, file);
+          }
+          setError(null);
+          return file;
+        })
+        .finally(() => workspaceFileReadsRef.current.delete(key));
+      workspaceFileReadsRef.current.set(key, request);
+      return request;
     },
-    [authHeaders, session],
+    [authHeaders, session, workspaceSummary],
   );
 
   const saveWorkspaceFile = useCallback(
@@ -1596,6 +1642,8 @@ export function App() {
         },
         request,
       );
+      workspaceFileCacheRef.current.clear();
+      workspaceFileReadsRef.current.clear();
       if (result.status === "saved") {
         pushActivity("项目文件已保存", request.path, "success");
         void refreshWorkspace().catch(showError);
@@ -1615,6 +1663,10 @@ export function App() {
   const owner = members.find((item) => item.role === "owner");
   const status = connectionPresentation(connection, Boolean(session));
   const importedHistory = workspaceSummary?.history ?? [];
+  const workspaceFileChanges = useMemo(
+    () => collectExecutionFileChanges(importedHistory),
+    [importedHistory],
+  );
   const { chatMessages, codexMessages } = splitConversationMessages(messages);
   const { currentThreadMessages, unassignedMessages } =
     selectCodexMessagesForThread(
@@ -1628,6 +1680,24 @@ export function App() {
     ? unassignedMessages.length
     : 0;
   const pendingMemberCount = members.filter((item) => item.status === "pending").length;
+  const openWorkspaceFileFromExecution = useCallback(
+    (target: IdeNavigationTarget) => {
+      if (!workspaceSummary) return;
+      const path = resolveWorkspaceFilePath(target.path, workspaceSummary.files);
+      if (!path) {
+        setError(`无法在当前共享项目中定位文件：${target.path}`);
+        return;
+      }
+      setWorkspaceEditorExpanded(true);
+      ideOpenFileSequenceRef.current += 1;
+      setIdeOpenFileRequest({
+        ...target,
+        path,
+        requestId: ideOpenFileSequenceRef.current,
+      });
+    },
+    [workspaceSummary],
+  );
   const workspaceFileAccess = memberWorkspaceFileAccess(member);
   const workspaceReadOnly = workspaceFileAccess !== "workspace-write";
   const workspaceConnected = Boolean(approved && workspaceSummary?.hostConnected);
@@ -1812,7 +1882,7 @@ export function App() {
           </div>
         ) : null}
 
-        <div
+        <WorkspacePanelLayout
           className={[
             "workspace",
             workspaceConnected ? "workspace-with-files" : "",
@@ -1822,9 +1892,16 @@ export function App() {
           ]
             .filter(Boolean)
             .join(" ")}
+          withFiles={workspaceConnected}
+          editorExpanded={workspaceEditorExpanded}
+          storageScope={session?.id ?? "anonymous"}
         >
           {workspaceConnected && workspaceSummary ? (
-            <section className="workspace-file-dock" aria-label="项目文件与代码编辑器">
+            <section
+              className="workspace-file-dock"
+              aria-label="项目文件与代码编辑器"
+              data-workspace-panel="files"
+            >
               <Suspense
                 fallback={
                   <div className="workspace-file-dock-loading" aria-label="正在加载项目文件">
@@ -1837,7 +1914,13 @@ export function App() {
                 }
               >
                 <IdeWorkspace
+                  key={[
+                    session?.id ?? "session",
+                    workspaceSummary.selectedThreadId ?? "thread",
+                    workspaceSummary.rootLabel ?? "root",
+                  ].join(":")}
                   files={workspaceSummary.files}
+                  fileChanges={workspaceFileChanges}
                   rootLabel={workspaceSummary.rootLabel}
                   hostDeviceLabel={workspaceSummary.hostDeviceLabel}
                   selectedThreadLabel={
@@ -1860,11 +1943,19 @@ export function App() {
                   onReadFile={readWorkspaceFile}
                   onSaveFile={saveWorkspaceFile}
                   onRefresh={reloadWorkspace}
+                  openFileRequest={ideOpenFileRequest}
+                  storageScope={`${session?.id ?? "session"}:${
+                    workspaceSummary.selectedThreadId ?? "thread"
+                  }`}
                 />
               </Suspense>
             </section>
           ) : null}
-          <aside className="people-panel" aria-label="协作成员">
+          <aside
+            className="people-panel"
+            aria-label="协作成员"
+            data-workspace-panel="people"
+          >
             <section className="member-section" aria-labelledby="member-section-title">
               <div className="panel-heading member-panel-heading">
                 <div>
@@ -2152,7 +2243,7 @@ export function App() {
             </section>
           </aside>
 
-          <main className="chat-panel">
+          <main className="chat-panel" data-workspace-panel="chat">
             <div className="chat-heading">
               <div>
                 <p className="session-id">
@@ -2334,6 +2425,7 @@ export function App() {
                         completedAt={item.completedAt ?? null}
                         key={item.id}
                         sourceLabel="导入自 Codex 任务"
+                        onOpenFile={openWorkspaceFileFromExecution}
                       />
                     );
                   })}
@@ -2768,7 +2860,11 @@ export function App() {
             </form>
           </main>
 
-          <aside className="activity-panel" aria-label="任务活动">
+          <aside
+            className="activity-panel"
+            aria-label="任务活动"
+            data-workspace-panel="activity"
+          >
             <div className="panel-heading">
               <div>
                 <h2>任务活动</h2>
@@ -2793,7 +2889,7 @@ export function App() {
               ))}
             </div>
           </aside>
-        </div>
+        </WorkspacePanelLayout>
       </div>
 
       <Dialog

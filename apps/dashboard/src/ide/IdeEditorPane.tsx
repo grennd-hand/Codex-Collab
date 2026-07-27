@@ -16,8 +16,10 @@ import {
   SaveRegular,
   WarningRegular,
 } from "@fluentui/react-icons";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { EditorTabState } from "./ide-tab-state.js";
 import { fileName } from "./ide-tab-state.js";
+import type { IdeOpenFileRequest } from "./types.js";
 
 interface IdeEditorPaneProps {
   tabs: EditorTabState[];
@@ -28,8 +30,8 @@ interface IdeEditorPaneProps {
   activeConfigReadOnly: boolean;
   activeReadOnlyReason: string;
   language: string;
-  lineCount: number;
   themeMode: "light" | "dark";
+  navigationTarget?: IdeOpenFileRequest | null;
   onActivateTab: (path: string) => void;
   onCloseTab: (path: string) => void;
   onSaveTab: (path: string) => void;
@@ -38,11 +40,6 @@ interface IdeEditorPaneProps {
   onKeepLocalDraft: () => void;
   onUpdateValue: (path: string, value: string) => void;
 }
-
-const handleEditorMount: OnMount = (editor) => {
-  editor.layout();
-  window.requestAnimationFrame(() => editor.layout());
-};
 
 export function IdeEditorPane({
   tabs,
@@ -53,8 +50,8 @@ export function IdeEditorPane({
   activeConfigReadOnly,
   activeReadOnlyReason,
   language,
-  lineCount,
   themeMode,
+  navigationTarget = null,
   onActivateTab,
   onCloseTab,
   onSaveTab,
@@ -63,6 +60,67 @@ export function IdeEditorPane({
   onKeepLocalDraft,
   onUpdateValue,
 }: IdeEditorPaneProps) {
+  const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
+  const handledNavigationRef = useRef<number | null>(null);
+  const [editorMounted, setEditorMounted] = useState(false);
+  const [cursorPosition, setCursorPosition] = useState({ line: 1, column: 1 });
+
+  const revealNavigationTarget = useCallback(() => {
+    const editor = editorRef.current;
+    if (
+      !editor ||
+      !navigationTarget ||
+      navigationTarget.path !== activePath ||
+      activeTab?.status !== "ready" ||
+      handledNavigationRef.current === navigationTarget.requestId
+    ) {
+      return;
+    }
+    const line = Math.max(1, Math.trunc(navigationTarget.line ?? 1));
+    const column = Math.max(1, Math.trunc(navigationTarget.column ?? 1));
+    editor.setPosition({ lineNumber: line, column });
+    editor.revealPositionInCenter({ lineNumber: line, column });
+    editor.focus();
+    handledNavigationRef.current = navigationTarget.requestId;
+  }, [activePath, activeTab?.status, navigationTarget]);
+
+  const handleEditorMount: OnMount = useCallback(
+    (editor) => {
+      editorRef.current = editor;
+      setEditorMounted(true);
+      setCursorPosition({
+        line: editor.getPosition()?.lineNumber ?? 1,
+        column: editor.getPosition()?.column ?? 1,
+      });
+      editor.onDidChangeCursorPosition((event) =>
+        setCursorPosition({
+          line: event.position.lineNumber,
+          column: event.position.column,
+        }),
+      );
+      editor.layout();
+      window.requestAnimationFrame(() => {
+        editor.layout();
+        revealNavigationTarget();
+      });
+    },
+    [revealNavigationTarget],
+  );
+
+  useEffect(() => {
+    if (!editorMounted) return;
+    const editor = editorRef.current;
+    const node = editor?.getContainerDomNode();
+    if (!editor || !node || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => editor.layout());
+    observer.observe(node.parentElement ?? node);
+    return () => observer.disconnect();
+  }, [editorMounted]);
+
+  useEffect(() => {
+    revealNavigationTarget();
+  }, [revealNavigationTarget]);
+
   return (
     <main className="ide-editor-pane">
       <div className="ide-tabs" role="tablist" aria-label="打开的文件">
@@ -192,12 +250,17 @@ export function IdeEditorPane({
             original={activeTab.conflict.remote.content}
             modified={activeTab.value}
             language={language}
-            theme={themeMode === "dark" ? "vs-dark" : "vs"}
+            theme={themeMode === "dark" ? "codex-collab-dark" : "codex-collab-light"}
             options={{
               automaticLayout: true,
               readOnly: true,
               renderSideBySide: true,
               minimap: { enabled: false },
+              folding: true,
+              foldingStrategy: "auto",
+              showFoldingControls: "mouseover",
+              bracketPairColorization: { enabled: true },
+              guides: { indentation: true, bracketPairs: true },
               fontFamily: '"Cascadia Code", "SFMono-Regular", Consolas, monospace',
               fontSize: 13,
               scrollBeyondLastLine: false,
@@ -207,12 +270,15 @@ export function IdeEditorPane({
         ) : null}
         {activeTab?.status === "ready" && !activeTab.conflict ? (
           <Editor
-            path={`codex-collab://workspace/${activeTab.path}`}
+            path={`codex-collab://workspace/${activeTab.path
+              .split("/")
+              .map(encodeURIComponent)
+              .join("/")}`}
             height="100%"
             width="100%"
             value={activeTab.value}
             language={language}
-            theme={themeMode === "dark" ? "vs-dark" : "vs"}
+            theme={themeMode === "dark" ? "codex-collab-dark" : "codex-collab-light"}
             loading={<span className="ide-monaco-loading">正在启动编辑器</span>}
             options={{
               automaticLayout: true,
@@ -225,6 +291,25 @@ export function IdeEditorPane({
               fontLigatures: true,
               fontSize: 13,
               lineHeight: 20,
+              folding: true,
+              foldingStrategy: "auto",
+              foldingHighlight: true,
+              showFoldingControls: "mouseover",
+              unfoldOnClickAfterEndOfLine: true,
+              glyphMargin: true,
+              renderLineHighlight: "all",
+              bracketPairColorization: { enabled: true },
+              guides: {
+                indentation: true,
+                highlightActiveIndentation: true,
+                bracketPairs: true,
+                highlightActiveBracketPair: true,
+              },
+              matchBrackets: "always",
+              autoClosingBrackets: "languageDefined",
+              autoClosingQuotes: "languageDefined",
+              autoIndent: "full",
+              stickyScroll: { enabled: true, maxLineCount: 5 },
               minimap: { enabled: true, maxColumn: 80, scale: 1 },
               padding: { top: 10, bottom: 18 },
               renderWhitespace: "selection",
@@ -243,7 +328,7 @@ export function IdeEditorPane({
         <span>{activePath ? language : "就绪"}</span>
         {activeTab?.status === "ready" ? (
           <>
-            <span>Ln {lineCount}</span>
+            <span>Ln {cursorPosition.line}, Col {cursorPosition.column}</span>
             <span>SHA {activeTab.sha256.slice(0, 10)}</span>
             {activeTab.saving ? <span>等待主机保存</span> : null}
             {activeTab.savedNotice ? (

@@ -708,6 +708,15 @@ describe("Codex record import", () => {
 
     expect(records[0]?.text).toContain("修改 E:\\Project\\config.ts");
     expect(records[0]?.text).not.toContain("unredacted-secret-value");
+    expect(records[0]?.fileChanges).toEqual([
+      expect.objectContaining({
+        operationId: "patch-running:1",
+        taskId: "thread-1",
+        path: "E:/Project/config.ts",
+        kind: "modified",
+        lifecycle: "running",
+      }),
+    ]);
   });
 
   it("uses a safe patch summary without duplicating the apply_patch call", () => {
@@ -758,6 +767,17 @@ describe("Codex record import", () => {
     expect(records[0]?.text).toContain("Done!");
     expect(records[0]?.text).not.toContain("old-secret-value");
     expect(records[0]?.text).not.toContain("new-secret-value");
+    expect(records[0]?.fileChanges).toEqual([
+      expect.objectContaining({
+        operationId: "patch-call-1:0",
+        taskId: "thread-1",
+        path: "E:/Project/config.ts",
+        kind: "modified",
+        lifecycle: "completed",
+        additions: 1,
+        deletions: 1,
+      }),
+    ]);
   });
 
   it("detects changes to the selected task rollout", async () => {

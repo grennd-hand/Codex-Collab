@@ -63,6 +63,8 @@ export function workspaceHistoryDigest(history: CodexRecordEntry[]): string {
     hash.update("\0");
     hash.update(entry.text);
     hash.update("\0");
+    hash.update(JSON.stringify(entry.fileChanges ?? []));
+    hash.update("\0");
   }
   return hash.digest("hex");
 }

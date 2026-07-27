@@ -21,6 +21,7 @@ import {
   MAX_MESSAGE_ATTACHMENT_COUNT,
   MAX_MESSAGE_ATTACHMENT_SIZE,
   MAX_MESSAGE_ATTACHMENT_TOTAL_SIZE,
+  type CodexFileChange,
   type CodexRecordEntry,
   type CodexRuntimeStatus,
   type CodexThreadCatalogEntry,
@@ -199,6 +200,68 @@ function parseThreadCatalog(value: unknown): CodexThreadCatalogEntry[] {
   });
 }
 
+function parseCodexFileChanges(
+  value: unknown,
+  entryIndex: number,
+): CodexFileChange[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > 100) {
+    throw new ProtocolError(
+      400,
+      "invalid_request",
+      `history[${entryIndex}].fileChanges must contain at most 100 entries`,
+    );
+  }
+  return value.map((item, changeIndex) => {
+    const field = `history[${entryIndex}].fileChanges[${changeIndex}]`;
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new ProtocolError(400, "invalid_request", `${field} must be an object`);
+    }
+    const record = item as Record<string, unknown>;
+    if (
+      record.kind !== "added" &&
+      record.kind !== "modified" &&
+      record.kind !== "deleted" &&
+      record.kind !== "renamed"
+    ) {
+      throw new ProtocolError(400, "invalid_request", `${field}.kind is invalid`);
+    }
+    if (
+      record.lifecycle !== "running" &&
+      record.lifecycle !== "completed" &&
+      record.lifecycle !== "failed"
+    ) {
+      throw new ProtocolError(400, "invalid_request", `${field}.lifecycle is invalid`);
+    }
+    const path = requiredString(record.path, `${field}.path`, 500);
+    const previousPath =
+      typeof record.previousPath === "string" && record.previousPath.trim()
+        ? requiredString(record.previousPath, `${field}.previousPath`, 500)
+        : null;
+    if (path.includes("\0") || previousPath?.includes("\0")) {
+      throw new ProtocolError(400, "invalid_request", `${field} contains an invalid path`);
+    }
+    return {
+      operationId: requiredString(record.operationId, `${field}.operationId`, 180),
+      ...(typeof record.taskId === "string" && record.taskId.trim()
+        ? { taskId: requiredString(record.taskId, `${field}.taskId`, 160) }
+        : {}),
+      path,
+      ...(previousPath ? { previousPath } : {}),
+      kind: record.kind,
+      lifecycle: record.lifecycle,
+      additions: optionalInteger(record.additions, 0, `${field}.additions`, 0, 1_000_000),
+      deletions: optionalInteger(record.deletions, 0, `${field}.deletions`, 0, 1_000_000),
+      ...(record.line === undefined
+        ? {}
+        : { line: optionalInteger(record.line, 1, `${field}.line`, 1, 10_000_000) }),
+      ...(record.column === undefined
+        ? {}
+        : { column: optionalInteger(record.column, 1, `${field}.column`, 1, 1_000_000) }),
+    };
+  });
+}
+
 function parseHistory(value: unknown): CodexRecordEntry[] {
   if (!Array.isArray(value) || value.length > 500) {
     throw new ProtocolError(400, "invalid_request", "history must contain at most 500 entries");
@@ -227,7 +290,8 @@ function parseHistory(value: unknown): CodexRecordEntry[] {
       (record.phase === "commentary" || record.phase === "final_answer")
         ? record.phase
         : null;
-    totalLength += text.length;
+    const fileChanges = parseCodexFileChanges(record.fileChanges, index);
+    totalLength += text.length + JSON.stringify(fileChanges ?? []).length;
     if (totalLength > 2_000_000) {
       throw new ProtocolError(413, "history_too_large", "Imported Codex history is too large");
     }
@@ -240,6 +304,7 @@ function parseHistory(value: unknown): CodexRecordEntry[] {
         typeof record.createdAt === "string" && !Number.isNaN(Date.parse(record.createdAt))
           ? new Date(record.createdAt).toISOString()
           : null,
+      ...(fileChanges?.length ? { fileChanges } : {}),
     };
   });
 }

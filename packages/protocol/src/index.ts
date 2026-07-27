@@ -516,12 +516,38 @@ export interface CodexThreadCatalogEntry {
   updatedAt: number | null;
 }
 
+export type CodexFileChangeKind =
+  | "added"
+  | "modified"
+  | "deleted"
+  | "renamed";
+
+export type CodexFileChangeLifecycle = "running" | "completed" | "failed";
+
+/**
+ * A safe file-activity summary imported from Codex. Diff bodies are deliberately
+ * excluded; browser file access still resolves against the approved workspace snapshot.
+ */
+export interface CodexFileChange {
+  operationId: string;
+  taskId?: string;
+  path: string;
+  previousPath?: string | null;
+  kind: CodexFileChangeKind;
+  lifecycle: CodexFileChangeLifecycle;
+  additions: number;
+  deletions: number;
+  line?: number;
+  column?: number;
+}
+
 export interface CodexRecordEntry {
   id: string;
   role: "user" | "assistant" | "reasoning" | "command";
   phase?: "commentary" | "final_answer";
   text: string;
   createdAt: string | null;
+  fileChanges?: CodexFileChange[];
 }
 
 export interface WorkspaceFile {

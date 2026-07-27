@@ -4,6 +4,7 @@ import {
   collectDirectoryPaths,
   filterFileTree,
   languageForPath,
+  resolveWorkspaceFilePath,
 } from "./file-tree.js";
 import type { IdeWorkspaceFile } from "./types.js";
 
@@ -57,5 +58,25 @@ describe("languageForPath", () => {
     expect(languageForPath(".github/workflows/ci.yml")).toBe("yaml");
     expect(languageForPath("Dockerfile")).toBe("dockerfile");
     expect(languageForPath("LICENSE")).toBe("plaintext");
+  });
+});
+
+describe("resolveWorkspaceFilePath", () => {
+  const files = [file("apps/dashboard/src/App.tsx"), file("apps/relay/src/server.ts")];
+
+  it("resolves relative, Windows, and root-absolute history paths", () => {
+    expect(resolveWorkspaceFilePath("apps\\dashboard\\src\\App.tsx", files)).toBe(
+      "apps/dashboard/src/App.tsx",
+    );
+    expect(
+      resolveWorkspaceFilePath("E:/Codex-Collab/apps/relay/src/server.ts", files),
+    ).toBe("apps/relay/src/server.ts");
+  });
+
+  it("does not guess when a suffix is missing or ambiguous", () => {
+    expect(resolveWorkspaceFilePath("missing.ts", files)).toBeNull();
+    expect(
+      resolveWorkspaceFilePath("src/index.ts", [file("a/src/index.ts"), file("b/src/index.ts")]),
+    ).toBeNull();
   });
 });

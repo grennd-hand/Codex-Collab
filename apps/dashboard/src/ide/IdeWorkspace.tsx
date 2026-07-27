@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   buildFileTree,
   collectDirectoryPaths,
@@ -8,6 +8,7 @@ import {
 import { IdeEditorPane } from "./IdeEditorPane.js";
 import { IdeExplorer } from "./IdeExplorer.js";
 import { IdeTitlebar } from "./IdeTitlebar.js";
+import { ResizableSplitPane } from "../layout/index.js";
 import {
   createLoadingTab,
   fileName,
@@ -20,6 +21,7 @@ import "./ide-workspace.css";
 
 export default function IdeWorkspace({
   files,
+  fileChanges = [],
   rootLabel,
   hostDeviceLabel,
   selectedThreadLabel,
@@ -31,6 +33,8 @@ export default function IdeWorkspace({
   onReadFile,
   onSaveFile,
   onRefresh,
+  openFileRequest = null,
+  storageScope = "workspace",
   embedded = false,
   editorExpanded = true,
   onEditorExpandedChange,
@@ -40,24 +44,59 @@ export default function IdeWorkspace({
   const [query, setQuery] = useState("");
   const visibleTree = useMemo(() => filterFileTree(tree, query), [query, tree]);
   const allDirectories = useMemo(() => collectDirectoryPaths(tree), [tree]);
-  const [expandedDirectories, setExpandedDirectories] =
-    useState<Set<string>>(allDirectories);
+  const expansionStorageKey = `codex-collab:ide:expanded:${storageScope}`;
+  const [expandedDirectories, setExpandedDirectories] = useState<Set<string>>(
+    () => {
+      try {
+        if (typeof window === "undefined") return new Set();
+        const stored = window.localStorage.getItem(expansionStorageKey);
+        const parsed = stored ? (JSON.parse(stored) as unknown) : [];
+        return new Set(
+          Array.isArray(parsed)
+            ? parsed.filter((item): item is string => typeof item === "string")
+            : [],
+        );
+      } catch {
+        return new Set();
+      }
+    },
+  );
   const [tabs, setTabs] = useState<EditorTabState[]>([]);
+  const tabsRef = useRef<EditorTabState[]>([]);
+  const loadingPathsRef = useRef(new Map<string, Promise<void>>());
+  const handledOpenRequestRef = useRef<number | null>(null);
+  const shellRef = useRef<HTMLElement>(null);
   const [activePath, setActivePath] = useState<string | null>(null);
   const [mobileExplorerOpen, setMobileExplorerOpen] = useState(false);
 
   useEffect(() => {
     setExpandedDirectories((current) => {
-      const next = new Set(current);
-      for (const directory of allDirectories) next.add(directory);
-      return next;
+      const next = new Set([...current].filter((path) => allDirectories.has(path)));
+      return next.size === current.size ? current : next;
     });
   }, [allDirectories]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        expansionStorageKey,
+        JSON.stringify([...expandedDirectories]),
+      );
+    } catch {
+      // Local layout preferences are optional.
+    }
+  }, [expandedDirectories, expansionStorageKey]);
 
   const updateTab = useCallback(
     (path: string, update: (tab: EditorTabState) => EditorTabState) => {
       setTabs((current) =>
-        current.map((tab) => (tab.path === path ? update(tab) : tab)),
+        {
+          const next = current.map((tab) =>
+            tab.path === path ? update(tab) : tab,
+          );
+          tabsRef.current = next;
+          return next;
+        },
       );
     },
     [],
@@ -68,43 +107,71 @@ export default function IdeWorkspace({
       onEditorExpandedChange?.(true);
       setActivePath(path);
       setMobileExplorerOpen(false);
-      const existing = tabs.find((tab) => tab.path === path);
+      const ancestorPaths = path
+        .replaceAll("\\", "/")
+        .split("/")
+        .slice(0, -1)
+        .map((_part, index, parts) => parts.slice(0, index + 1).join("/"));
+      setExpandedDirectories((current) => new Set([...current, ...ancestorPaths]));
+      const existing = tabsRef.current.find((tab) => tab.path === path);
       if (existing && existing.status !== "error") return;
 
+      const inFlight = loadingPathsRef.current.get(path);
+      if (inFlight) return inFlight;
+
       if (!existing) {
-        setTabs((current) =>
-          current.some((tab) => tab.path === path)
+        setTabs((current) => {
+          const next = current.some((tab) => tab.path === path)
             ? current
-            : [...current, createLoadingTab(path)],
-        );
+            : [...current, createLoadingTab(path)];
+          tabsRef.current = next;
+          return next;
+        });
       } else {
         updateTab(path, (tab) => ({ ...tab, status: "loading", error: null }));
       }
 
-      try {
-        const document = await onReadFile(path);
-        updateTab(path, (tab) => ({
-          ...tab,
-          status: "ready",
-          value: document.content,
-          savedValue: document.content,
-          sha256: document.sha256,
-          error: null,
-          saveError: null,
-          conflict: null,
-        }));
-      } catch (caught) {
-        updateTab(path, (tab) => ({
-          ...tab,
-          status: "error",
-          error: messageFromError(caught),
-        }));
-      }
+      const request = (async () => {
+        try {
+          const document = await onReadFile(path);
+          updateTab(path, (tab) => ({
+            ...tab,
+            status: "ready",
+            value: document.content,
+            savedValue: document.content,
+            sha256: document.sha256,
+            error: null,
+            saveError: null,
+            conflict: null,
+          }));
+        } catch (caught) {
+          updateTab(path, (tab) => ({
+            ...tab,
+            status: "error",
+            error: messageFromError(caught),
+          }));
+        } finally {
+          loadingPathsRef.current.delete(path);
+        }
+      })();
+      loadingPathsRef.current.set(path, request);
+      return request;
     },
-    [onEditorExpandedChange, onReadFile, tabs, updateTab],
+    [onEditorExpandedChange, onReadFile, updateTab],
   );
 
   const activeTab = tabs.find((tab) => tab.path === activePath) ?? null;
+
+  useEffect(() => {
+    if (
+      !openFileRequest ||
+      handledOpenRequestRef.current === openFileRequest.requestId
+    ) {
+      return;
+    }
+    handledOpenRequestRef.current = openFileRequest.requestId;
+    void loadFile(openFileRequest.path);
+  }, [loadFile, openFileRequest]);
   const activeDirty = Boolean(
     activeTab?.status === "ready" && activeTab.value !== activeTab.savedValue,
   );
@@ -179,6 +246,7 @@ export default function IdeWorkspace({
       if (!(event.ctrlKey || event.metaKey) || event.key.toLocaleLowerCase() !== "s") {
         return;
       }
+      if (!shellRef.current?.contains(document.activeElement)) return;
       event.preventDefault();
       if (activePath) void saveTab(activePath);
     };
@@ -198,6 +266,7 @@ export default function IdeWorkspace({
     const index = tabs.findIndex((tab) => tab.path === path);
     const next = tabs.filter((tab) => tab.path !== path);
     setTabs(next);
+    tabsRef.current = next;
     if (activePath === path) {
       setActivePath(next[Math.min(index, next.length - 1)]?.path ?? null);
     }
@@ -232,12 +301,62 @@ export default function IdeWorkspace({
   };
 
   const forceExpanded = query.trim().length > 0;
-  const lineCount = activeTab?.value.split("\n").length ?? 0;
   const language = activePath ? languageForPath(activePath) : "plaintext";
   const showEditor = !embedded || editorExpanded;
+  const explorerPane = (
+    <IdeExplorer
+      fileCount={files.length}
+      fileChanges={fileChanges}
+      loading={loading}
+      query={query}
+      visibleTree={visibleTree}
+      activePath={activePath}
+      expandedDirectories={expandedDirectories}
+      forceExpanded={forceExpanded}
+      onQueryChange={setQuery}
+      onToggleDirectory={(path) =>
+        setExpandedDirectories((current) => {
+          const next = new Set(current);
+          if (next.has(path)) next.delete(path);
+          else next.add(path);
+          return next;
+        })
+      }
+      onOpenFile={(path) => void loadFile(path)}
+    />
+  );
+  const editorPane = (
+    <IdeEditorPane
+      tabs={tabs}
+      activePath={activePath}
+      activeTab={activeTab}
+      activeDirty={activeDirty}
+      activeFileReadOnly={activeFileReadOnly}
+      activeConfigReadOnly={activeConfigReadOnly}
+      activeReadOnlyReason={activeReadOnlyReason}
+      language={language}
+      themeMode={themeMode}
+      navigationTarget={openFileRequest}
+      onActivateTab={setActivePath}
+      onCloseTab={closeTab}
+      onSaveTab={(path) => void saveTab(path)}
+      onRetryFile={(path) => void loadFile(path)}
+      onUseRemoteVersion={useRemoteVersion}
+      onKeepLocalDraft={keepLocalDraft}
+      onUpdateValue={(path, value) =>
+        updateTab(path, (tab) => ({
+          ...tab,
+          value,
+          saveError: null,
+          savedNotice: false,
+        }))
+      }
+    />
+  );
 
   return (
     <section
+      ref={shellRef}
       className={[
         "ide-shell",
         embedded ? "ide-shell-embedded" : "",
@@ -266,54 +385,23 @@ export default function IdeWorkspace({
       />
 
       <div className="ide-workbench">
-        <IdeExplorer
-          fileCount={files.length}
-          loading={loading}
-          query={query}
-          visibleTree={visibleTree}
-          activePath={activePath}
-          expandedDirectories={expandedDirectories}
-          forceExpanded={forceExpanded}
-          onQueryChange={setQuery}
-          onToggleDirectory={(path) =>
-            setExpandedDirectories((current) => {
-              const next = new Set(current);
-              if (next.has(path)) next.delete(path);
-              else next.add(path);
-              return next;
-            })
-          }
-          onOpenFile={(path) => void loadFile(path)}
-        />
-
         {showEditor ? (
-          <IdeEditorPane
-            tabs={tabs}
-            activePath={activePath}
-            activeTab={activeTab}
-            activeDirty={activeDirty}
-            activeFileReadOnly={activeFileReadOnly}
-            activeConfigReadOnly={activeConfigReadOnly}
-            activeReadOnlyReason={activeReadOnlyReason}
-            language={language}
-            lineCount={lineCount}
-            themeMode={themeMode}
-            onActivateTab={setActivePath}
-            onCloseTab={closeTab}
-            onSaveTab={(path) => void saveTab(path)}
-            onRetryFile={(path) => void loadFile(path)}
-            onUseRemoteVersion={useRemoteVersion}
-            onKeepLocalDraft={keepLocalDraft}
-            onUpdateValue={(path, value) =>
-              updateTab(path, (tab) => ({
-                ...tab,
-                value,
-                saveError: null,
-                savedNotice: false,
-              }))
-            }
+          <ResizableSplitPane
+            className="ide-workbench-split"
+            primary={explorerPane}
+            secondary={editorPane}
+            defaultPrimarySize={embedded ? 232 : 252}
+            minPrimarySize={180}
+            maxPrimarySize={420}
+            minSecondarySize={320}
+            separatorLabel="调整资源管理器和代码编辑器宽度"
+            primaryLabel="文件资源管理器"
+            secondaryLabel="代码编辑器"
+            storageKey={`codex-collab:ide:explorer-width:${storageScope}`}
           />
-        ) : null}
+        ) : (
+          explorerPane
+        )}
       </div>
     </section>
   );

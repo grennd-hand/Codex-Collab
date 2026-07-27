@@ -48,6 +48,10 @@ function operationPath(sessionId: string, operationId?: string): string {
   return operationId ? `${base}/${encodeURIComponent(operationId)}` : base;
 }
 
+function workspaceFilePath(sessionId: string, path: string): string {
+  return `/v1/sessions/${encodeURIComponent(sessionId)}/workspace/file?path=${encodeURIComponent(path)}`;
+}
+
 function operationError(operation: WorkspaceFileOperation): Error {
   const code = operation.errorCode ?? "file_operation_failed";
   return new ApiRequestError(
@@ -105,16 +109,11 @@ export async function readWorkspaceFileOperation(
   options: OperationClientOptions,
   path: string,
 ): Promise<IdeFileDocument> {
-  const operation = await enqueueOperation(options, { kind: "read", path });
-  if (operation.status === "failed") throw operationError(operation);
-  if (!operation.resultFile) {
-    throw new ApiRequestError(
-      502,
-      "missing_file_result",
-      "主机完成了读取，但没有返回文件内容。",
-    );
-  }
-  return operation.resultFile;
+  const response = await requestJson<{ file: IdeFileDocument }>(
+    workspaceFilePath(options.sessionId, path),
+    { headers: options.headers },
+  );
+  return response.file;
 }
 
 export async function saveWorkspaceFileOperation(

@@ -12,7 +12,8 @@ import {
   FolderRegular,
   SearchRegular,
 } from "@fluentui/react-icons";
-import type { CSSProperties } from "react";
+import type { CodexFileChange } from "@codex-collab/protocol";
+import { useMemo, type CSSProperties } from "react";
 import type { IdeFileTreeNode } from "./file-tree.js";
 
 interface IdeExplorerProps {
@@ -22,6 +23,7 @@ interface IdeExplorerProps {
   visibleTree: IdeFileTreeNode[];
   activePath: string | null;
   expandedDirectories: ReadonlySet<string>;
+  fileChanges: readonly CodexFileChange[];
   forceExpanded: boolean;
   onQueryChange: (value: string) => void;
   onToggleDirectory: (path: string) => void;
@@ -42,6 +44,7 @@ function TreeItem({
   forceExpanded,
   onToggle,
   onOpen,
+  changeByPath,
 }: {
   node: IdeFileTreeNode;
   depth: number;
@@ -50,10 +53,12 @@ function TreeItem({
   forceExpanded: boolean;
   onToggle: (path: string) => void;
   onOpen: (path: string) => void;
+  changeByPath: ReadonlyMap<string, CodexFileChange>;
 }) {
   const isDirectory = node.kind === "directory";
   const isExpanded = forceExpanded || expanded.has(node.path);
   const style = { "--ide-tree-depth": depth } as CSSProperties;
+  const fileChange = node.kind === "file" ? changeByPath.get(node.path) : undefined;
 
   return (
     <div
@@ -81,7 +86,28 @@ function TreeItem({
           )}
         </span>
         <span className="ide-tree-name">{node.name}</span>
-        {node.file ? (
+        {fileChange ? (
+          <span
+            className={`ide-tree-change ide-tree-change-${fileChange.kind}`}
+            aria-label={
+              fileChange.kind === "added"
+                ? "新增文件"
+                : fileChange.kind === "deleted"
+                  ? "删除文件"
+                  : fileChange.kind === "renamed"
+                    ? "重命名文件"
+                    : "修改文件"
+            }
+          >
+            {fileChange.kind === "added"
+              ? "A"
+              : fileChange.kind === "deleted"
+                ? "D"
+                : fileChange.kind === "renamed"
+                  ? "R"
+                  : "M"}
+          </span>
+        ) : node.file ? (
           <span className="ide-tree-size">{formatFileSize(node.file.size)}</span>
         ) : null}
       </button>
@@ -96,6 +122,7 @@ function TreeItem({
               forceExpanded={forceExpanded}
               onToggle={onToggle}
               onOpen={onOpen}
+              changeByPath={changeByPath}
               key={child.id}
             />
           ))}
@@ -124,11 +151,17 @@ export function IdeExplorer({
   visibleTree,
   activePath,
   expandedDirectories,
+  fileChanges,
   forceExpanded,
   onQueryChange,
   onToggleDirectory,
   onOpenFile,
 }: IdeExplorerProps) {
+  const changeByPath = useMemo(() => {
+    const result = new Map<string, CodexFileChange>();
+    for (const change of fileChanges) result.set(change.path.replaceAll("\\", "/"), change);
+    return result;
+  }, [fileChanges]);
   return (
     <aside className="ide-explorer" aria-label="文件资源管理器">
       <div className="ide-pane-heading">
@@ -170,6 +203,7 @@ export function IdeExplorer({
             forceExpanded={forceExpanded}
             onToggle={onToggleDirectory}
             onOpen={onOpenFile}
+            changeByPath={changeByPath}
             key={node.id}
           />
         ))}
