@@ -303,6 +303,7 @@
 .ide-editor-pane {
   min-width: 0;
   min-height: 0;
+  height: 100%;
   display: grid;
   grid-template-rows: 35px 39px auto minmax(0, 1fr) 23px;
   overflow: hidden;
