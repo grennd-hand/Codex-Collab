@@ -50,7 +50,8 @@ export class WorkspaceFileOperationStore extends WorkspaceEntryAdmissionStore {
     input:
       | { kind: "read"; path: string }
       | { kind: "write"; path: string; content: string; expectedSha256: string }
-      | { kind: "mkdir"; path: string },
+      | { kind: "mkdir"; path: string }
+      | { kind: "rename"; path: string; destinationPath: string; expectedSha256: string | null },
   ): WorkspaceFileOperation {
     const member = this.requireBrowserMember(sessionId, memberToken, true);
     const state = this.workspaceState(sessionId);
@@ -64,10 +65,18 @@ export class WorkspaceFileOperationStore extends WorkspaceEntryAdmissionStore {
         "Select a Codex task before opening or editing workspace files",
       );
     }
-    const path =
-      input.kind === "mkdir"
+    const rename = input.kind === "rename"
+      ? this.assertWorkspaceRenameAdmission(
+          sessionId,
+          input.path,
+          input.destinationPath,
+          input.expectedSha256,
+        )
+      : null;
+    const path = rename?.path ??
+      (input.kind === "mkdir"
         ? normalizeWorkspaceDirectoryPath(input.path)
-        : normalizeWorkspaceOperationPath(input.path);
+        : normalizeWorkspaceOperationPath(input.path));
     if (codexConfigRelativePath(path) && input.kind !== "read") {
       throw new ProtocolError(
         403,
@@ -183,9 +192,9 @@ export class WorkspaceFileOperationStore extends WorkspaceEntryAdmissionStore {
       .prepare(`
         INSERT INTO workspace_file_operations
           (id, session_id, requested_by_member_id, requested_by_display_name,
-           host_generation, kind, path, request_content, request_size,
+           host_generation, kind, path, destination_path, request_content, request_size,
            expected_sha256, status, requested_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)
       `)
       .run(
         operationId,
@@ -195,9 +204,10 @@ export class WorkspaceFileOperationStore extends WorkspaceEntryAdmissionStore {
         state.host_generation,
         input.kind,
         path,
+        rename?.destinationPath ?? null,
         input.kind === "write" ? input.content : null,
         input.kind === "write" ? Buffer.byteLength(input.content) : null,
-        input.kind === "write" ? input.expectedSha256 : null,
+        input.kind === "write" ? input.expectedSha256 : rename?.expectedSha256 ?? null,
         requestedAt,
       );
     return this.workspaceFileOperationById(sessionId, operationId);
@@ -442,7 +452,7 @@ export class WorkspaceFileOperationStore extends WorkspaceEntryAdmissionStore {
       row.result_modified_at !== null &&
       row.result_sha256 !== null
         ? {
-            path: row.path,
+            path: row.kind === "rename" ? row.destination_path ?? row.path : row.path,
             size: row.result_size,
             modifiedAt: row.result_modified_at,
             sha256: row.result_sha256,
@@ -460,6 +470,7 @@ export class WorkspaceFileOperationStore extends WorkspaceEntryAdmissionStore {
       hostGeneration: row.host_generation ?? "",
       kind: row.kind,
       path: row.path,
+      destinationPath: row.destination_path,
       expectedSha256: row.expected_sha256,
       status: row.status,
       resultFileMetadata,

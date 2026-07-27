@@ -118,6 +118,7 @@ export interface WorkspaceFileOperationRow {
   host_generation: string | null;
   kind: WorkspaceFileOperationKind;
   path: string;
+  destination_path: string | null;
   request_content: string | null;
   request_size: number | null;
   expected_sha256: string | null;

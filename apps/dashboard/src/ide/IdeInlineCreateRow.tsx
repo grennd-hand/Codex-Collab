@@ -11,6 +11,7 @@ import {
 } from "react";
 import {
   createWorkspaceEntryPath,
+  defaultCreateEntryName,
   type IdeCreateEntryKind,
 } from "./ide-create-entry.js";
 import { messageFromError } from "./ide-tab-state.js";
@@ -30,7 +31,7 @@ export function IdeInlineCreateRow({
   onCancel,
   onCreate,
 }: IdeInlineCreateRowProps) {
-  const [name, setName] = useState("");
+  const [name, setName] = useState(() => defaultCreateEntryName(kind));
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const style = { "--ide-tree-depth": depth } as CSSProperties;
@@ -89,6 +90,11 @@ export function IdeInlineCreateRow({
           value={name}
           aria-label={`输入新${label}名称`}
           aria-invalid={Boolean(error)}
+          onFocus={(event) => {
+            if (kind === "file" && event.currentTarget.value === "untitled.txt") {
+              event.currentTarget.setSelectionRange(0, "untitled".length);
+            }
+          }}
           onKeyDown={handleKeyDown}
           onChange={(_, data) => {
             setName(data.value);

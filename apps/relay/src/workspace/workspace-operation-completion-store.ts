@@ -47,14 +47,16 @@ export class WorkspaceOperationCompletionStore extends WorkspaceOperationLeaseSt
       throw new ProtocolError(403, permissionError.code, permissionError.message);
     }
     const file = input.file ?? null;
-    if (input.status === "completed" && row.kind !== "mkdir" && !file) {
+    const directoryResult =
+      row.kind === "mkdir" || (row.kind === "rename" && row.expected_sha256 === null);
+    if (input.status === "completed" && !directoryResult && !file) {
       throw new ProtocolError(
         400,
         "invalid_workspace_operation_result",
         "Completed file operations require a file result",
       );
     }
-    if (row.kind === "mkdir" && file) {
+    if (directoryResult && file) {
       throw new ProtocolError(
         400,
         "invalid_workspace_operation_result",
@@ -63,7 +65,8 @@ export class WorkspaceOperationCompletionStore extends WorkspaceOperationLeaseSt
     }
     if (file) {
       const normalizedPath = normalizeWorkspaceOperationPath(file.path);
-      if (normalizedPath !== row.path) {
+      const resultPath = row.kind === "rename" ? row.destination_path : row.path;
+      if (normalizedPath !== resultPath) {
         throw new ProtocolError(
           400,
           "workspace_operation_path_mismatch",
@@ -107,7 +110,11 @@ export class WorkspaceOperationCompletionStore extends WorkspaceOperationLeaseSt
     this.db.exec("BEGIN IMMEDIATE");
     try {
       if (file) {
-        this.assertWorkspaceFileCapacity(sessionId, row.path, file.size);
+        this.assertWorkspaceFileCapacity(
+          sessionId,
+          row.kind === "rename" ? row.destination_path ?? row.path : row.path,
+          file.size,
+        );
       }
       const updated = this.db
         .prepare(`
@@ -173,6 +180,11 @@ export class WorkspaceOperationCompletionStore extends WorkspaceOperationLeaseSt
             file.sha256,
             file.content,
           );
+        if (row.kind === "rename") {
+          this.db
+            .prepare("DELETE FROM workspace_files WHERE session_id = ? AND path = ?")
+            .run(sessionId, row.path);
+        }
       }
       if (input.status === "completed" && row.kind === "mkdir") {
         this.db
@@ -181,6 +193,28 @@ export class WorkspaceOperationCompletionStore extends WorkspaceOperationLeaseSt
             VALUES (?, ?) ON CONFLICT(session_id, path) DO NOTHING
           `)
           .run(sessionId, row.path);
+      }
+      if (
+        input.status === "completed" &&
+        row.kind === "rename" &&
+        row.expected_sha256 === null &&
+        row.destination_path
+      ) {
+        for (const table of ["workspace_directories", "workspace_files"]) {
+          this.db.prepare(`
+            UPDATE ${table}
+            SET path = ? || substr(path, length(?) + 1)
+            WHERE session_id = ?
+              AND (path = ? OR substr(path, 1, length(?) + 1) = ? || '/')
+          `).run(
+            row.destination_path,
+            row.path,
+            sessionId,
+            row.path,
+            row.path,
+            row.path,
+          );
+        }
       }
       this.enforceWorkspaceFileOperationRetention(sessionId);
       this.db.exec("COMMIT");

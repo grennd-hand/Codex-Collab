@@ -23,6 +23,12 @@ export interface IdeSaveRequest {
   expectedSha256: string;
 }
 
+export interface IdeRenameRequest {
+  path: string;
+  destinationPath: string;
+  expectedSha256: string | null;
+}
+
 export interface IdeNavigationTarget {
   path: string;
   line?: number;
@@ -60,6 +66,7 @@ export interface IdeWorkspaceProps {
   onSaveFile: (request: IdeSaveRequest) => Promise<IdeSaveResult>;
   onCreateFile: (path: string) => Promise<IdeFileDocument>;
   onCreateDirectory: (path: string) => Promise<void>;
+  onRenameEntry: (request: IdeRenameRequest) => Promise<IdeFileDocument | null>;
   onRefresh: () => void | Promise<void>;
   openFileRequest?: IdeOpenFileRequest | null;
   storageScope?: string;

@@ -117,6 +117,16 @@ export function useWorkspaceHistoryController({
   useLayoutEffect(() => {
     const pending = pendingScrollRestoreRef.current;
     if (!pending) return;
+    if (
+      olderRequestIdRef.current === pending.requestId &&
+      historyWindowRef.current.olderLoading
+    ) {
+      // Remove the loading row first, then restore against the final geometry in
+      // the following layout pass. Restoring before this state change makes the
+      // viewport jump when the final page no longer has an older-page control.
+      commitHistoryWindow(finishOlderHistoryLoad);
+      return;
+    }
     pendingScrollRestoreRef.current = null;
     if (
       sessionIdRef.current === pending.sessionId &&
@@ -127,7 +137,6 @@ export function useWorkspaceHistoryController({
       restoreHistoryScrollAnchor(messageStreamRef.current, pending.anchor);
     }
     if (olderRequestIdRef.current === pending.requestId) {
-      commitHistoryWindow(finishOlderHistoryLoad);
       prependingRef.current = false;
       olderAbortRef.current = null;
     }

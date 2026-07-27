@@ -53,7 +53,7 @@ export interface WorkspaceFileContent extends WorkspaceFile {
   content: string;
 }
 
-export type WorkspaceFileOperationKind = "read" | "write" | "mkdir";
+export type WorkspaceFileOperationKind = "read" | "write" | "mkdir" | "rename";
 export type WorkspaceFileOperationStatus =
   | "queued"
   | "processing"
@@ -68,6 +68,7 @@ export interface WorkspaceFileOperation {
   hostGeneration: string;
   kind: WorkspaceFileOperationKind;
   path: string;
+  destinationPath: string | null;
   expectedSha256: string | null;
   status: WorkspaceFileOperationStatus;
   resultFileMetadata: WorkspaceFile | null;
@@ -114,6 +115,13 @@ export type CreateWorkspaceFileOperationRequest =
   | {
       kind: "mkdir";
       path: string;
+    }
+  | {
+      kind: "rename";
+      path: string;
+      destinationPath: string;
+      /** Existing file hash, or null when renaming a directory. */
+      expectedSha256: string | null;
     };
 
 export interface UpdateMemberWorkspaceFileAccessRequest {

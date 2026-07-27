@@ -15,12 +15,14 @@ import {
 import {
   createWorkspaceDirectoryOperation,
   readWorkspaceFileOperation,
+  renameWorkspaceEntryOperation,
   saveWorkspaceFileOperation,
 } from "../../ide/workspace-file-operations.js";
 import type {
   IdeFileDocument,
   IdeNavigationTarget,
   IdeOpenFileRequest,
+  IdeRenameRequest,
   IdeSaveRequest,
   IdeSaveResult,
 } from "../../ide/types.js";
@@ -202,6 +204,22 @@ export function useWorkspaceFileController({
     [authHeaders, onActivity, refreshWorkspace, session, setError],
   );
 
+  const renameEntry = useCallback(
+    async (request: IdeRenameRequest): Promise<IdeFileDocument | null> => {
+      if (!session) throw new Error("当前没有可用的协作会话。");
+      const file = await renameWorkspaceEntryOperation(
+        { sessionId: session.id, headers: authHeaders(true) },
+        request,
+      );
+      clearCache();
+      await refreshWorkspace(false);
+      onActivity("已重命名项目条目", `${request.path} → ${request.destinationPath}`, "success");
+      setError(null);
+      return file;
+    },
+    [authHeaders, clearCache, onActivity, refreshWorkspace, session, setError],
+  );
+
   const openFromExecution = useCallback(
     (target: IdeNavigationTarget) => {
       if (!summary) return;
@@ -240,6 +258,7 @@ export function useWorkspaceFileController({
     openFileRequest,
     openFromExecution,
     readFile,
+    renameEntry,
     reset,
     saveFile,
     setEditorExpanded,

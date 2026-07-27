@@ -39,6 +39,7 @@ interface IdeExplorerProps {
   onOpenFile: (path: string) => void;
   onCreateFile: (path: string) => Promise<void>;
   onCreateDirectory: (path: string) => Promise<void>;
+  onRenameEntry: (entry: IdeTreeSelection, destinationPath: string) => Promise<void>;
 }
 
 function ExplorerSkeleton() {
@@ -70,9 +71,11 @@ export function IdeExplorer({
   onOpenFile,
   onCreateFile,
   onCreateDirectory,
+  onRenameEntry,
 }: IdeExplorerProps) {
   const [selection, setSelection] = useState<IdeTreeSelection | null>(null);
   const [pendingCreate, setPendingCreate] = useState<PendingIdeCreate | null>(null);
+  const [pendingRename, setPendingRename] = useState<IdeTreeSelection | null>(null);
   const createIdRef = useRef(0);
   const entryCount = fileCount + directoryCount;
   useEffect(() => {
@@ -83,7 +86,16 @@ export function IdeExplorer({
     const parentPath = createEntryParentPath(selection, activePath);
     onQueryChange("");
     if (parentPath) onExpandDirectory(parentPath);
+    setPendingRename(null);
     setPendingCreate({ id: ++createIdRef.current, kind, parentPath });
+  };
+  const commitRename = async (
+    entry: IdeTreeSelection,
+    destinationPath: string,
+  ) => {
+    await onRenameEntry(entry, destinationPath);
+    setPendingRename(null);
+    setSelection({ kind: entry.kind, path: destinationPath });
   };
 
   const commitCreate = async (path: string) => {
@@ -164,8 +176,16 @@ export function IdeExplorer({
           onSelect={setSelection}
           changeByPath={changeByPath}
           pendingCreate={pendingCreate}
+          pendingRename={pendingRename}
           onCancelCreate={() => setPendingCreate(null)}
           onCommitCreate={commitCreate}
+          onStartRename={(entry) => {
+            if (readOnly) return;
+            setPendingCreate(null);
+            setPendingRename(entry);
+          }}
+          onCancelRename={() => setPendingRename(null)}
+          onCommitRename={commitRename}
         />
       </div>
     </aside>

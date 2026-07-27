@@ -2,11 +2,12 @@ import { ApiRequestError, requestJson } from "../shared/api/api-client.js";
 import type {
   IdeFileDocument,
   IdeFileOperationStatus,
+  IdeRenameRequest,
   IdeSaveRequest,
   IdeSaveResult,
 } from "./types.js";
 
-type WorkspaceFileOperationKind = "read" | "write" | "mkdir";
+type WorkspaceFileOperationKind = "read" | "write" | "mkdir" | "rename";
 
 export interface WorkspaceFileOperation {
   id: string;
@@ -15,6 +16,7 @@ export interface WorkspaceFileOperation {
   requestedByDisplayName: string;
   kind: WorkspaceFileOperationKind;
   path: string;
+  destinationPath: string | null;
   expectedSha256: string | null;
   status: IdeFileOperationStatus;
   resultFile: IdeFileDocument | null;
@@ -93,7 +95,8 @@ async function enqueueOperation(
   body:
     | { kind: "read"; path: string }
     | ({ kind: "write" } & IdeSaveRequest)
-    | { kind: "mkdir"; path: string },
+    | { kind: "mkdir"; path: string }
+    | ({ kind: "rename" } & IdeRenameRequest),
 ): Promise<WorkspaceFileOperation> {
   const queued = await requestJson<WorkspaceFileOperationResponse>(
     operationPath(options.sessionId),
@@ -131,6 +134,15 @@ export async function createWorkspaceDirectoryOperation(
 ): Promise<void> {
   const operation = await enqueueOperation(options, { kind: "mkdir", path });
   if (operation.status === "failed") throw operationError(operation);
+}
+
+export async function renameWorkspaceEntryOperation(
+  options: OperationClientOptions,
+  request: IdeRenameRequest,
+): Promise<IdeFileDocument | null> {
+  const operation = await enqueueOperation(options, { kind: "rename", ...request });
+  if (operation.status === "failed") throw operationError(operation);
+  return operation.resultFile;
 }
 
 export function saveResultFromOperation(

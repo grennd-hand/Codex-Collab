@@ -148,6 +148,63 @@ describe("workspace live history sync", () => {
     }
   });
 
+  it("publishes a replacement snapshot after a file is deleted locally", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codex-collab-delete-sync-"));
+    await writeFile(join(directory, "README.md"), "# Local\n", "utf8");
+    const thread = { id: "thread-1", name: "Task", preview: "", updatedAt: 1, path: null };
+    const workspace = {
+      hostConnected: true,
+      hostDeviceLabel: "Owner PC",
+      rootLabel: "Project",
+      threads: [{ id: thread.id, name: thread.name, preview: thread.preview, updatedAt: 1 }],
+      selectedThreadId: thread.id,
+      selectedThread: { id: thread.id, name: thread.name, preview: thread.preview, updatedAt: 1 },
+      history: [],
+      files: [{
+        path: "README.md",
+        size: 8,
+        modifiedAt: "2026-07-28T00:00:00.000Z",
+        sha256: "a".repeat(64),
+      }],
+      codexRuntimeStatus: "idle" as const,
+      syncedAt: "2026-07-28T00:00:00.000Z",
+    };
+    vi.spyOn(RelayClient.prototype, "getWorkspaceSyncState").mockResolvedValue(syncState(workspace));
+    vi.spyOn(RelayClient.prototype, "listMessages").mockResolvedValue([]);
+    const publishSnapshot = vi
+      .spyOn(RelayClient.prototype, "publishWorkspaceSnapshot")
+      .mockResolvedValue(syncState(workspace));
+    const profiles = {
+      read: vi.fn().mockResolvedValue({
+        ...profile,
+        projectRoot: directory,
+        observedThreadIds: [thread.id],
+        threadCatalogVersion: 1,
+      }),
+      update: vi.fn().mockResolvedValue(profile),
+    };
+    const codex = {
+      listThreads: vi.fn().mockResolvedValue([thread]),
+      isThreadBusyForPrompt: vi.fn().mockResolvedValue(false),
+      readThreadHistory: vi.fn().mockResolvedValue([]),
+      getTurnStatus: vi.fn(),
+      submitPeerPrompt: vi.fn(),
+      stopPeerPrompt: vi.fn(),
+    };
+
+    try {
+      const service = new WorkspaceSyncService(profiles as never, codex as never);
+      await service.sync();
+      await rm(join(directory, "README.md"));
+      await service.sync();
+
+      expect(publishSnapshot).toHaveBeenCalledTimes(2);
+      expect(publishSnapshot.mock.calls[1]?.[2]).toMatchObject({ files: [] });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("establishes a catalog baseline without switching an existing task", async () => {
     const directory = await mkdtemp(join(tmpdir(), "codex-collab-thread-baseline-"));
     const threads = [
@@ -510,4 +567,3 @@ describe("workspace live history sync", () => {
     }
   });
 });
-

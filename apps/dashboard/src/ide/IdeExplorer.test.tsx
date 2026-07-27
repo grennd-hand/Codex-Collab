@@ -22,6 +22,7 @@ function renderExplorer(readOnly: boolean): string {
       onOpenFile: vi.fn(),
       onCreateFile: vi.fn(),
       onCreateDirectory: vi.fn(),
+      onRenameEntry: vi.fn(),
     }),
   );
 }

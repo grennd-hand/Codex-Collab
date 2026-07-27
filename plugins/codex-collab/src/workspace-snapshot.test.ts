@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { FileSandbox } from "./file-sandbox.js";
 import {
   buildWorkspaceSnapshot,
+  buildWorkspaceSnapshotManifest,
   buildWorkspaceDirectories,
   buildCodexConfigSnapshot,
   containsLikelySecret,
@@ -111,6 +112,22 @@ describe("workspace snapshot", () => {
 
     const directories = await buildWorkspaceDirectories(await FileSandbox.create(root));
     expect(directories).toEqual(["src", "src/empty"]);
+  });
+
+  it("changes its lightweight manifest when a local file or folder is deleted", async () => {
+    const root = await mkdtemp(join(tmpdir(), "codex-collab-manifest-"));
+    temporaryRoots.push(root);
+    await mkdir(join(root, "src", "empty"), { recursive: true });
+    await writeFile(join(root, "src", "local.ts"), "export {};\n", "utf8");
+    const sandbox = await FileSandbox.create(root);
+    const before = await buildWorkspaceSnapshotManifest(sandbox);
+
+    await rm(join(root, "src"), { recursive: true, force: true });
+    const after = await buildWorkspaceSnapshotManifest(sandbox);
+
+    expect(after.digest).not.toBe(before.digest);
+    expect(before.directories).toEqual(["src", "src/empty"]);
+    expect(after.directories).toEqual([]);
   });
 
   it("publishes an explicitly separate non-credential .codex configuration snapshot", async () => {

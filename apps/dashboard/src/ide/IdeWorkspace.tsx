@@ -24,6 +24,7 @@ export default function IdeWorkspace({
   onSaveFile,
   onCreateFile,
   onCreateDirectory,
+  onRenameEntry,
   onRefresh,
   openFileRequest = null,
   storageScope = "workspace",
@@ -37,6 +38,7 @@ export default function IdeWorkspace({
     directories,
     onCreateDirectory,
     onCreateFile,
+    onRenameEntry,
     onEditorExpandedChange,
     onReadFile,
     onSaveFile,
@@ -55,6 +57,7 @@ export default function IdeWorkspace({
     loadFile,
     mobileExplorerOpen,
     query,
+    renameEntry,
     saveTab,
     setActivePath,
     setExpandedDirectories,
@@ -105,6 +108,7 @@ export default function IdeWorkspace({
       onOpenFile={(path) => void loadFile(path)}
       onCreateFile={createFile}
       onCreateDirectory={createDirectory}
+      onRenameEntry={renameEntry}
     />
   );
   const editorPane = (

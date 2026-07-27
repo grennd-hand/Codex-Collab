@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   createEntryParentPath,
   createWorkspaceEntryPath,
+  defaultCreateEntryName,
+  renameWorkspaceEntryPath,
 } from "./ide-create-entry.js";
 
 describe("IDE inline entry creation", () => {
@@ -16,9 +18,16 @@ describe("IDE inline entry creation", () => {
   });
 
   it("accepts an extensionless top-level folder name", () => {
+    expect(defaultCreateEntryName("file")).toBe("untitled.txt");
     expect(createWorkspaceEntryPath("", "1")).toBe("1");
     expect(createWorkspaceEntryPath("src", "components")).toBe(
       "src/components",
+    );
+  });
+
+  it("renames inside the current parent and permits changing the extension", () => {
+    expect(renameWorkspaceEntryPath("src/App.tsx", "App.test.tsx")).toBe(
+      "src/App.test.tsx",
     );
   });
 

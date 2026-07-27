@@ -252,7 +252,8 @@ export function parseWorkspaceFileOperationRequest(
 ):
   | { kind: "read"; path: string }
   | { kind: "write"; path: string; content: string; expectedSha256: string }
-  | { kind: "mkdir"; path: string } {
+  | { kind: "mkdir"; path: string }
+  | { kind: "rename"; path: string; destinationPath: string; expectedSha256: string | null } {
   const path = requiredString(body.path, "path", 500);
   if (body.kind === "read") {
     if (body.content !== undefined || body.expectedSha256 !== undefined) {
@@ -274,8 +275,31 @@ export function parseWorkspaceFileOperationRequest(
     }
     return { kind: "mkdir", path };
   }
+  if (body.kind === "rename") {
+    const destinationPath = requiredString(body.destinationPath, "destinationPath", 500);
+    if (
+      body.content !== undefined ||
+      (body.expectedSha256 !== null && typeof body.expectedSha256 !== "string")
+    ) {
+      throw new ProtocolError(
+        400,
+        "invalid_request",
+        "Rename requires destinationPath and a file hash or null",
+      );
+    }
+    return {
+      kind: "rename",
+      path,
+      destinationPath,
+      expectedSha256: body.expectedSha256 as string | null,
+    };
+  }
   if (body.kind !== "write") {
-    throw new ProtocolError(400, "invalid_request", "kind must be read, write, or mkdir");
+    throw new ProtocolError(
+      400,
+      "invalid_request",
+      "kind must be read, write, mkdir, or rename",
+    );
   }
   if (typeof body.content !== "string") {
     throw new ProtocolError(400, "invalid_request", "content must be a string");

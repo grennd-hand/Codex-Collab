@@ -129,13 +129,21 @@ export async function executeWorkspaceFileOperation(
   }
 
   const ignoredPaths = await readCollabIgnore(projectSandbox);
-  const publishablePath =
-    operation.kind === "mkdir"
-      ? isPublishableWorkspaceDirectoryPath(operation.path)
-      : isPublishableWorkspacePath(operation.path);
+  const directoryOperation =
+    operation.kind === "mkdir" ||
+    (operation.kind === "rename" && operation.expectedSha256 === null);
+  const publishable = directoryOperation
+    ? isPublishableWorkspaceDirectoryPath
+    : isPublishableWorkspacePath;
+  const operationPaths = operation.kind === "rename"
+    ? [operation.path, operation.destinationPath ?? ""]
+    : [operation.path];
   if (
-    !publishablePath ||
-    isWorkspacePathIgnored(operation.path, ignoredPaths, process.platform === "win32")
+    operationPaths.some(
+      (path) =>
+        !publishable(path) ||
+        isWorkspacePathIgnored(path, ignoredPaths, process.platform === "win32"),
+    )
   ) {
     return {
       status: "failed",
@@ -162,6 +170,31 @@ export async function executeWorkspaceFileOperation(
     if (operation.kind === "mkdir") {
       await projectSandbox.createDirectory(operation.path);
       return { status: "completed" };
+    }
+    if (operation.kind === "rename") {
+      if (!operation.destinationPath) {
+        return {
+          status: "failed",
+          errorCode: "invalid_workspace_operation",
+          errorMessage: "The queued rename operation is missing its destination",
+        };
+      }
+      if (operation.expectedSha256 !== null) {
+        const source = await projectSandbox.read(operation.path);
+        if (containsLikelySecret(source.content)) {
+          return {
+            status: "failed",
+            errorCode: "workspace_file_not_shared",
+            errorMessage: "This file is not available to the collaboration editor",
+          };
+        }
+      }
+      const file = await projectSandbox.rename(
+        operation.path,
+        operation.destinationPath,
+        operation.expectedSha256,
+      );
+      return file ? { status: "completed", file: asWorkspaceFile(file) } : { status: "completed" };
     }
     if (operation.requestContent === null || operation.expectedSha256 === null) {
       return {
@@ -199,6 +232,13 @@ export async function executeWorkspaceFileOperation(
     };
   } catch (error) {
     if (error instanceof FileConflictError) {
+      if (operation.kind === "rename") {
+        return {
+          status: "failed",
+          errorCode: "file_conflict",
+          errorMessage: safeFailureMessage("file_conflict"),
+        };
+      }
       const file = await currentFile(projectSandbox, operation.path);
       if (file?.content === operation.requestContent) {
         return { status: "completed", file };

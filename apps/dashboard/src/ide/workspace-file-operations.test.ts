@@ -53,6 +53,7 @@ function operation(
     requestedByDisplayName: "Xiaomi",
     kind: "write",
     path: "src/App.tsx",
+    destinationPath: null,
     expectedSha256: "old-hash",
     status: "completed",
     resultFile: {

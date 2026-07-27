@@ -13,6 +13,7 @@ import type {
   PendingIdeCreate,
 } from "./ide-create-entry.js";
 import { IdeInlineCreateRow } from "./IdeInlineCreateRow.js";
+import { IdeInlineRenameRow } from "./IdeInlineRenameRow.js";
 
 interface IdeExplorerTreeProps {
   nodes: readonly IdeFileTreeNode[];
@@ -21,11 +22,15 @@ interface IdeExplorerTreeProps {
   forceExpanded: boolean;
   changeByPath: ReadonlyMap<string, CodexFileChange>;
   pendingCreate: PendingIdeCreate | null;
+  pendingRename: IdeTreeSelection | null;
   onToggle: (path: string) => void;
   onOpen: (path: string) => void;
   onSelect: (selection: IdeTreeSelection) => void;
   onCancelCreate: () => void;
   onCommitCreate: (path: string) => Promise<void>;
+  onStartRename: (entry: IdeTreeSelection) => void;
+  onCancelRename: () => void;
+  onCommitRename: (entry: IdeTreeSelection, destinationPath: string) => Promise<void>;
 }
 
 function formatFileSize(size: number): string {
@@ -61,11 +66,15 @@ function TreeItem({
   forceExpanded,
   changeByPath,
   pendingCreate,
+  pendingRename,
   onToggle,
   onOpen,
   onSelect,
   onCancelCreate,
   onCommitCreate,
+  onStartRename,
+  onCancelRename,
+  onCommitRename,
 }: TreeItemProps) {
   const isDirectory = node.kind === "directory";
   const isExpanded =
@@ -74,20 +83,44 @@ function TreeItem({
     pendingCreate?.parentPath === node.path;
   const style = { "--ide-tree-depth": depth } as CSSProperties;
   const fileChange = node.kind === "file" ? changeByPath.get(node.path) : undefined;
+  const renaming = pendingRename?.path === node.path;
 
   return (
-    <div className="ide-tree-item" role="treeitem" aria-expanded={isDirectory ? isExpanded : undefined}>
-      <button
-        type="button"
-        className={`ide-tree-row ${selectedPath === node.path ? "active" : ""}`}
-        style={style}
-        title={node.path}
-        onClick={() => {
-          onSelect({ path: node.path, kind: node.kind });
-          if (isDirectory) onToggle(node.path);
-          else onOpen(node.path);
-        }}
-      >
+    <div
+      className="ide-tree-item"
+      role={renaming ? undefined : "treeitem"}
+      aria-expanded={!renaming && isDirectory ? isExpanded : undefined}
+    >
+      {renaming ? (
+        <IdeInlineRenameRow
+          entry={pendingRename}
+          name={node.name}
+          depth={depth}
+          onCancel={onCancelRename}
+          onRename={onCommitRename}
+        />
+      ) : (
+        <button
+          type="button"
+          className={`ide-tree-row ${selectedPath === node.path ? "active" : ""}`}
+          style={style}
+          title={node.path}
+          onClick={() => {
+            onSelect({ path: node.path, kind: node.kind });
+            if (isDirectory) onToggle(node.path);
+            else onOpen(node.path);
+          }}
+          onDoubleClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onStartRename({ path: node.path, kind: node.kind });
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== "F2") return;
+            event.preventDefault();
+            onStartRename({ path: node.path, kind: node.kind });
+          }}
+        >
         <span className="ide-tree-chevron" aria-hidden="true">
           {isDirectory ? (
             isExpanded ? <ChevronDownRegular /> : <ChevronRightRegular />
@@ -111,7 +144,8 @@ function TreeItem({
         ) : node.file ? (
           <span className="ide-tree-size">{formatFileSize(node.file.size)}</span>
         ) : null}
-      </button>
+        </button>
+      )}
       {isDirectory && isExpanded ? (
         <div role="group">
           {pendingCreate?.parentPath === node.path ? (
@@ -133,11 +167,15 @@ function TreeItem({
               forceExpanded={forceExpanded}
               changeByPath={changeByPath}
               pendingCreate={pendingCreate}
+              pendingRename={pendingRename}
               onToggle={onToggle}
               onOpen={onOpen}
               onSelect={onSelect}
               onCancelCreate={onCancelCreate}
               onCommitCreate={onCommitCreate}
+              onStartRename={onStartRename}
+              onCancelRename={onCancelRename}
+              onCommitRename={onCommitRename}
               key={child.id}
             />
           ))}

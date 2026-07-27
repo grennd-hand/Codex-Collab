@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { migrateSessionStore } from "./sqlite-migrations.js";
 
 describe("workspace schema migrations", () => {
-  it("upgrades legacy read/write operation tables to support mkdir", () => {
+  it("upgrades legacy operation tables to support directory creation and rename", () => {
     const db = new DatabaseSync(":memory:");
     try {
       db.exec(`
@@ -42,6 +42,8 @@ describe("workspace schema migrations", () => {
         )
         .get() as { sql: string };
       expect(schema.sql).toContain("'mkdir'");
+      expect(schema.sql).toContain("'rename'");
+      expect(schema.sql).toContain("destination_path");
       expect(
         db
           .prepare(

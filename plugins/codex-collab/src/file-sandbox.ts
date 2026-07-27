@@ -18,6 +18,10 @@ import {
   createSafeWorkspaceDirectory,
   SKIPPED_WORKSPACE_DIRECTORIES,
 } from "./workspace-directory-sandbox.js";
+import {
+  renameSandboxEntry,
+  SandboxRenameConflictError,
+} from "./file-sandbox-rename.js";
 
 export interface SharedFile {
   path: string;
@@ -177,6 +181,30 @@ export class FileSandbox {
 
   async createDirectory(relativePath: string): Promise<string> {
     return createSafeWorkspaceDirectory(this.root, relativePath);
+  }
+
+  async rename(sourcePath: string, destinationPath: string, expectedSha256: string | null): Promise<ReadSharedFile | null> {
+    const source = await this.resolveExisting(sourcePath);
+    const metadata = await lstat(source);
+    if (metadata.isSymbolicLink() || (!metadata.isFile() && !metadata.isDirectory())) {
+      throw new Error("Only regular workspace files and directories can be renamed");
+    }
+    const file = metadata.isFile() ? await this.read(sourcePath) : null;
+    try {
+      return await renameSandboxEntry({
+        root: this.root,
+        source,
+        destinationPath,
+        expectedSha256,
+        sourceFile: file,
+        platform: this.testHooks.platform ?? process.platform,
+      });
+    } catch (error) {
+      if (error instanceof SandboxRenameConflictError) {
+        throw new FileConflictError(error.message);
+      }
+      throw error;
+    }
   }
 
   async write(

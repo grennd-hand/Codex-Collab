@@ -36,6 +36,7 @@ function operation(
     requestedByMemberId: "member-1",
     requestedByDisplayName: "Editor",
     hostGeneration: "generation-1",
+    destinationPath: null,
     expectedSha256: null,
     status: "processing",
     resultFileMetadata: null,
@@ -118,6 +119,61 @@ describe("workspace file operation host execution", () => {
       file: { content: "remote change" },
     });
     expect(await readFile(join(root, "shared.ts"), "utf8")).toBe("remote change");
+  });
+
+  it("renames files and directories with guarded no-replace semantics", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, "src", "folder"), { recursive: true });
+    await writeFile(join(root, "src", "entry.ts"), "export {};", "utf8");
+    const sandbox = await FileSandbox.create(root);
+    const file = await sandbox.read("src/entry.ts");
+
+    const fileResult = await executeWorkspaceFileOperation(
+      operation({
+        kind: "rename",
+        path: "src/entry.ts",
+        destinationPath: "src/entry.txt",
+        expectedSha256: file.sha256,
+      }),
+      sandbox,
+    );
+    expect(fileResult).toEqual({
+      status: "completed",
+      file: {
+        path: "src/entry.txt",
+        content: "export {};",
+        size: file.size,
+        modifiedAt: file.modifiedAt,
+        sha256: file.sha256,
+      },
+    });
+    await expect(stat(join(root, "src", "entry.ts"))).rejects.toMatchObject({ code: "ENOENT" });
+    await writeFile(join(root, "src", "occupied.txt"), "keep", "utf8");
+    await expect(
+      executeWorkspaceFileOperation(
+        operation({
+          kind: "rename",
+          path: "src/entry.txt",
+          destinationPath: "src/occupied.txt",
+          expectedSha256: file.sha256,
+        }),
+        sandbox,
+      ),
+    ).resolves.toMatchObject({ status: "failed", errorCode: "file_conflict" });
+    expect(await readFile(join(root, "src", "occupied.txt"), "utf8")).toBe("keep");
+
+    await expect(
+      executeWorkspaceFileOperation(
+        operation({
+          kind: "rename",
+          path: "src/folder",
+          destinationPath: "src/renamed",
+          expectedSha256: null,
+        }),
+        sandbox,
+      ),
+    ).resolves.toEqual({ status: "completed" });
+    expect((await stat(join(root, "src", "renamed"))).isDirectory()).toBe(true);
   });
 
   it("creates new files and empty directories without overwriting existing paths", async () => {

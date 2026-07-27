@@ -11,6 +11,10 @@ export interface PendingIdeCreate {
   parentPath: string;
 }
 
+export function defaultCreateEntryName(kind: IdeCreateEntryKind): string {
+  return kind === "file" ? "untitled.txt" : "";
+}
+
 function parentPath(path: string): string {
   const normalized = path.replaceAll("\\", "/");
   const separator = normalized.lastIndexOf("/");
@@ -48,4 +52,11 @@ export function createWorkspaceEntryPath(
     throw new Error("请输入不含路径分隔符或系统保留字符的名称。");
   }
   return parent ? `${parent}/${name}` : name;
+}
+
+export function renameWorkspaceEntryPath(
+  currentPath: string,
+  requestedName: string,
+): string {
+  return createWorkspaceEntryPath(parentPath(currentPath), requestedName);
 }

@@ -18,8 +18,8 @@ import { processNextWorkspaceFileOperation } from "./workspace-file-operations.j
 import { openWorkspaceSandboxes } from "./workspace-roots.js";
 import {
   buildCodexConfigSnapshot,
-  buildWorkspaceDirectories,
   buildWorkspaceSnapshot,
+  buildWorkspaceSnapshotManifest,
 } from "./workspace-snapshot.js";
 import {
   shouldPublishWorkspaceSnapshot,
@@ -99,6 +99,7 @@ export class WorkspaceSyncService {
   private active = false;
   private forwarding: Promise<string | null> | null = null;
   private marker: WorkspaceSyncMarker | null = null;
+  private workspaceDigest: string | null = null;
   private filesDirty = false;
   private processingFileOperations: Promise<number> | null = null;
 
@@ -162,7 +163,7 @@ export class WorkspaceSyncService {
         );
         if (!operation) break;
         processed += 1;
-        if (operation.kind === "write" && operation.status === "completed") {
+        if (operation.kind !== "read" && operation.status === "completed") {
           this.filesDirty = true;
         }
       }
@@ -256,6 +257,7 @@ export class WorkspaceSyncService {
           selectedLocalThread = newestDiscoveredThread;
           selectedRuntimeBusy = undefined;
           this.marker = null;
+          this.workspaceDigest = null;
           this.filesDirty = false;
         }
       }
@@ -272,6 +274,7 @@ export class WorkspaceSyncService {
 
       if (!workspace.selectedThreadId) {
         this.marker = null;
+        this.workspaceDigest = null;
         this.filesDirty = false;
         return {
           selectedThreadId: workspace.selectedThreadId,
@@ -329,6 +332,15 @@ export class WorkspaceSyncService {
         marker: this.marker,
       };
       const historyChanged = shouldReadWorkspaceHistory(syncState);
+      const manifest = await buildWorkspaceSnapshotManifest(
+        sandbox,
+        codexConfigSandbox,
+      );
+      if (this.workspaceDigest === null) {
+        this.workspaceDigest = manifest.digest;
+      } else if (this.workspaceDigest !== manifest.digest) {
+        this.filesDirty = true;
+      }
       const shouldFinalizeFiles = !runtimeRunning && this.filesDirty;
       if (!historyChanged && !shouldFinalizeFiles) {
         return {
@@ -387,12 +399,11 @@ export class WorkspaceSyncService {
         };
       }
 
-      const [projectFiles, codexConfigFiles, directories] = await Promise.all([
+      const [projectFiles, codexConfigFiles] = await Promise.all([
         buildWorkspaceSnapshot(sandbox),
         codexConfigSandbox
           ? buildCodexConfigSnapshot(codexConfigSandbox)
           : Promise.resolve([]),
-        buildWorkspaceDirectories(sandbox),
       ]);
       const imported = await relay.publishWorkspaceSnapshot(
         profile.sessionId,
@@ -401,7 +412,7 @@ export class WorkspaceSyncService {
           threadId: workspace.selectedThreadId,
           history,
           files: [...projectFiles, ...codexConfigFiles],
-          directories,
+          directories: manifest.directories,
         },
       );
       this.marker = {
@@ -410,6 +421,7 @@ export class WorkspaceSyncService {
         revision,
         historyDigest,
       };
+      this.workspaceDigest = manifest.digest;
       this.filesDirty = runtimeRunning;
       await this.profiles.update({ threadId: workspace.selectedThreadId });
       return {

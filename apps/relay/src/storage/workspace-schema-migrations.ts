@@ -6,7 +6,13 @@ export function migrateWorkspaceOperationKinds(db: DatabaseSync): void {
       "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'workspace_file_operations'",
     )
     .get() as { sql?: string } | undefined;
-  if (schema?.sql?.includes("'mkdir'")) return;
+  if (schema?.sql?.includes("'rename'") && schema.sql.includes("destination_path")) {
+    return;
+  }
+  const columns = db.prepare("PRAGMA table_info(workspace_file_operations)").all() as unknown as Array<{ name: string }>;
+  const destinationExpression = columns.some((column) => column.name === "destination_path")
+    ? "destination_path"
+    : "NULL";
 
   db.exec("BEGIN IMMEDIATE");
   try {
@@ -20,8 +26,9 @@ export function migrateWorkspaceOperationKinds(db: DatabaseSync): void {
         requested_by_member_id TEXT NOT NULL REFERENCES members(id),
         requested_by_display_name TEXT NOT NULL,
         host_generation TEXT,
-        kind TEXT NOT NULL CHECK (kind IN ('read', 'write', 'mkdir')),
+        kind TEXT NOT NULL CHECK (kind IN ('read', 'write', 'mkdir', 'rename')),
         path TEXT NOT NULL,
+        destination_path TEXT,
         request_content TEXT,
         request_size INTEGER,
         expected_sha256 TEXT,
@@ -41,14 +48,14 @@ export function migrateWorkspaceOperationKinds(db: DatabaseSync): void {
       );
       INSERT INTO workspace_file_operations (
         id, session_id, requested_by_member_id, requested_by_display_name,
-        host_generation, kind, path, request_content, request_size,
+        host_generation, kind, path, destination_path, request_content, request_size,
         expected_sha256, status, result_content, result_size, result_modified_at,
         result_sha256, error_code, error_message, requested_at, started_at,
         lease_id, lease_expires_at, lease_confirmed_at, completed_at
       )
       SELECT
         id, session_id, requested_by_member_id, requested_by_display_name,
-        host_generation, kind, path, request_content, request_size,
+        host_generation, kind, path, ${destinationExpression}, request_content, request_size,
         expected_sha256, status, result_content, result_size, result_modified_at,
         result_sha256, error_code, error_message, requested_at, started_at,
         lease_id, lease_expires_at, lease_confirmed_at, completed_at

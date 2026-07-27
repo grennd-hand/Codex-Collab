@@ -174,6 +174,7 @@ export function DashboardWorkspaceView({
                 onSaveFile={workspaceFiles.saveFile}
                 onCreateFile={workspaceFiles.createFile}
                 onCreateDirectory={workspaceFiles.createDirectory}
+                onRenameEntry={workspaceFiles.renameEntry}
                 onRefresh={workspaceConnection.reload}
                 openFileRequest={workspaceFiles.openFileRequest}
                 storageScope={`${session?.id ?? "session"}:${

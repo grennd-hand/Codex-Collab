@@ -12,6 +12,7 @@ import {
   type EditorTabState,
 } from "./ide-tab-state.js";
 import type { IdeSaveResult, IdeWorkspaceProps } from "./types.js";
+import type { IdeTreeSelection } from "./ide-create-entry.js";
 
 type IdeWorkspaceStateOptions = Pick<
   IdeWorkspaceProps,
@@ -19,6 +20,7 @@ type IdeWorkspaceStateOptions = Pick<
   | "directories"
   | "onCreateDirectory"
   | "onCreateFile"
+  | "onRenameEntry"
   | "onEditorExpandedChange"
   | "onReadFile"
   | "onSaveFile"
@@ -32,6 +34,7 @@ export function useIdeWorkspaceState({
   directories = [],
   onCreateDirectory,
   onCreateFile,
+  onRenameEntry,
   onEditorExpandedChange,
   onReadFile,
   onSaveFile,
@@ -195,6 +198,61 @@ export function useIdeWorkspaceState({
     [onCreateDirectory],
   );
 
+  const renameEntry = useCallback(
+    async (entry: IdeTreeSelection, destinationPath: string) => {
+      const affected = (path: string) =>
+        path === entry.path ||
+        (entry.kind === "directory" && path.startsWith(`${entry.path}/`));
+      if (
+        tabsRef.current.some(
+          (tab) => tab.status === "ready" && affected(tab.path) && tab.value !== tab.savedValue,
+        )
+      ) {
+        throw new Error("请先保存该文件夹中已修改的文件，再重命名。");
+      }
+      const expectedSha256 =
+        entry.kind === "file"
+          ? files.find((file) => file.path === entry.path)?.sha256 ?? null
+          : null;
+      if (entry.kind === "file" && !expectedSha256) {
+        throw new Error("文件版本已过期，请刷新后重试。");
+      }
+      const result = await onRenameEntry({
+        path: entry.path,
+        destinationPath,
+        expectedSha256,
+      });
+      const remap = (path: string) =>
+        path === entry.path
+          ? destinationPath
+          : entry.kind === "directory" && path.startsWith(`${entry.path}/`)
+            ? `${destinationPath}${path.slice(entry.path.length)}`
+            : path;
+      setTabs((current) => {
+        const next = current.map((tab) => {
+          if (!affected(tab.path)) return tab;
+          const path = remap(tab.path);
+          return result && tab.path === entry.path
+            ? {
+                ...tab,
+                path,
+                sha256: result.sha256,
+                value: result.content,
+                savedValue: result.content,
+              }
+            : { ...tab, path };
+        });
+        tabsRef.current = next;
+        return next;
+      });
+      setActivePath((current) => (current ? remap(current) : null));
+      setExpandedDirectories((current) =>
+        new Set([...current].map(remap)),
+      );
+    },
+    [files, onRenameEntry],
+  );
+
   useEffect(() => {
     if (
       !openFileRequest ||
@@ -333,6 +391,7 @@ export function useIdeWorkspaceState({
     loadFile,
     mobileExplorerOpen,
     query,
+    renameEntry,
     saveTab,
     setActivePath,
     setExpandedDirectories,
