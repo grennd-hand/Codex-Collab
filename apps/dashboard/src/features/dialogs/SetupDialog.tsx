@@ -13,14 +13,13 @@ import {
   MessageBarBody,
   MessageBarTitle,
   Spinner,
-  Tab,
-  TabList,
 } from "@fluentui/react-components";
-import { DismissRegular, KeyRegular } from "@fluentui/react-icons";
+import { DismissRegular } from "@fluentui/react-icons";
 import type { AccountProfileResponse, AccountRoom } from "@codex-collab/protocol";
 import type { FormEvent } from "react";
 import { AccountRoomList } from "../account/AccountRoomList.js";
 import type { SetupSubmissionMode } from "../session/invite-session.js";
+import { RoomAccessFields, RoomSubmitButton } from "./RoomAccessFields.js";
 
 interface SetupDialogProps {
   open: boolean;
@@ -52,6 +51,31 @@ interface SetupDialogProps {
   onAuthenticate: (mode: "signin" | "register") => void;
   onActivateRoom: (room: AccountRoom) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}
+
+function OptionalAccountAccess(props: Pick<SetupDialogProps, "accountChecking" | "supportsPasskeys" | "accountDisplayName" | "accountSubmitting" | "onAccountDisplayNameChange" | "onAuthenticate">) {
+  return (
+    <>
+      <div className="dialog-divider"><span>可选账号</span></div>
+      {props.accountChecking ? (
+        <div className="account-loading account-loading-compact" aria-live="polite"><Spinner size="tiny" label="正在检查已保存的账号" /></div>
+      ) : (
+        <>
+          <p className="dialog-intro">房主密钥已经可以重复恢复房间。通行密钥账号仅用于自动保存房间列表。</p>
+          {!props.supportsPasskeys ? (
+            <MessageBar intent="warning"><MessageBarBody>当前页面不能使用通行密钥，但不影响创建、加入或恢复房间。</MessageBarBody></MessageBar>
+          ) : null}
+          <Field label="账号显示名称">
+            <Input value={props.accountDisplayName} maxLength={80} autoComplete="name webauthn" onChange={(_, data) => props.onAccountDisplayNameChange(data.value)} />
+          </Field>
+          <div className="optional-account-actions">
+            <Button type="button" appearance="subtle" disabled={!props.supportsPasskeys || props.accountSubmitting} onClick={() => props.onAuthenticate("signin")}>登录已保存账号</Button>
+            <Button type="button" appearance="secondary" disabled={!props.supportsPasskeys || !props.accountDisplayName.trim() || props.accountSubmitting} onClick={() => props.onAuthenticate("register")}>创建可选账号</Button>
+          </div>
+        </>
+      )}
+    </>
+  );
 }
 
 export function SetupDialog({
@@ -90,7 +114,7 @@ export function SetupDialog({
       <DialogSurface>
         <form onSubmit={onSubmit}>
           <DialogBody>
-            <DialogTitle>{profile ? "选择或创建房间" : "登录 Codex Collab"}</DialogTitle>
+            <DialogTitle>连接协作房间</DialogTitle>
             <DialogContent className="setup-fields">
               {credentialNotice ? (
                 <MessageBar intent="warning">
@@ -103,22 +127,7 @@ export function SetupDialog({
                   <MessageBarBody><MessageBarTitle>账号操作未完成</MessageBarTitle>{accountError}</MessageBarBody>
                 </MessageBar>
               ) : null}
-              {accountChecking ? (
-                <div className="account-loading" aria-live="polite"><Spinner size="small" label="正在检查账号状态" /></div>
-              ) : !profile ? (
-                <>
-                  <p className="dialog-intro">使用设备通行密钥保存你的房间。以后在其他支持的设备上登录即可继续使用。</p>
-                  {!supportsPasskeys ? (
-                    <MessageBar intent="warning"><MessageBarBody>通行密钥需要 HTTPS，或从本机 localhost 地址打开。</MessageBarBody></MessageBar>
-                  ) : null}
-                  {initialInviteToken ? (
-                    <MessageBar intent="success"><MessageBarBody>邀请已经读取。登录或创建账号后继续申请加入。</MessageBarBody></MessageBar>
-                  ) : null}
-                  <Field label="新账号显示名称" required>
-                    <Input value={accountDisplayName} maxLength={80} autoComplete="name webauthn" onChange={(_, data) => onAccountDisplayNameChange(data.value)} />
-                  </Field>
-                </>
-              ) : (
+              {profile ? (
                 <>
                   <div className="account-summary">
                     <Avatar name={profile.account.displayName} color="colorful" size={36} />
@@ -127,67 +136,37 @@ export function SetupDialog({
                   {!initialInviteToken && profile.rooms.length > 0 ? (
                     <AccountRoomList rooms={profile.rooms} currentSessionId={currentSessionId} restoringRoomId={restoringRoomId} onRestore={onActivateRoom} />
                   ) : null}
-                  {!initialInviteToken && profile.rooms.length > 0 ? <div className="dialog-divider"><span>创建或加入其他房间</span></div> : null}
-                  {initialInviteToken ? (
-                    <>
-                      <p className="dialog-intro">你收到了一次性协作邀请。申请后仍需主人明确批准。</p>
-                      <Field label="房间内显示名称" required>
-                        <Input value={displayName} maxLength={80} autoComplete="name" onChange={(_, data) => onDisplayNameChange(data.value)} />
-                      </Field>
-                      <MessageBar intent="success"><MessageBarBody>一次性邀请已读取。提交后需要等待主人明确批准。</MessageBarBody></MessageBar>
-                    </>
-                  ) : (
-                    <>
-                      <p className="dialog-intro">创建新房间、使用邀请加入，或用房主密钥恢复原房间和历史记录。</p>
-                      <TabList
-                        selectedValue={setupMode}
-                        onTabSelect={(_, data) => onSetupModeChange(data.value as SetupSubmissionMode)}
-                        aria-label="连接房间方式"
-                      >
-                        <Tab value="create">创建房间</Tab>
-                        <Tab value="join">邀请加入</Tab>
-                        <Tab value="recover">恢复房间</Tab>
-                      </TabList>
-                      {setupMode === "recover" ? (
-                        <>
-                          <MessageBar intent="warning"><MessageBarBody>只有房主可以使用恢复密钥。成功后会继续使用原房间。</MessageBarBody></MessageBar>
-                          <Field label="房间 ID" required>
-                            <Input value={recoverySessionId} autoComplete="off" onChange={(_, data) => onRecoverySessionIdChange(data.value)} />
-                          </Field>
-                          <Field label="房主密钥" required>
-                            <Input type="password" value={recoveryKey} contentBefore={<KeyRegular />} autoComplete="off" placeholder="ccr_..." onChange={(_, data) => onRecoveryKeyChange(data.value)} />
-                          </Field>
-                        </>
-                      ) : (
-                        <>
-                          <Field label="房间内显示名称" required>
-                            <Input value={displayName} maxLength={80} autoComplete="name" onChange={(_, data) => onDisplayNameChange(data.value)} />
-                          </Field>
-                          {setupMode === "create" ? (
-                            <Field label="新房间名称" required><Input value={roomName} maxLength={120} onChange={(_, data) => onRoomNameChange(data.value)} /></Field>
-                          ) : (
-                            <Field label="邀请令牌" required><Input value={joinToken} contentBefore={<KeyRegular />} placeholder="cci_..." onChange={(_, data) => onJoinTokenChange(data.value)} /></Field>
-                          )}
-                        </>
-                      )}
-                    </>
-                  )}
+                  {!initialInviteToken && profile.rooms.length > 0 ? <div className="dialog-divider"><span>连接其他房间</span></div> : null}
                 </>
-              )}
+              ) : null}
+              <RoomAccessFields
+                initialInviteToken={initialInviteToken}
+                displayName={displayName}
+                roomName={roomName}
+                joinToken={joinToken}
+                setupMode={setupMode}
+                recoverySessionId={recoverySessionId}
+                recoveryKey={recoveryKey}
+                onDisplayNameChange={onDisplayNameChange}
+                onRoomNameChange={onRoomNameChange}
+                onJoinTokenChange={onJoinTokenChange}
+                onSetupModeChange={onSetupModeChange}
+                onRecoverySessionIdChange={onRecoverySessionIdChange}
+                onRecoveryKeyChange={onRecoveryKeyChange}
+              />
+              {!profile ? (
+                <OptionalAccountAccess
+                  accountChecking={accountChecking}
+                  supportsPasskeys={supportsPasskeys}
+                  accountDisplayName={accountDisplayName}
+                  accountSubmitting={accountSubmitting}
+                  onAccountDisplayNameChange={onAccountDisplayNameChange}
+                  onAuthenticate={onAuthenticate}
+                />
+              ) : null}
             </DialogContent>
             <DialogActions>
-              {accountChecking ? null : !profile ? (
-                <>
-                  <Button type="button" appearance="secondary" disabled={!supportsPasskeys || accountSubmitting} onClick={() => onAuthenticate("signin")}>使用通行密钥登录</Button>
-                  <Button type="button" appearance="primary" disabled={!supportsPasskeys || !accountDisplayName.trim() || accountSubmitting} onClick={() => onAuthenticate("register")}>创建账号</Button>
-                </>
-              ) : initialInviteToken || setupMode === "join" ? (
-                <Button type="submit" appearance="primary" disabled={!displayName.trim() || !joinToken.trim() || submitting}>申请加入</Button>
-              ) : setupMode === "recover" ? (
-                <Button type="submit" appearance="primary" disabled={!recoverySessionId.trim() || !recoveryKey.trim() || submitting}>恢复房间</Button>
-              ) : (
-                <Button type="submit" appearance="primary" disabled={!displayName.trim() || !roomName.trim() || submitting}>创建会话</Button>
-              )}
+              <RoomSubmitButton initialInviteToken={initialInviteToken} displayName={displayName} roomName={roomName} joinToken={joinToken} setupMode={setupMode} recoverySessionId={recoverySessionId} recoveryKey={recoveryKey} submitting={submitting} />
             </DialogActions>
           </DialogBody>
         </form>

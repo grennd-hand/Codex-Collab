@@ -37,6 +37,7 @@ const styleModules = [
   "composer.css",
   "activity.css",
   "dialogs.css",
+  "setup-dialog.css",
   "responsive.css",
 ];
 

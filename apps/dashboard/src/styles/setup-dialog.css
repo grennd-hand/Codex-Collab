@@ -1,0 +1,10 @@
+.account-loading-compact {
+  min-height: 36px;
+}
+
+.optional-account-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}

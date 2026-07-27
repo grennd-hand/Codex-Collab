@@ -217,7 +217,6 @@ export function useSubmissionController({
 
   const submitSetup = (event: React.FormEvent) => {
     event.preventDefault();
-    if (!accountProfile) return;
     const mode = setupSubmissionMode(initialInviteToken, setupMode);
     void (mode === "join"
       ? joinSession()
