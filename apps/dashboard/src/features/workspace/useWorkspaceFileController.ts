@@ -180,7 +180,7 @@ export function useWorkspaceFileController({
         throw new Error("该路径已经存在文件，请换一个名称。");
       }
       clearCache();
-      await refreshWorkspace();
+      await refreshWorkspace(false);
       onActivity("已创建项目文件", path, "success");
       setError(null);
       return result.file;
@@ -195,7 +195,7 @@ export function useWorkspaceFileController({
         { sessionId: session.id, headers: authHeaders(true) },
         path,
       );
-      await refreshWorkspace();
+      await refreshWorkspace(false);
       onActivity("已创建项目文件夹", path, "success");
       setError(null);
     },

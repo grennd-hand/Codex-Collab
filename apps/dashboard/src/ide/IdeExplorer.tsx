@@ -6,19 +6,21 @@ import {
   SkeletonItem,
 } from "@fluentui/react-components";
 import {
-  ChevronDownRegular,
-  ChevronRightRegular,
-  DocumentRegular,
   DocumentAddRegular,
   FolderAddRegular,
   FolderOpenRegular,
-  FolderRegular,
   SearchRegular,
 } from "@fluentui/react-icons";
 import type { CodexFileChange } from "@codex-collab/protocol";
-import { useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { IdeFileTreeNode } from "./file-tree.js";
-import { IdeCreateEntryDialog } from "./IdeCreateEntryDialog.js";
+import {
+  createEntryParentPath,
+  type IdeCreateEntryKind,
+  type PendingIdeCreate,
+  type IdeTreeSelection,
+} from "./ide-create-entry.js";
+import { IdeExplorerTree } from "./IdeExplorerTree.js";
 
 interface IdeExplorerProps {
   fileCount: number;
@@ -33,111 +35,10 @@ interface IdeExplorerProps {
   readOnly: boolean;
   onQueryChange: (value: string) => void;
   onToggleDirectory: (path: string) => void;
+  onExpandDirectory: (path: string) => void;
   onOpenFile: (path: string) => void;
   onCreateFile: (path: string) => Promise<void>;
   onCreateDirectory: (path: string) => Promise<void>;
-}
-
-function formatFileSize(size: number): string {
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${Math.max(1, Math.round(size / 1024))} KB`;
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function TreeItem({
-  node,
-  depth,
-  activePath,
-  expanded,
-  forceExpanded,
-  onToggle,
-  onOpen,
-  changeByPath,
-}: {
-  node: IdeFileTreeNode;
-  depth: number;
-  activePath: string | null;
-  expanded: ReadonlySet<string>;
-  forceExpanded: boolean;
-  onToggle: (path: string) => void;
-  onOpen: (path: string) => void;
-  changeByPath: ReadonlyMap<string, CodexFileChange>;
-}) {
-  const isDirectory = node.kind === "directory";
-  const isExpanded = forceExpanded || expanded.has(node.path);
-  const style = { "--ide-tree-depth": depth } as CSSProperties;
-  const fileChange = node.kind === "file" ? changeByPath.get(node.path) : undefined;
-
-  return (
-    <div
-      className="ide-tree-item"
-      role="treeitem"
-      aria-expanded={isDirectory ? isExpanded : undefined}
-    >
-      <button
-        type="button"
-        className={`ide-tree-row ${activePath === node.path ? "active" : ""}`}
-        style={style}
-        title={node.path}
-        onClick={() => (isDirectory ? onToggle(node.path) : onOpen(node.path))}
-      >
-        <span className="ide-tree-chevron" aria-hidden="true">
-          {isDirectory ? (
-            isExpanded ? <ChevronDownRegular /> : <ChevronRightRegular />
-          ) : null}
-        </span>
-        <span className="ide-tree-kind" aria-hidden="true">
-          {isDirectory ? (
-            isExpanded ? <FolderOpenRegular /> : <FolderRegular />
-          ) : (
-            <DocumentRegular />
-          )}
-        </span>
-        <span className="ide-tree-name">{node.name}</span>
-        {fileChange ? (
-          <span
-            className={`ide-tree-change ide-tree-change-${fileChange.kind}`}
-            aria-label={
-              fileChange.kind === "added"
-                ? "新增文件"
-                : fileChange.kind === "deleted"
-                  ? "删除文件"
-                  : fileChange.kind === "renamed"
-                    ? "重命名文件"
-                    : "修改文件"
-            }
-          >
-            {fileChange.kind === "added"
-              ? "A"
-              : fileChange.kind === "deleted"
-                ? "D"
-                : fileChange.kind === "renamed"
-                  ? "R"
-                  : "M"}
-          </span>
-        ) : node.file ? (
-          <span className="ide-tree-size">{formatFileSize(node.file.size)}</span>
-        ) : null}
-      </button>
-      {isDirectory && isExpanded ? (
-        <div role="group">
-          {node.children.map((child) => (
-            <TreeItem
-              node={child}
-              depth={depth + 1}
-              activePath={activePath}
-              expanded={expanded}
-              forceExpanded={forceExpanded}
-              onToggle={onToggle}
-              onOpen={onOpen}
-              changeByPath={changeByPath}
-              key={child.id}
-            />
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
 }
 
 function ExplorerSkeleton() {
@@ -165,12 +66,35 @@ export function IdeExplorer({
   readOnly,
   onQueryChange,
   onToggleDirectory,
+  onExpandDirectory,
   onOpenFile,
   onCreateFile,
   onCreateDirectory,
 }: IdeExplorerProps) {
-  const [createKind, setCreateKind] = useState<"file" | "directory" | null>(null);
+  const [selection, setSelection] = useState<IdeTreeSelection | null>(null);
+  const [pendingCreate, setPendingCreate] = useState<PendingIdeCreate | null>(null);
+  const createIdRef = useRef(0);
   const entryCount = fileCount + directoryCount;
+  useEffect(() => {
+    if (activePath) setSelection({ kind: "file", path: activePath });
+  }, [activePath]);
+
+  const startCreate = (kind: IdeCreateEntryKind) => {
+    const parentPath = createEntryParentPath(selection, activePath);
+    onQueryChange("");
+    if (parentPath) onExpandDirectory(parentPath);
+    setPendingCreate({ id: ++createIdRef.current, kind, parentPath });
+  };
+
+  const commitCreate = async (path: string) => {
+    const pending = pendingCreate;
+    if (!pending) return;
+    if (pending.kind === "file") await onCreateFile(path);
+    else await onCreateDirectory(path);
+    setPendingCreate(null);
+    setSelection({ kind: pending.kind, path });
+    if (pending.kind === "directory") onExpandDirectory(path);
+  };
   const changeByPath = useMemo(() => {
     const result = new Map<string, CodexFileChange>();
     for (const change of fileChanges) result.set(change.path.replaceAll("\\", "/"), change);
@@ -189,7 +113,7 @@ export function IdeExplorer({
                 icon={<DocumentAddRegular />}
                 title="新建文件"
                 aria-label="新建文件"
-                onClick={() => setCreateKind("file")}
+                onClick={() => startCreate("file")}
               />
               <Button
                 appearance="subtle"
@@ -197,7 +121,7 @@ export function IdeExplorer({
                 icon={<FolderAddRegular />}
                 title="新建文件夹"
                 aria-label="新建文件夹"
-                onClick={() => setCreateKind("directory")}
+                onClick={() => startCreate("directory")}
               />
             </>
           ) : null}
@@ -216,40 +140,34 @@ export function IdeExplorer({
       </div>
       <div className="ide-tree" role="tree" aria-label="项目文件">
         {loading && entryCount === 0 ? <ExplorerSkeleton /> : null}
-        {!loading && entryCount === 0 ? (
+        {!loading && entryCount === 0 && !pendingCreate ? (
           <div className="ide-state ide-state-compact">
             <FolderOpenRegular aria-hidden="true" />
             <strong>没有可共享的文本文件</strong>
             <span>同步工作区后，安全范围内的文件会显示在这里。</span>
           </div>
         ) : null}
-        {entryCount > 0 && visibleTree.length === 0 ? (
+        {entryCount > 0 && visibleTree.length === 0 && !pendingCreate ? (
           <div className="ide-state ide-state-compact">
             <SearchRegular aria-hidden="true" />
             <strong>没有匹配文件</strong>
             <span>尝试缩短路径关键词。</span>
           </div>
         ) : null}
-        {visibleTree.map((node) => (
-          <TreeItem
-            node={node}
-            depth={0}
-            activePath={activePath}
-            expanded={expandedDirectories}
-            forceExpanded={forceExpanded}
-            onToggle={onToggleDirectory}
-            onOpen={onOpenFile}
-            changeByPath={changeByPath}
-            key={node.id}
-          />
-        ))}
+        <IdeExplorerTree
+          nodes={visibleTree}
+          selectedPath={selection?.path ?? activePath}
+          expanded={expandedDirectories}
+          forceExpanded={forceExpanded}
+          onToggle={onToggleDirectory}
+          onOpen={onOpenFile}
+          onSelect={setSelection}
+          changeByPath={changeByPath}
+          pendingCreate={pendingCreate}
+          onCancelCreate={() => setPendingCreate(null)}
+          onCommitCreate={commitCreate}
+        />
       </div>
-      <IdeCreateEntryDialog
-        kind={createKind}
-        onClose={() => setCreateKind(null)}
-        onCreateFile={onCreateFile}
-        onCreateDirectory={onCreateDirectory}
-      />
     </aside>
   );
 }

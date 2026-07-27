@@ -119,9 +119,15 @@ export function prependOlderHistoryPage(
     totalCount: page.totalCount,
     hasOlder: page.hasOlder,
     olderCursor: page.olderCursor,
-    olderLoading: false,
+    olderLoading: true,
     error: null,
   };
+}
+
+export function finishOlderHistoryLoad(
+  current: WorkspaceHistoryWindow,
+): WorkspaceHistoryWindow {
+  return current.olderLoading ? { ...current, olderLoading: false } : current;
 }
 
 export function failHistoryLoad(

@@ -1,0 +1,169 @@
+import {
+  ChevronDownRegular,
+  ChevronRightRegular,
+  DocumentRegular,
+  FolderOpenRegular,
+  FolderRegular,
+} from "@fluentui/react-icons";
+import type { CodexFileChange } from "@codex-collab/protocol";
+import type { CSSProperties } from "react";
+import type { IdeFileTreeNode } from "./file-tree.js";
+import type {
+  IdeTreeSelection,
+  PendingIdeCreate,
+} from "./ide-create-entry.js";
+import { IdeInlineCreateRow } from "./IdeInlineCreateRow.js";
+
+interface IdeExplorerTreeProps {
+  nodes: readonly IdeFileTreeNode[];
+  selectedPath: string | null;
+  expanded: ReadonlySet<string>;
+  forceExpanded: boolean;
+  changeByPath: ReadonlyMap<string, CodexFileChange>;
+  pendingCreate: PendingIdeCreate | null;
+  onToggle: (path: string) => void;
+  onOpen: (path: string) => void;
+  onSelect: (selection: IdeTreeSelection) => void;
+  onCancelCreate: () => void;
+  onCommitCreate: (path: string) => Promise<void>;
+}
+
+function formatFileSize(size: number): string {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${Math.max(1, Math.round(size / 1024))} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function changeLabel(kind: CodexFileChange["kind"]): string {
+  if (kind === "added") return "新增文件";
+  if (kind === "deleted") return "删除文件";
+  if (kind === "renamed") return "重命名文件";
+  return "修改文件";
+}
+
+function changeToken(kind: CodexFileChange["kind"]): string {
+  if (kind === "added") return "A";
+  if (kind === "deleted") return "D";
+  if (kind === "renamed") return "R";
+  return "M";
+}
+
+type TreeItemProps = Omit<IdeExplorerTreeProps, "nodes"> & {
+  node: IdeFileTreeNode;
+  depth: number;
+};
+
+function TreeItem({
+  node,
+  depth,
+  selectedPath,
+  expanded,
+  forceExpanded,
+  changeByPath,
+  pendingCreate,
+  onToggle,
+  onOpen,
+  onSelect,
+  onCancelCreate,
+  onCommitCreate,
+}: TreeItemProps) {
+  const isDirectory = node.kind === "directory";
+  const isExpanded =
+    forceExpanded ||
+    expanded.has(node.path) ||
+    pendingCreate?.parentPath === node.path;
+  const style = { "--ide-tree-depth": depth } as CSSProperties;
+  const fileChange = node.kind === "file" ? changeByPath.get(node.path) : undefined;
+
+  return (
+    <div className="ide-tree-item" role="treeitem" aria-expanded={isDirectory ? isExpanded : undefined}>
+      <button
+        type="button"
+        className={`ide-tree-row ${selectedPath === node.path ? "active" : ""}`}
+        style={style}
+        title={node.path}
+        onClick={() => {
+          onSelect({ path: node.path, kind: node.kind });
+          if (isDirectory) onToggle(node.path);
+          else onOpen(node.path);
+        }}
+      >
+        <span className="ide-tree-chevron" aria-hidden="true">
+          {isDirectory ? (
+            isExpanded ? <ChevronDownRegular /> : <ChevronRightRegular />
+          ) : null}
+        </span>
+        <span className="ide-tree-kind" aria-hidden="true">
+          {isDirectory ? (
+            isExpanded ? <FolderOpenRegular /> : <FolderRegular />
+          ) : (
+            <DocumentRegular />
+          )}
+        </span>
+        <span className="ide-tree-name">{node.name}</span>
+        {fileChange ? (
+          <span
+            className={`ide-tree-change ide-tree-change-${fileChange.kind}`}
+            aria-label={changeLabel(fileChange.kind)}
+          >
+            {changeToken(fileChange.kind)}
+          </span>
+        ) : node.file ? (
+          <span className="ide-tree-size">{formatFileSize(node.file.size)}</span>
+        ) : null}
+      </button>
+      {isDirectory && isExpanded ? (
+        <div role="group">
+          {pendingCreate?.parentPath === node.path ? (
+            <IdeInlineCreateRow
+              key={pendingCreate.id}
+              kind={pendingCreate.kind}
+              parentPath={pendingCreate.parentPath}
+              depth={depth + 1}
+              onCancel={onCancelCreate}
+              onCreate={onCommitCreate}
+            />
+          ) : null}
+          {node.children.map((child) => (
+            <TreeItem
+              node={child}
+              depth={depth + 1}
+              selectedPath={selectedPath}
+              expanded={expanded}
+              forceExpanded={forceExpanded}
+              changeByPath={changeByPath}
+              pendingCreate={pendingCreate}
+              onToggle={onToggle}
+              onOpen={onOpen}
+              onSelect={onSelect}
+              onCancelCreate={onCancelCreate}
+              onCommitCreate={onCommitCreate}
+              key={child.id}
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export function IdeExplorerTree(props: IdeExplorerTreeProps) {
+  const { nodes, ...treeProps } = props;
+  return (
+    <>
+      {props.pendingCreate?.parentPath === "" ? (
+        <IdeInlineCreateRow
+          key={props.pendingCreate.id}
+          kind={props.pendingCreate.kind}
+          parentPath=""
+          depth={0}
+          onCancel={props.onCancelCreate}
+          onCreate={props.onCommitCreate}
+        />
+      ) : null}
+      {nodes.map((node) => (
+        <TreeItem {...treeProps} node={node} depth={0} key={node.id} />
+      ))}
+    </>
+  );
+}

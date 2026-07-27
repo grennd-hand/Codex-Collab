@@ -18,6 +18,7 @@ import {
   beginOlderHistoryLoad,
   createWorkspaceHistoryWindow,
   failHistoryLoad,
+  finishOlderHistoryLoad,
   prependOlderHistoryPage,
   reconcileLatestHistoryPage,
   type WorkspaceHistoryWindow,
@@ -126,10 +127,11 @@ export function useWorkspaceHistoryController({
       restoreHistoryScrollAnchor(messageStreamRef.current, pending.anchor);
     }
     if (olderRequestIdRef.current === pending.requestId) {
+      commitHistoryWindow(finishOlderHistoryLoad);
       prependingRef.current = false;
       olderAbortRef.current = null;
     }
-  }, [historyWindow, messageStreamRef]);
+  }, [commitHistoryWindow, historyWindow, messageStreamRef]);
 
   const refresh = useCallback(async (includeHistory = true) => {
     if (!session || !token || !approved) return null;
@@ -324,10 +326,8 @@ export function useWorkspaceHistoryController({
       commitHistoryWindow((window) => failHistoryLoad(window, message));
     } finally {
       if (olderRequestIdRef.current === requestId) {
-        commitHistoryWindow((window) =>
-          window.olderLoading ? { ...window, olderLoading: false } : window,
-        );
         if (!restoreScheduled) {
+          commitHistoryWindow(finishOlderHistoryLoad);
           prependingRef.current = false;
           if (olderAbortRef.current === controller) olderAbortRef.current = null;
         }

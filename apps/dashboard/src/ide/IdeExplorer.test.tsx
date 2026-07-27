@@ -18,6 +18,7 @@ function renderExplorer(readOnly: boolean): string {
       readOnly,
       onQueryChange: vi.fn(),
       onToggleDirectory: vi.fn(),
+      onExpandDirectory: vi.fn(),
       onOpenFile: vi.fn(),
       onCreateFile: vi.fn(),
       onCreateDirectory: vi.fn(),
@@ -30,6 +31,7 @@ describe("IdeExplorer", () => {
     const markup = renderExplorer(false);
     expect(markup).toContain('aria-label="新建文件"');
     expect(markup).toContain('aria-label="新建文件夹"');
+    expect(markup).not.toContain('role="dialog"');
   });
 
   it("hides create actions for read-only workspace access", () => {

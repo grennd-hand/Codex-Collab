@@ -148,6 +148,14 @@ describe("workspace file operation host execution", () => {
 
     await expect(
       executeWorkspaceFileOperation(
+        operation({ kind: "mkdir", path: "1" }),
+        sandbox,
+      ),
+    ).resolves.toEqual({ status: "completed" });
+    expect((await stat(join(root, "1"))).isDirectory()).toBe(true);
+
+    await expect(
+      executeWorkspaceFileOperation(
         operation({ kind: "mkdir", path: ".ssh/private" }),
         sandbox,
       ),

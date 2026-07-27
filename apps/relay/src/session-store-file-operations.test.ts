@@ -333,6 +333,12 @@ describe("SessionStore file operation leases", () => {
     expect(workspace.directories).toContain("src/empty-folder");
     expect(() =>
       store.createWorkspaceFileOperation(created.session.id, guest.memberToken, {
+        kind: "mkdir",
+        path: "1",
+      }),
+    ).not.toThrow();
+    expect(() =>
+      store.createWorkspaceFileOperation(created.session.id, guest.memberToken, {
         kind: "write",
         path: "src/new-file.ts",
         content: "",

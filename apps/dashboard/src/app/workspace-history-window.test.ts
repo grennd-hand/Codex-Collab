@@ -4,6 +4,7 @@ import {
   beginLatestHistoryLoad,
   beginOlderHistoryLoad,
   createWorkspaceHistoryWindow,
+  finishOlderHistoryLoad,
   prependOlderHistoryPage,
   reconcileLatestHistoryPage,
   workspaceHistoryEntries,
@@ -76,6 +77,8 @@ describe("workspace history window", () => {
       "same:2",
       "new",
     ]);
+    expect(result.olderLoading).toBe(true);
+    expect(finishOlderHistoryLoad(result).olderLoading).toBe(false);
   });
 
   it("reconciles a changed latest page while retaining the loaded older prefix", () => {

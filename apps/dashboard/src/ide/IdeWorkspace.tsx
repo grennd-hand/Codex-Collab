@@ -99,6 +99,9 @@ export default function IdeWorkspace({
           return next;
         })
       }
+      onExpandDirectory={(path) =>
+        setExpandedDirectories((current) => new Set([...current, path]))
+      }
       onOpenFile={(path) => void loadFile(path)}
       onCreateFile={createFile}
       onCreateDirectory={createDirectory}
