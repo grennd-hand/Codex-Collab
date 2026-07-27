@@ -41,7 +41,7 @@ export function RoomAccessFields(props: RoomAccessFieldsProps) {
 
   return (
     <>
-      <p className="dialog-intro">无需账号即可创建新房间、使用邀请加入，或用房主密钥恢复原房间。</p>
+      <p className="dialog-intro">创建房间后会随机生成房主密钥；请保存房间 ID 和密钥，以后可重复恢复房间。</p>
       <TabList selectedValue={props.setupMode} onTabSelect={(_, data) => props.onSetupModeChange(data.value as SetupSubmissionMode)} aria-label="连接房间方式">
         <Tab value="create">创建房间</Tab>
         <Tab value="join">邀请加入</Tab>

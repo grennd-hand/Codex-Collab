@@ -143,19 +143,13 @@ textarea {
   transition: none;
 }
 
-.account-button {
-  max-width: 150px;
-}
-
-.account-button-label,
 .room-identity-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.room-identity,
-.room-identity-button {
+.room-identity {
   max-width: 180px;
 }
 

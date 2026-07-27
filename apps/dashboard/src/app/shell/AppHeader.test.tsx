@@ -20,8 +20,6 @@ describe("HeaderIdentity", () => {
   it("shows an anonymous room member and role without a login action", () => {
     const markup = renderToStaticMarkup(createElement(HeaderIdentity, {
       member,
-      accountDisplayName: null,
-      onOpenAccount: () => undefined,
     }));
 
     expect(markup).toContain("小米");
@@ -30,24 +28,11 @@ describe("HeaderIdentity", () => {
     expect(markup).not.toContain("登录");
   });
 
-  it("opens saved rooms only when the member has an account", () => {
-    const markup = renderToStaticMarkup(createElement(HeaderIdentity, {
-      member,
-      accountDisplayName: "小米账号",
-      onOpenAccount: () => undefined,
-    }));
-
-    expect(markup).toContain("打开我的房间");
-    expect(markup).not.toContain("登录账号");
-  });
-
-  it("keeps account login available before entering a room", () => {
+  it("does not expose an account action before entering a room", () => {
     const markup = renderToStaticMarkup(createElement(HeaderIdentity, {
       member: null,
-      accountDisplayName: null,
-      onOpenAccount: () => undefined,
     }));
 
-    expect(markup).toContain("登录账号");
+    expect(markup).toBe("");
   });
 });

@@ -1,11 +1,8 @@
-import { Button } from "@fluentui/react-components";
 import { PersonRegular } from "@fluentui/react-icons";
 import type { Member } from "@codex-collab/protocol";
 
 interface HeaderIdentityProps {
   member: Member | null;
-  accountDisplayName: string | null;
-  onOpenAccount: () => void;
 }
 
 function memberStateLabel(member: Member) {
@@ -15,26 +12,8 @@ function memberStateLabel(member: Member) {
   return member.role === "owner" ? "房主" : "成员";
 }
 
-export function HeaderIdentity({
-  member,
-  accountDisplayName,
-  onOpenAccount,
-}: HeaderIdentityProps) {
-  if (!member) {
-    return (
-      <Button
-        appearance="subtle"
-        icon={<PersonRegular />}
-        className="account-button"
-        aria-label={accountDisplayName ? "打开我的房间" : "登录账号"}
-        onClick={onOpenAccount}
-      >
-        <span className="account-button-label">
-          {accountDisplayName ?? "登录"}
-        </span>
-      </Button>
-    );
-  }
+export function HeaderIdentity({ member }: HeaderIdentityProps) {
+  if (!member) return null;
 
   const stateLabel = memberStateLabel(member);
   const label = (
@@ -43,20 +22,6 @@ export function HeaderIdentity({
       <span className="room-identity-role">{stateLabel}</span>
     </>
   );
-
-  if (accountDisplayName) {
-    return (
-      <Button
-        appearance="subtle"
-        icon={<PersonRegular />}
-        className="account-button room-identity-button"
-        aria-label={`当前身份 ${member.displayName}，${stateLabel}；打开我的房间`}
-        onClick={onOpenAccount}
-      >
-        {label}
-      </Button>
-    );
-  }
 
   return (
     <div

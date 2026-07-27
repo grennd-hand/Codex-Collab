@@ -7,7 +7,6 @@ import type {
 import type { connectionPresentation } from "./connection.js";
 import type { ThemeMode } from "./shell/theme.js";
 import type { ActivityItem } from "../features/activity/ActivityPanel.js";
-import type { useAccountController } from "../features/account/useAccountController.js";
 import type { useCollaborationController } from "../features/collaboration/useCollaborationController.js";
 import type { MemberIdentity } from "../features/collaboration/member-identity.js";
 import type { useComposerController } from "../features/composer/useComposerController.js";
@@ -27,7 +26,6 @@ import type { useWorkspaceHistoryController } from "../features/workspace/useWor
 import type { Message } from "@codex-collab/protocol";
 
 export type DashboardViewModel = {
-  account: ReturnType<typeof useAccountController>;
   activities: ActivityItem[];
   approved: boolean;
   canSendChat: boolean;

@@ -18,7 +18,6 @@ export function DashboardWorkspaceView({
   model: DashboardViewModel;
 }) {
   const {
-    account,
     activities,
     approved,
     canSendChat,
@@ -78,7 +77,6 @@ export function DashboardWorkspaceView({
         workspaceLoading={workspaceConnection.loading}
         roomOpen={roomOpen}
         roomStatusUpdating={invite.roomStatusUpdating}
-        accountDisplayName={account.profile?.account.displayName ?? null}
         themeMode={themeMode}
         hasSession={Boolean(session)}
         connectionStatus={connectionStatus}
@@ -86,7 +84,6 @@ export function DashboardWorkspaceView({
         onUpdateRoomStatus={(open) => void invite.updateRoomStatus(open)}
         onOpenWorkspace={() => void workspaceConnection.openDialog()}
         onCreateInvite={() => void invite.create()}
-        onOpenAccount={() => account.setDialogOpen(true)}
         onToggleTheme={() =>
           setThemeMode((current) => (current === "dark" ? "light" : "dark"))
         }

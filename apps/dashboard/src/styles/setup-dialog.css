@@ -1,10 +1,27 @@
-.account-loading-compact {
-  min-height: 36px;
+.setup-dialog-surface {
+  width: min(520px, calc(100vw - 24px));
+  max-width: 520px;
 }
 
-.optional-account-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
+.setup-dialog-surface > form {
+  min-width: 0;
+  overflow-x: clip;
+}
+
+.setup-dialog-content,
+.setup-dialog-content .fui-Field,
+.setup-dialog-content .fui-Input {
+  min-width: 0;
+}
+
+.setup-dialog-content {
+  overflow-x: clip;
+}
+
+.setup-dialog-content .fui-Input {
+  width: 100%;
+}
+
+.setup-dialog-content .fui-Field {
+  width: min(100%, 420px);
 }

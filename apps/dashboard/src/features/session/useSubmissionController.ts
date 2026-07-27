@@ -1,5 +1,4 @@
 import type {
-  AccountProfileResponse,
   CreateSessionResponse,
   JoinInviteResponse,
   Member,
@@ -36,7 +35,6 @@ import {
 type ComposerController = ReturnType<typeof useComposerController>;
 
 type SubmissionControllerOptions = {
-  accountProfile: AccountProfileResponse | null;
   addMessage: (message: Message) => void;
   approved: boolean;
   authHeaders: (includeJson?: boolean) => HeadersInit;
@@ -50,7 +48,6 @@ type SubmissionControllerOptions = {
     detail: string,
     tone?: "info" | "success" | "warning" | "danger",
   ) => void;
-  refreshAccount: () => Promise<AccountProfileResponse | null>;
   roomOpen: boolean;
   saveCredential: (credential: SavedCredential) => void;
   session: Session | null;
@@ -65,7 +62,6 @@ type SubmissionControllerOptions = {
 };
 
 export function useSubmissionController({
-  accountProfile,
   addMessage,
   approved,
   authHeaders,
@@ -75,7 +71,6 @@ export function useSubmissionController({
   onRecoveryKeyIssued,
   onError,
   pushActivity,
-  refreshAccount,
   roomOpen,
   saveCredential,
   session,
@@ -106,10 +101,7 @@ export function useSubmissionController({
     try {
       const result = await requestJson<CreateSessionResponse>("/v1/sessions", {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          ...(accountProfile ? { "x-codex-csrf": accountProfile.csrfToken } : {}),
-        },
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({
           name: roomName,
           ownerDisplayName: displayName,
@@ -130,7 +122,6 @@ export function useSubmissionController({
       setError(null);
       setCredentialNotice(null);
       pushActivity("共享任务已创建", "你是主人", "success");
-      if (accountProfile) void refreshAccount();
     } catch (caught) {
       onError(caught);
     } finally {
@@ -167,7 +158,6 @@ export function useSubmissionController({
       setError(null);
       setCredentialNotice(null);
       pushActivity("房间已恢复", "已重新取得房主权限", "success");
-      if (accountProfile) void refreshAccount();
     } catch (caught) {
       onError(caught);
     } finally {
@@ -180,10 +170,7 @@ export function useSubmissionController({
     try {
       const result = await requestJson<JoinInviteResponse>("/v1/invites/join", {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          ...(accountProfile ? { "x-codex-csrf": accountProfile.csrfToken } : {}),
-        },
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({
           inviteToken: joinToken,
           displayName,
@@ -207,7 +194,6 @@ export function useSubmissionController({
         `${window.location.pathname}${window.location.search}`,
       );
       pushActivity("加入申请已发送", "等待主人批准", "warning");
-      if (accountProfile) void refreshAccount();
     } catch (caught) {
       onError(caught);
     } finally {

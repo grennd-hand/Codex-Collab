@@ -27,7 +27,6 @@ export interface AppHeaderProps {
   workspaceLoading: boolean;
   roomOpen: boolean;
   roomStatusUpdating: boolean;
-  accountDisplayName: string | null;
   themeMode: ThemeMode;
   hasSession: boolean;
   connectionStatus: {
@@ -38,7 +37,6 @@ export interface AppHeaderProps {
   onUpdateRoomStatus: (open: boolean) => void;
   onOpenWorkspace: () => void;
   onCreateInvite: () => void;
-  onOpenAccount: () => void;
   onToggleTheme: () => void;
   onResetSession: () => void;
 }
@@ -50,7 +48,6 @@ export function AppHeader({
   workspaceLoading,
   roomOpen,
   roomStatusUpdating,
-  accountDisplayName,
   themeMode,
   hasSession,
   connectionStatus,
@@ -58,7 +55,6 @@ export function AppHeader({
   onUpdateRoomStatus,
   onOpenWorkspace,
   onCreateInvite,
-  onOpenAccount,
   onToggleTheme,
   onResetSession,
 }: AppHeaderProps) {
@@ -136,11 +132,7 @@ export function AppHeader({
             创建邀请
           </Button>
         ) : null}
-        <HeaderIdentity
-          member={member}
-          accountDisplayName={accountDisplayName}
-          onOpenAccount={onOpenAccount}
-        />
+        <HeaderIdentity member={member} />
         <Button
           appearance="subtle"
           className="stable-icon-button"

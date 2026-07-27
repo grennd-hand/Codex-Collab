@@ -21,14 +21,15 @@ const roomProps = {
   onRecoveryKeyChange: noop,
 };
 
-describe("anonymous room access", () => {
-  it("shows create, join and recovery without requiring an account", () => {
+describe("recovery-key room access", () => {
+  it("shows create, join and recovery without account controls", () => {
     const markup = renderToStaticMarkup(createElement(RoomAccessFields, roomProps));
 
-    expect(markup).toContain("无需账号");
+    expect(markup).toContain("随机生成房主密钥");
     expect(markup).toContain("创建房间");
     expect(markup).toContain("邀请加入");
     expect(markup).toContain("恢复房间");
+    expect(markup).not.toContain("账号");
   });
 
   it("keeps room creation as the primary form action", () => {

@@ -8,7 +8,6 @@ import {
 import type {
   Member,
   Message,
-  RestoreAccountRoomResponse,
   Session,
 } from "@codex-collab/protocol";
 import { DashboardView } from "./app/DashboardView.js";
@@ -28,7 +27,6 @@ import {
   isCredentialRejected,
   requestJson,
 } from "./shared/api/api-client.js";
-import { useAccountController } from "./features/account/useAccountController.js";
 import { useComposerController } from "./features/composer/useComposerController.js";
 import {
   connectionPresentation,
@@ -107,9 +105,6 @@ export function App() {
   const chatStreamRef = useRef<HTMLDivElement>(null);
   const composerResetRef = useRef<() => void>(() => undefined);
   const submissionResetRef = useRef<() => void>(() => undefined);
-  const submissionAccountNameRef = useRef<(displayName: string) => void>(
-    () => undefined,
-  );
   const workspaceResetRef = useRef<() => void>(() => undefined);
   const workspaceFileResetRef = useRef<() => void>(() => undefined);
   const sessionErrorHandlerRef = useRef<(caught: unknown) => void>(() => undefined);
@@ -280,57 +275,6 @@ export function App() {
   const ownerRecovery = useOwnerRecoveryController();
   const setInviteOpen = invite.setOpen;
 
-  const handleAccountName = useCallback((nextDisplayName: string) => {
-    submissionAccountNameRef.current(nextDisplayName);
-  }, []);
-  const handleAccountRoomRestored = useCallback(
-    async (result: RestoreAccountRoomResponse) => {
-      setMessages([]);
-      setMembers([result.member]);
-      workspaceHistory.reset();
-      workspaceFiles.reset();
-      composer.reset();
-      setCredentialValidated(true);
-      setConversationLoading(result.member.status === "approved");
-      saveCredential({
-        session: result.session,
-        member: result.member,
-        token: result.memberToken,
-      });
-      setConnection(result.member.status === "pending" ? "waiting" : "connecting");
-      setSetupOpen(false);
-      setError(null);
-      pushActivity(
-        "已进入保存的房间",
-        result.member.status === "pending" ? "仍在等待主人批准" : result.session.name,
-        result.member.status === "pending" ? "warning" : "success",
-      );
-    },
-    [
-      composer,
-      pushActivity,
-      saveCredential,
-      workspaceFiles,
-      workspaceHistory,
-    ],
-  );
-  const handleAccountSignedOut = useCallback(() => {
-    clearSessionState("manual");
-  }, [clearSessionState]);
-  const account = useAccountController({
-    composerStorageKey,
-    credential,
-    credentialValidated,
-    onAccountName: handleAccountName,
-    onCredentialNotice: setCredentialNotice,
-    onRoomRestored: handleAccountRoomRestored,
-    onSetupOpen: setSetupOpen,
-    onSignedOut: handleAccountSignedOut,
-    pushActivity,
-  });
-  const accountProfile = account.profile;
-  const refreshAccount = account.refresh;
-
   const addMessage = useCallback((next: Message) => {
     setMessages((current) => {
       const index = current.findIndex((message) => message.id === next.id);
@@ -342,7 +286,6 @@ export function App() {
   }, []);
 
   const submission = useSubmissionController({
-    accountProfile,
     addMessage,
     approved,
     authHeaders,
@@ -352,7 +295,6 @@ export function App() {
     onRecoveryKeyIssued: ownerRecovery.present,
     onError: showError,
     pushActivity,
-    refreshAccount,
     roomOpen,
     saveCredential,
     session,
@@ -365,13 +307,7 @@ export function App() {
     setSetupOpen,
     token,
   });
-  const setDisplayName = submission.setDisplayName;
   submissionResetRef.current = submission.reset;
-  submissionAccountNameRef.current = (nextDisplayName) => {
-    setDisplayName((current) =>
-      current === "Owner" ? nextDisplayName : current,
-    );
-  };
 
   const sessionSynchronization = useSessionSynchronization({
     addMessage,
@@ -517,7 +453,6 @@ export function App() {
     !preparingCodexAttachments && (draft.trim() || pendingAttachments.length > 0),
   );
   const viewModel: DashboardViewModel = {
-    account,
     activities,
     approved,
     canSendChat,
