@@ -44,11 +44,33 @@
 }
 
 .workspace-dialog-content {
-  min-height: 560px;
+  min-width: 0;
+  min-height: 0;
   display: grid;
   align-content: start;
   gap: 16px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.workspace-dialog-content > *,
+.workspace-dialog-content .fui-MessageBar,
+.workspace-dialog-content .fui-MessageBarBody,
+.pairing-panel,
+.pairing-instructions,
+.workspace-section-heading,
+.workspace-section-heading > div {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.workspace-dialog-content .fui-MessageBar,
+.workspace-dialog-content .fui-MessageBarBody {
+  white-space: normal;
+}
+
+.workspace-dialog-content .fui-MessageBarBody {
+  overflow-wrap: anywhere;
 }
 
 .workspace-dialog-loading {
@@ -81,7 +103,13 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 16px;
+}
+
+.workspace-section-heading > .fui-Button {
+  flex: 0 0 auto;
+  margin-left: auto;
 }
 
 .workspace-section-heading.compact {
@@ -127,6 +155,13 @@
 
 .pairing-instructions strong {
   color: var(--colorNeutralForeground1);
+}
+
+.pairing-instructions .fui-Field,
+.pairing-instructions .fui-Input {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .workspace-status-card {
