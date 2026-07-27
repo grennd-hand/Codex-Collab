@@ -6,9 +6,11 @@ import { WorkspacePanelLayout } from "./WorkspacePanelLayout.js";
 function renderLayout({
   showFiles = true,
   showPeople = true,
+  withFiles = true,
 }: {
   showFiles?: boolean;
   showPeople?: boolean;
+  withFiles?: boolean;
 } = {}) {
   const child = (name: string, label: string): ReactNode =>
     createElement("div", { "data-workspace-panel": name, key: name }, label);
@@ -28,7 +30,7 @@ function renderLayout({
         showFiles,
         showPeople,
         storageScope: "room:task",
-        withFiles: true,
+        withFiles,
       },
     ),
   );
@@ -49,5 +51,13 @@ describe("WorkspacePanelLayout", () => {
     expect(markup).not.toContain("FILES");
     expect(markup).not.toContain("PEOPLE");
     expect(markup).toContain("TIMELINE");
+    expect(markup).not.toContain("ACTIVITY");
+  });
+
+  it("keeps task activity only when no host workspace is connected", () => {
+    const markup = renderLayout({ showFiles: false, showPeople: false, withFiles: false });
+
+    expect(markup).toContain("TIMELINE");
+    expect(markup).toContain("ACTIVITY");
   });
 });

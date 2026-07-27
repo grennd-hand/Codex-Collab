@@ -34,7 +34,7 @@ export function historyScrollIntent(
       canLoadOlder &&
       !pinned &&
       stream.scrollTop < 120 &&
-      stream.scrollTop + 1 < previousScrollTop,
+      (stream.scrollTop + 1 < previousScrollTop || stream.scrollTop === 0),
   };
 }
 

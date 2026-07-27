@@ -35,6 +35,7 @@ export function WorkspacePanelLayout({
   const chat = panel(children, "chat");
   const activity = panel(children, "activity");
   const filesVisible = withFiles && showFiles && Boolean(files);
+  const activityVisible = !withFiles && Boolean(activity);
 
   let content: ReactNode;
   if (filesVisible && editorExpanded) {
@@ -128,7 +129,7 @@ export function WorkspacePanelLayout({
         storageKey={`codex-collab:workspace:people-rest:${storageScope}`}
       />
     );
-  } else if (activity) {
+  } else if (activityVisible) {
     content = (
       <ResizableSplitPane
         className="workspace-layout-split workspace-layout-split--chat-activity"

@@ -2,7 +2,6 @@ import { EventEmitter } from "node:events";
 import {
   mkdir,
   mkdtemp,
-  readFile,
   realpath,
   rm,
   stat,
@@ -33,10 +32,7 @@ import {
   type CodexTurnStatus,
 } from "./app-server/thread-history-parser.js";
 import { extractCodexRolloutEntries } from "./app-server/rollout-history-parser.js";
-import {
-  MAX_RECENT_ROLLOUT_BYTES,
-  readRecentRolloutLines,
-} from "./app-server/rollout-reader.js";
+import { RolloutHistorySource } from "./app-server/rollout-history-source.js";
 import { RolloutActivityReader } from "./app-server/rollout-activity-reader.js";
 
 export type {
@@ -87,6 +83,7 @@ export interface CodexAppServerClientOptions {
 export class CodexAppServerClient extends EventEmitter {
   private readonly transport = new JsonRpcTransport();
   private readonly rolloutActivityReader = new RolloutActivityReader();
+  private readonly rolloutHistorySource = new RolloutHistorySource();
   private started = false;
   private readonly stagedAttachments = new Map<string, Set<string>>();
   private readonly desktopIpc: CodexDesktopBridge;
@@ -155,25 +152,8 @@ export class CodexAppServerClient extends EventEmitter {
     rolloutPath?: string | null,
   ): Promise<CodexRecordEntry[]> {
     await this.start();
-    if (
-      rolloutPath &&
-      isAbsolute(rolloutPath) &&
-      extname(rolloutPath).toLowerCase() === ".jsonl" &&
-      basename(rolloutPath).includes(threadId)
-    ) {
-      const resolved = await realpath(rolloutPath);
-      const metadata = await stat(resolved);
-      if (metadata.isFile()) {
-        const lines =
-          metadata.size <= MAX_RECENT_ROLLOUT_BYTES
-            ? (await readFile(resolved, "utf8")).split(/\r?\n/)
-            : await readRecentRolloutLines(resolved, metadata.size);
-        const rolloutEntries = extractCodexRolloutEntries(lines, threadId);
-        if (metadata.size <= MAX_RECENT_ROLLOUT_BYTES || rolloutEntries.length > 0) {
-          return rolloutEntries;
-        }
-      }
-    }
+    const rolloutHistory = await this.rolloutHistorySource.read(threadId, rolloutPath);
+    if (rolloutHistory !== null) return rolloutHistory;
     const turns: CodexTurn[] = [];
     let cursor: string | null = null;
     do {

@@ -5,8 +5,9 @@ export const MAX_RECENT_ROLLOUT_BYTES = 20_000_000;
 export async function readRecentRolloutLines(
   path: string,
   size: number,
+  maxBytes = MAX_RECENT_ROLLOUT_BYTES,
 ): Promise<string[]> {
-  const start = Math.max(0, size - MAX_RECENT_ROLLOUT_BYTES);
+  const start = Math.max(0, size - maxBytes);
   const length = size - start;
   const buffer = Buffer.alloc(length);
   const handle = await openFile(path, "r");
@@ -27,5 +28,4 @@ export async function readRecentRolloutLines(
     await handle.close();
   }
 }
-
 

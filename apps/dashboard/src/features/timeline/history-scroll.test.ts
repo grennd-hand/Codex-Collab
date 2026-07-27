@@ -19,6 +19,16 @@ describe("history scroll anchors", () => {
     expect(historyScrollIntent(stream, 40, true).loadOlder).toBe(false);
   });
 
+  it("loads when one scroll event lands directly at the top", () => {
+    expect(
+      historyScrollIntent(
+        { clientHeight: 500, scrollHeight: 1_500, scrollTop: 0 },
+        0,
+        true,
+      ).loadOlder,
+    ).toBe(true);
+  });
+
   it("does not auto-load older records while the short timeline is pinned", () => {
     expect(
       historyScrollIntent(

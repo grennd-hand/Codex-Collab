@@ -20,6 +20,62 @@ interface RolloutItem {
   payload?: Record<string, unknown>;
 }
 
+function messageEntryFromRolloutItem(
+  item: RolloutItem,
+  threadId: string,
+  fallbackIndex: number,
+): CodexRecordEntry | null {
+  const payload = item.payload;
+  if (
+    item.type !== "response_item" ||
+    !payload ||
+    payload.type !== "message" ||
+    (payload.role !== "user" && payload.role !== "assistant")
+  ) {
+    return null;
+  }
+  const rawText = rolloutText(payload.content).trim();
+  const text = redactSensitiveText(
+    payload.role === "user"
+      ? sanitizeCodexUserMessageText(rawText)
+      : sanitizeCodexAssistantMessageText(rawText),
+  );
+  if (!text) return null;
+  const createdAt =
+    typeof item.timestamp === "string" && !Number.isNaN(Date.parse(item.timestamp))
+      ? new Date(item.timestamp).toISOString()
+      : null;
+  return {
+    id:
+      typeof payload.id === "string"
+        ? payload.id
+        : `${threadId}-message-${fallbackIndex}`,
+    role: payload.role,
+    ...(payload.role === "assistant" &&
+      (payload.phase === "commentary" || payload.phase === "final_answer")
+      ? { phase: payload.phase }
+      : {}),
+    text: text.slice(0, 50_000),
+    createdAt,
+  };
+}
+
+export function extractCodexRolloutMessageEntry(
+  line: string,
+  threadId: string,
+  fallbackIndex: number,
+): CodexRecordEntry | null {
+  try {
+    return messageEntryFromRolloutItem(
+      JSON.parse(line) as RolloutItem,
+      threadId,
+      fallbackIndex,
+    );
+  } catch {
+    return null;
+  }
+}
+
 function rolloutTurnId(payload: Record<string, unknown>): string | null {
   if (typeof payload.turn_id === "string") return payload.turn_id;
   const metadata = payload.internal_chat_message_metadata_passthrough;
@@ -194,27 +250,9 @@ export function extractCodexRolloutEntries(
 
     if (item.type !== "response_item") continue;
 
-    if (payloadType === "message" && (payload.role === "user" || payload.role === "assistant")) {
-      const rawText = rolloutText(payload.content).trim();
-      const text = redactSensitiveText(
-        payload.role === "user"
-          ? sanitizeCodexUserMessageText(rawText)
-          : sanitizeCodexAssistantMessageText(rawText),
-      );
-      if (!text) continue;
-      entries.push({
-        id:
-          typeof payload.id === "string"
-            ? payload.id
-            : `${threadId}-message-${entries.length}`,
-        role: payload.role,
-        ...(payload.role === "assistant" &&
-          (payload.phase === "commentary" || payload.phase === "final_answer")
-          ? { phase: payload.phase }
-          : {}),
-        text: text.slice(0, 50_000),
-        createdAt,
-      });
+    if (payloadType === "message") {
+      const messageEntry = messageEntryFromRolloutItem(item, threadId, entries.length);
+      if (messageEntry) entries.push(messageEntry);
       continue;
     }
 
@@ -309,4 +347,3 @@ export function extractCodexRolloutEntries(
   }
   return limitRecordEntries(entries);
 }
-

@@ -19,15 +19,37 @@ export function redactSensitiveText(value: string): string {
     );
 }
 
+export const MAX_PUBLISHED_RECORD_ENTRIES = 1_000;
+export const MAX_PUBLISHED_RECORD_TEXT_LENGTH = 2_000_000;
+
+function isConversationEntry(entry: CodexRecordEntry): boolean {
+  return entry.role === "user" || entry.role === "assistant";
+}
+
 export function limitRecordEntries(entries: CodexRecordEntry[]): CodexRecordEntry[] {
-  const selected: CodexRecordEntry[] = [];
+  const selectedIndexes = new Set<number>();
   let totalLength = 0;
-  for (const entry of entries.slice(-500).reverse()) {
-    if (totalLength + entry.text.length > 2_000_000) break;
-    selected.push(entry);
-    totalLength += entry.text.length;
-  }
-  return selected.reverse();
+
+  const selectNewest = (matches: (entry: CodexRecordEntry) => boolean) => {
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      if (selectedIndexes.size >= MAX_PUBLISHED_RECORD_ENTRIES) return;
+      const entry = entries[index];
+      if (!entry || selectedIndexes.has(index) || !matches(entry)) continue;
+      if (totalLength + entry.text.length > MAX_PUBLISHED_RECORD_TEXT_LENGTH) {
+        continue;
+      }
+      selectedIndexes.add(index);
+      totalLength += entry.text.length;
+    }
+  };
+
+  // Preserve the actual conversation before filling the remaining budget with
+  // recent reasoning and command details. Long-running tasks can produce
+  // thousands of tool records that would otherwise evict every older prompt.
+  selectNewest(isConversationEntry);
+  selectNewest((entry) => !isConversationEntry(entry));
+
+  return entries.filter((_, index) => selectedIndexes.has(index));
 }
 
 export function lineChangeCounts(diff: string): { additions: number; deletions: number } {
@@ -128,5 +150,4 @@ export function rolloutCommandText(
     .filter(Boolean)
     .join("\n");
 }
-
 
