@@ -4,6 +4,7 @@ import {
   historyScrollIntent,
   historyTopLoadDecision,
   restoreHistoryScrollAnchor,
+  shouldResetHistoryToLatest,
 } from "./history-scroll.js";
 
 function rect(top: number, bottom = top + 20): DOMRect {
@@ -11,6 +12,13 @@ function rect(top: number, bottom = top + 20): DOMRect {
 }
 
 describe("history scroll anchors", () => {
+  it("returns to the latest message only when a different task opens", () => {
+    expect(shouldResetHistoryToLatest(null, "thread-1")).toBe(true);
+    expect(shouldResetHistoryToLatest("thread-1", "thread-2")).toBe(true);
+    expect(shouldResetHistoryToLatest("thread-1", "thread-1")).toBe(false);
+    expect(shouldResetHistoryToLatest("thread-1", null)).toBe(false);
+  });
+
   it("loads older records only for a real upward scroll near the top", () => {
     const stream = { clientHeight: 500, scrollHeight: 1_500, scrollTop: 80 };
     expect(historyScrollIntent(stream, 160, true)).toEqual({

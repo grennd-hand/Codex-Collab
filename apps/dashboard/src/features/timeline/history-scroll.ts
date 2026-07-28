@@ -23,6 +23,13 @@ export interface HistoryTopLoadDecision {
   trigger: boolean;
 }
 
+export function shouldResetHistoryToLatest(
+  previousThreadId: string | null,
+  nextThreadId: string | null,
+): boolean {
+  return nextThreadId !== null && nextThreadId !== previousThreadId;
+}
+
 export function historyScrollIntent(
   stream: Pick<HTMLElement, "clientHeight" | "scrollHeight" | "scrollTop">,
   previousScrollTop: number,
