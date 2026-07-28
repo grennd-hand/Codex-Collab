@@ -17,6 +17,7 @@ import { TimelineItemList } from "./TimelineItemList.js";
 import {
   historyScrollIntent,
   historyTopLoadDecision,
+  shouldInitializeHistoryAtLatest,
 } from "./history-scroll.js";
 
 interface CodexTimelineProps {
@@ -90,11 +91,40 @@ export function CodexTimeline({
 }: CodexTimelineProps) {
   const previousScrollTopRef = useRef(0);
   const topLoadLatchedRef = useRef(false);
+  const positionedThreadRef = useRef<string | null>(null);
 
   useLayoutEffect(() => {
     previousScrollTopRef.current = streamRef.current?.scrollTop ?? 0;
     topLoadLatchedRef.current = false;
+    if (history.threadId === null) positionedThreadRef.current = null;
   }, [history.threadId, streamRef]);
+
+  useLayoutEffect(() => {
+    if (
+      !shouldInitializeHistoryAtLatest(
+        positionedThreadRef.current,
+        history.threadId,
+        initialLoading,
+        hasContent,
+      )
+    ) {
+      return;
+    }
+    const stream = streamRef.current;
+    if (!stream || !history.threadId) return;
+    positionedThreadRef.current = history.threadId;
+    stream.scrollTop = stream.scrollHeight;
+    previousScrollTopRef.current = stream.scrollTop;
+    topLoadLatchedRef.current = false;
+    onPinnedChange(true);
+  }, [
+    hasContent,
+    history.items.length,
+    history.threadId,
+    initialLoading,
+    onPinnedChange,
+    streamRef,
+  ]);
 
   const jumpToLatest = () => {
     const stream = streamRef.current;
@@ -115,7 +145,9 @@ export function CodexTimeline({
         const intent = historyScrollIntent(
           stream,
           previousScrollTopRef.current,
-          history.hasOlder && !history.olderLoading,
+          positionedThreadRef.current === history.threadId &&
+            history.hasOlder &&
+            !history.olderLoading,
         );
         previousScrollTopRef.current = stream.scrollTop;
         onPinnedChange(intent.pinned);

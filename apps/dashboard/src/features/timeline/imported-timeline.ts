@@ -45,6 +45,10 @@ interface CollabCommandEnvelope {
   body: string;
 }
 
+export interface UnifiedTimelineOptions {
+  historyHasOlder?: boolean;
+}
+
 type TimelineHistoryEntry = CodexRecordEntry | WorkspaceHistoryPageItem;
 
 function keyedHistoryEntry(item: TimelineHistoryEntry): {
@@ -123,6 +127,41 @@ export function parseCollabCommandEnvelope(
     : null;
 }
 
+function findMatchingCommandMessage(
+  entry: CodexRecordEntry,
+  commandMessages: readonly Message[],
+  claimedMessageIds: ReadonlySet<string>,
+): Message | undefined {
+  const envelope = parseCollabCommandEnvelope(entry.text);
+  const visibleText = envelope?.body ?? sanitizeImportedUserText(entry.text);
+  const exact = commandMessages.find(
+    (message) =>
+      !claimedMessageIds.has(message.id) &&
+      (message.id === entry.id ||
+        (envelope?.commandId !== null &&
+          envelope?.commandId !== undefined &&
+          message.id === envelope.commandId)),
+  );
+  if (exact) return exact;
+
+  return commandMessages
+    .filter(
+      (message) =>
+        !claimedMessageIds.has(message.id) &&
+        (!envelope || message.senderDisplayName === envelope.member) &&
+        (visibleText === message.body || visibleText.startsWith(`${message.body}\n`)),
+    )
+    .map((message) => ({
+      message,
+      distance:
+        entry.createdAt === null
+          ? Number.POSITIVE_INFINITY
+          : Math.abs(Date.parse(entry.createdAt) - Date.parse(message.createdAt)),
+    }))
+    .filter(({ distance }) => distance <= 120_000)
+    .sort((left, right) => left.distance - right.distance)[0]?.message;
+}
+
 export function buildImportedTimeline(
   history: readonly TimelineHistoryEntry[],
 ): ImportedTimelineItem[] {
@@ -177,49 +216,25 @@ export function buildImportedTimeline(
 export function buildUnifiedTimeline(
   history: readonly TimelineHistoryEntry[],
   messages: readonly Message[],
+  options: UnifiedTimelineOptions = {},
 ): UnifiedTimelineItem[] {
   const commandMessages = messages.filter(
     (message) => message.kind === "codex_prompt",
   );
   const claimedMessageIds = new Set<string>();
-  const filteredHistory = history.filter((historyItem) => {
-    const { entry } = keyedHistoryEntry(historyItem);
-    if (entry.role !== "user") return true;
-    const envelope = parseCollabCommandEnvelope(entry.text);
-    const visibleText = envelope?.body ?? sanitizeImportedUserText(entry.text);
-    const exact = commandMessages.find(
-      (message) =>
-        !claimedMessageIds.has(message.id) &&
-        (message.id === entry.id ||
-          (envelope?.commandId !== null &&
-            envelope?.commandId !== undefined &&
-            message.id === envelope.commandId)),
+  const commandMessageByHistoryIdentity = new Map<string, Message>();
+  for (const historyItem of history) {
+    const { key, entry } = keyedHistoryEntry(historyItem);
+    if (entry.role !== "user") continue;
+    const compatible = findMatchingCommandMessage(
+      entry,
+      commandMessages,
+      claimedMessageIds,
     );
-    const compatible =
-      exact ??
-      commandMessages
-        .filter(
-          (message) =>
-            !claimedMessageIds.has(message.id) &&
-            (!envelope || message.senderDisplayName === envelope.member) &&
-            (visibleText === message.body ||
-              visibleText.startsWith(`${message.body}\n`)),
-        )
-        .map((message) => ({
-          message,
-          distance:
-            entry.createdAt === null
-              ? Number.POSITIVE_INFINITY
-              : Math.abs(
-                  Date.parse(entry.createdAt) - Date.parse(message.createdAt),
-                ),
-        }))
-        .filter(({ distance }) => distance <= 120_000)
-        .sort((left, right) => left.distance - right.distance)[0]?.message;
-    if (!compatible) return true;
+    if (!compatible) continue;
     claimedMessageIds.add(compatible.id);
-    return false;
-  });
+    commandMessageByHistoryIdentity.set(key ?? entry.id, compatible);
+  }
 
   const candidates: Array<{
     item: UnifiedTimelineItem;
@@ -233,7 +248,7 @@ export function buildUnifiedTimeline(
     return Number.isFinite(timestamp) ? timestamp : null;
   };
   let order = 0;
-  const importedTimeline = buildImportedTimeline(filteredHistory);
+  const importedTimeline = buildImportedTimeline(history);
   const importedTimestamps = importedTimeline.map((item) => {
     const createdAt =
       item.kind === "message"
@@ -241,6 +256,15 @@ export function buildUnifiedTimeline(
         : item.entries.find((entry) => entry.createdAt)?.createdAt ?? null;
     return parseTimestamp(createdAt);
   });
+  const visibleHistoryStart = options.historyHasOlder
+    ? importedTimestamps.reduce<number | null>(
+        (earliest, timestamp) =>
+          timestamp === null || (earliest !== null && earliest <= timestamp)
+            ? earliest
+            : timestamp,
+        null,
+      )
+    : null;
   let lastImportedTimestamp: number | null = null;
   for (let index = 0; index < importedTimeline.length; index += 1) {
     const item = importedTimeline[index]!;
@@ -281,17 +305,35 @@ export function buildUnifiedTimeline(
       timestamp = lastImportedTimestamp + 1 / 1_000;
     }
     if (timestamp !== null) lastImportedTimestamp = timestamp;
+    const matchedCommand =
+      item.kind === "message" && item.entry.role === "user"
+        ? commandMessageByHistoryIdentity.get(item.key ?? item.entry.id)
+        : undefined;
     candidates.push({
-      item: { kind: "imported", item },
+      item: matchedCommand
+        ? { kind: "shared", message: matchedCommand }
+        : { kind: "imported", item },
       timestamp,
       sourcePriority: 1,
       order: order++,
     });
   }
   for (const message of messages) {
+    if (claimedMessageIds.has(message.id)) continue;
+    const timestamp = parseTimestamp(message.createdAt);
+    const finalized =
+      message.deliveryStatus === "completed" || message.deliveryStatus === "failed";
+    if (
+      finalized &&
+      visibleHistoryStart !== null &&
+      timestamp !== null &&
+      timestamp < visibleHistoryStart
+    ) {
+      continue;
+    }
     candidates.push({
       item: { kind: "shared", message },
-      timestamp: parseTimestamp(message.createdAt),
+      timestamp,
       sourcePriority: 0,
       order: order++,
     });

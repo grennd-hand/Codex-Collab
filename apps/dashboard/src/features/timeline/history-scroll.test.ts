@@ -4,7 +4,7 @@ import {
   historyScrollIntent,
   historyTopLoadDecision,
   restoreHistoryScrollAnchor,
-  shouldResetHistoryToLatest,
+  shouldInitializeHistoryAtLatest,
 } from "./history-scroll.js";
 
 function rect(top: number, bottom = top + 20): DOMRect {
@@ -12,11 +12,13 @@ function rect(top: number, bottom = top + 20): DOMRect {
 }
 
 describe("history scroll anchors", () => {
-  it("returns to the latest message only when a different task opens", () => {
-    expect(shouldResetHistoryToLatest(null, "thread-1")).toBe(true);
-    expect(shouldResetHistoryToLatest("thread-1", "thread-2")).toBe(true);
-    expect(shouldResetHistoryToLatest("thread-1", "thread-1")).toBe(false);
-    expect(shouldResetHistoryToLatest("thread-1", null)).toBe(false);
+  it("positions a new task only after its first timeline content renders", () => {
+    expect(shouldInitializeHistoryAtLatest(null, "thread-1", false, true)).toBe(true);
+    expect(shouldInitializeHistoryAtLatest(null, "thread-1", true, true)).toBe(false);
+    expect(shouldInitializeHistoryAtLatest(null, "thread-1", false, false)).toBe(false);
+    expect(shouldInitializeHistoryAtLatest("thread-1", "thread-1", false, true)).toBe(false);
+    expect(shouldInitializeHistoryAtLatest("thread-1", "thread-2", false, true)).toBe(true);
+    expect(shouldInitializeHistoryAtLatest("thread-1", null, false, true)).toBe(false);
   });
 
   it("loads older records only for a real upward scroll near the top", () => {

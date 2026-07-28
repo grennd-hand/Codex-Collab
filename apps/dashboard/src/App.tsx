@@ -66,7 +66,6 @@ import {
   memberWorkspaceFileAccess,
 } from "./features/workspace/member-file-access.js";
 import { type ActivityItem } from "./features/activity/ActivityPanel.js";
-import { shouldResetHistoryToLatest } from "./features/timeline/history-scroll.js";
 
 export function App() {
   const initialInviteToken = useMemo(inviteTokenFromLocation, []);
@@ -104,7 +103,6 @@ export function App() {
   );
   const messageStreamRef = useRef<HTMLElement>(null);
   const messageStreamPinnedRef = useRef(true);
-  const messageStreamThreadRef = useRef<string | null>(null);
   const chatStreamRef = useRef<HTMLDivElement>(null);
   const composerResetRef = useRef<() => void>(() => undefined);
   const submissionResetRef = useRef<() => void>(() => undefined);
@@ -366,18 +364,6 @@ export function App() {
   }, [themeMode]);
 
   useLayoutEffect(() => {
-    const threadId = workspaceHistoryWindow.threadId;
-    const shouldReset = shouldResetHistoryToLatest(
-      messageStreamThreadRef.current,
-      threadId,
-    );
-    messageStreamThreadRef.current = threadId;
-    if (!shouldReset) return;
-    messageStreamPinnedRef.current = true;
-    setMessageStreamPinned(true);
-  }, [workspaceHistoryWindow.threadId]);
-
-  useLayoutEffect(() => {
     const stream = messageStreamRef.current;
     if (
       stream &&
@@ -430,6 +416,7 @@ export function App() {
   const codexTimeline = buildUnifiedTimeline(
     workspaceHistoryWindow.items,
     currentThreadMessages,
+    { historyHasOlder: workspaceHistoryWindow.hasOlder },
   );
   const hasCodexContent =
     importedHistory.length > 0 || currentThreadMessages.length > 0;

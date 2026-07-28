@@ -450,6 +450,89 @@ describe("buildUnifiedTimeline", () => {
     ]);
   });
 
+  it("keeps matched web commands at their Host history positions", () => {
+    const firstCommand = message(
+      "prompt-1",
+      "codex_prompt",
+      "第一条网页指令",
+      "2026-07-25T00:00:00.000Z",
+    );
+    const secondCommand = message(
+      "prompt-2",
+      "codex_prompt",
+      "第二条网页指令",
+      "2026-07-25T00:02:00.000Z",
+    );
+    const history = [
+      record(
+        "host-user-1",
+        "user",
+        "[Codex Collab command: prompt-1]\n[Codex Collab member: Owner]\n\n第一条网页指令",
+      ),
+      record("host-assistant-1", "assistant", "第一条回复"),
+      record(
+        "host-user-2",
+        "user",
+        "[Codex Collab command: prompt-2]\n[Codex Collab member: Owner]\n\n第二条网页指令",
+      ),
+      record("host-assistant-2", "assistant", "第二条回复"),
+    ];
+
+    expect(buildUnifiedTimeline(history, [firstCommand, secondCommand])).toEqual([
+      { kind: "shared", message: firstCommand },
+      {
+        kind: "imported",
+        item: { kind: "message", entry: history[1] },
+      },
+      { kind: "shared", message: secondCommand },
+      {
+        kind: "imported",
+        item: { kind: "message", entry: history[3] },
+      },
+    ]);
+  });
+
+  it("keeps finalized web commands outside a newer paginated history window", () => {
+    const oldCommand = {
+      ...message(
+        "old-command",
+        "codex_prompt",
+        "较早的网页指令",
+        "2026-07-24T23:00:00.000Z",
+      ),
+      deliveryStatus: "completed" as const,
+      completedAt: "2026-07-24T23:01:00.000Z",
+    };
+    const recent = {
+      ...record("recent-assistant", "assistant", "当前分页中的回复"),
+      createdAt: "2026-07-25T00:00:00.000Z",
+    };
+
+    expect(
+      buildUnifiedTimeline([recent], [oldCommand], { historyHasOlder: true }),
+    ).toEqual([
+      {
+        kind: "imported",
+        item: { kind: "message", entry: recent },
+      },
+    ]);
+    expect(buildUnifiedTimeline([recent], [oldCommand])).toEqual([
+      { kind: "shared", message: oldCommand },
+      {
+        kind: "imported",
+        item: { kind: "message", entry: recent },
+      },
+    ]);
+    const runningCommand = {
+      ...oldCommand,
+      deliveryStatus: "submitted" as const,
+      completedAt: null,
+    };
+    expect(
+      buildUnifiedTimeline([recent], [runningCommand], { historyHasOlder: true }),
+    ).toContainEqual({ kind: "shared", message: runningCommand });
+  });
+
   it("keeps an undated older imported record before its dated successor", () => {
     const undated = record("undated-old", "assistant", "Older without time");
     const dated = {

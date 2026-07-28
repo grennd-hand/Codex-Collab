@@ -23,11 +23,18 @@ export interface HistoryTopLoadDecision {
   trigger: boolean;
 }
 
-export function shouldResetHistoryToLatest(
-  previousThreadId: string | null,
-  nextThreadId: string | null,
+export function shouldInitializeHistoryAtLatest(
+  positionedThreadId: string | null,
+  currentThreadId: string | null,
+  initialLoading: boolean,
+  hasContent: boolean,
 ): boolean {
-  return nextThreadId !== null && nextThreadId !== previousThreadId;
+  return (
+    currentThreadId !== null &&
+    currentThreadId !== positionedThreadId &&
+    !initialLoading &&
+    hasContent
+  );
 }
 
 export function historyScrollIntent(
