@@ -162,17 +162,26 @@ const TERMINAL_ROLLOUT_GRACE_MS = 120_000;
 
 export function isCodexThreadBusy(
   activity: CodexRolloutActivity,
-  turns: ReadonlyArray<{ id: string; status?: CodexTurnStatus }>,
+  turns: ReadonlyArray<{
+    id: string;
+    status?: CodexTurnStatus;
+    startedAt?: number | null;
+  }>,
   nowMs = Date.now(),
 ): boolean {
   if (
     activity.latestObservedTurnId &&
     !activity.openTurnIds.includes(activity.latestObservedTurnId)
   ) {
-    const latestTurn = turns[0];
-    return Boolean(
-      latestTurn?.status === "inProgress" &&
-      latestTurn.id !== activity.latestObservedTurnId,
+    return turns.some(
+      (turn) =>
+        turn.status === "inProgress" &&
+        turn.id !== activity.latestObservedTurnId &&
+        (typeof turn.startedAt === "number" &&
+        Number.isFinite(turn.startedAt) &&
+        activity.latestObservedAtMs !== null
+          ? turn.startedAt * 1_000 > activity.latestObservedAtMs
+          : turn.id > activity.latestObservedTurnId!),
     );
   }
   if (turns.some((turn) => turn.status === "inProgress")) {

@@ -228,6 +228,30 @@ describe("Codex rollout activity", () => {
     ).toBe(true);
   });
 
+  it("ignores an older orphaned inProgress turn after a newer rollout completed", () => {
+    expect(
+      isCodexThreadBusy(
+        {
+          openTurnIds: ["019fa66a-0ef8-7fe1-96c7-ffcb5a8de9a2"],
+          latestObservedTurnId: "019fa67b-df72-7cf1-87bd-1e387f555eed",
+          latestObservedAtMs: Date.parse("2026-07-28T02:33:56.000Z"),
+        },
+        [
+          {
+            id: "019fa66a-0ef8-7fe1-96c7-ffcb5a8de9a2",
+            status: "inProgress",
+            startedAt: Date.parse("2026-07-28T01:49:56.000Z") / 1_000,
+          },
+          {
+            id: "019fa67b-df72-7cf1-87bd-1e387f555eed",
+            status: "completed",
+            startedAt: Date.parse("2026-07-28T02:09:23.000Z") / 1_000,
+          },
+        ],
+      ),
+    ).toBe(false);
+  });
+
   it("keeps a recently writing rollout busy when its persisted turn is terminal", () => {
     const activity = extractCodexRolloutActivity([
       JSON.stringify({

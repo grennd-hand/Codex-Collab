@@ -15,6 +15,7 @@ import {
 import type { ActivityItem } from "../activity/ActivityPanel.js";
 import type { ConnectionState } from "../../app/connection.js";
 import type { SavedCredential } from "../session/session-storage.js";
+import { shouldRefreshRealtimeHistory } from "./realtime-history-refresh.js";
 
 interface RealtimeConnectionOptions {
   session: Session | null;
@@ -183,7 +184,10 @@ export function useRealtimeConnection({
           const includeHistory =
             terminalRuntime ||
             (historyChanged &&
-              Date.now() - workspaceHistoryRequestedAtRef.current >= 15_000);
+              shouldRefreshRealtimeHistory(
+                workspaceHistoryRequestedAtRef.current,
+                Date.now(),
+              ));
           if (includeHistory) {
             workspaceHistoryRequestedAtRef.current = Date.now();
           }
