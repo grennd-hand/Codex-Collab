@@ -10,10 +10,13 @@ import {
   type LocalProfile,
   LocalProfileStore,
 } from "./local-profile.js";
-import type { RelayClient } from "./relay-client.js";
+import { RelayRequestError, type RelayClient } from "./relay-client.js";
 import { DurableRecoveryBlockedError } from "./durable-recovery.js";
 
-type CompletionRelay = Pick<RelayClient, "completeWorkspaceFileOperation">;
+type ReceiptRelay = Pick<
+  RelayClient,
+  "completeWorkspaceFileOperation" | "releaseWorkspaceFileOperationLease"
+>;
 
 const ambiguousExecutionMessage =
   "A confirmed workspace file operation may already have changed local files. " +
@@ -136,6 +139,19 @@ function completionInput(receipt: LocalFileOperationReceipt) {
   return { ...receipt.result, leaseId: receipt.leaseId };
 }
 
+function releaseFailure(error: unknown): never {
+  if (
+    error instanceof RelayRequestError &&
+    (error.status === 404 || error.status === 409)
+  ) {
+    throw new DurableRecoveryBlockedError(
+      "Relay cannot safely release the pending workspace file operation lease",
+      { cause: error },
+    );
+  }
+  throw error;
+}
+
 export class WorkspaceFileOperationJournal {
   constructor(
     private readonly profiles: LocalProfileStore,
@@ -171,7 +187,7 @@ export class WorkspaceFileOperationJournal {
   }
 
   async reconcileBeforeClaim(
-    relay: CompletionRelay,
+    relay: ReceiptRelay,
   ): Promise<WorkspaceFileOperation | null> {
     const current = await this.profiles.read();
     if (!current) {
@@ -186,8 +202,7 @@ export class WorkspaceFileOperationJournal {
       );
     }
     if (receipt.phase === "intent") {
-      await this.transition(receipt, () => null);
-      return null;
+      return this.releaseIntent(relay, receipt);
     }
     if (receipt.phase === "executing") {
       const blocked = await this.transition(receipt, (value) => ({
@@ -222,6 +237,44 @@ export class WorkspaceFileOperationJournal {
     }
     await this.transition(receipt, () => null);
     return operation;
+  }
+
+  async releaseIntent(
+    relay: ReceiptRelay,
+    receipt: LocalFileOperationReceipt,
+    operation?: WorkspaceFileOperationConfirmation,
+  ): Promise<WorkspaceFileOperation> {
+    if (
+      receipt.phase !== "intent" ||
+      (operation !== undefined && !operationIdentityMatches(receipt, operation))
+    ) {
+      throw new DurableRecoveryBlockedError(
+        "Workspace file operation intent no longer matches its confirmed lease",
+      );
+    }
+    let released: WorkspaceFileOperation;
+    try {
+      released = await relay.releaseWorkspaceFileOperationLease(
+        receipt.sessionId,
+        this.profile.memberToken,
+        receipt.operationId,
+        { leaseId: receipt.leaseId },
+      );
+    } catch (error) {
+      releaseFailure(error);
+    }
+    if (
+      released.id !== receipt.operationId ||
+      released.sessionId !== receipt.sessionId ||
+      released.hostGeneration !== receipt.hostGeneration ||
+      released.status !== "queued"
+    ) {
+      throw new DurableRecoveryBlockedError(
+        "Relay returned a mismatched workspace file operation lease release",
+      );
+    }
+    await this.transition(receipt, () => null);
+    return released;
   }
 
   async recordIntent(
@@ -288,18 +341,6 @@ export class WorkspaceFileOperationJournal {
         },
       };
     });
-  }
-
-  async clearIntent(
-    receipt: LocalFileOperationReceipt,
-    operation: WorkspaceFileOperationConfirmation,
-  ): Promise<void> {
-    if (receipt.phase !== "intent" || !operationIdentityMatches(receipt, operation)) {
-      throw new DurableRecoveryBlockedError(
-        "Workspace file operation intent no longer matches its confirmation",
-      );
-    }
-    await this.transition(receipt, () => null);
   }
 
   async markExecuting(

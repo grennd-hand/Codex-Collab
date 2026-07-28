@@ -8,6 +8,7 @@ import type {
 } from "@codex-collab/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FileSandbox } from "./file-sandbox.js";
+import { DurableRecoveryBlockedError } from "./durable-recovery.js";
 import {
   LocalProfileStore,
   type LocalFileOperationResult,
@@ -15,6 +16,7 @@ import {
 } from "./local-profile.js";
 import { WorkspaceFileOperationJournal } from "./workspace-file-operation-receipts.js";
 import { processNextWorkspaceFileOperation } from "./workspace-file-operations.js";
+import { RelayRequestError } from "./relay-client.js";
 
 const originalStateFile = process.env.CODEX_COLLAB_STATE_FILE;
 const temporaryDirectories: string[] = [];
@@ -113,6 +115,27 @@ function terminalOperation(
   };
 }
 
+function queuedOperation(
+  operation: WorkspaceFileOperationConfirmation,
+): WorkspaceFileOperation {
+  const {
+    requestContent: _requestContent,
+    leaseId: _leaseId,
+    leaseExpiresAt: _leaseExpiresAt,
+    ...base
+  } = operation;
+  return {
+    ...base,
+    status: "queued",
+    startedAt: null,
+    resultFileMetadata: null,
+    resultFile: null,
+    errorCode: null,
+    errorMessage: null,
+    completedAt: null,
+  };
+}
+
 function relayFor(
   claim: WorkspaceFileOperationClaim,
   confirmed: WorkspaceFileOperationConfirmation,
@@ -121,6 +144,9 @@ function relayFor(
     claimNextWorkspaceFileOperation: vi.fn().mockResolvedValue(claim),
     confirmWorkspaceFileOperationLease: vi.fn().mockResolvedValue(confirmed),
     completeWorkspaceFileOperation: vi.fn(),
+    releaseWorkspaceFileOperationLease: vi
+      .fn()
+      .mockResolvedValue(queuedOperation(confirmed)),
   };
 }
 
@@ -241,12 +267,34 @@ describe("workspace file operation receipts", () => {
     expect(relay.claimNextWorkspaceFileOperation).not.toHaveBeenCalled();
   });
 
-  it("safely clears a pre-execution intent when room admission closes", async () => {
+  it("releases a confirmed intent before clearing it when room admission closes", async () => {
     const { profile, profiles, sandbox } = await fixture();
     const confirmed = confirmation();
     const relay = relayFor(claimFrom(confirmed), confirmed);
+    const order: string[] = [];
+    relay.claimNextWorkspaceFileOperation.mockImplementation(async () => {
+      order.push("claim");
+      return claimFrom(confirmed);
+    });
+    relay.confirmWorkspaceFileOperationLease.mockImplementation(async () => {
+      order.push("confirm");
+      return confirmed;
+    });
+    const mutate = profiles.mutate.bind(profiles);
+    vi.spyOn(profiles, "mutate").mockImplementation(async (update) => {
+      const updated = await mutate(update);
+      if (updated.fileOperationReceipt?.phase === "intent") order.push("intent");
+      return updated;
+    });
+    relay.releaseWorkspaceFileOperationLease.mockImplementation(async () => {
+      order.push("release");
+      await expect(profiles.read()).resolves.toMatchObject({
+        fileOperationReceipt: { phase: "intent", leaseId: confirmed.leaseId },
+      });
+      return queuedOperation(confirmed);
+    });
     let checks = 0;
-    const admission = { isAllowed: () => ++checks < 4 };
+    const admission = { isAllowed: () => ++checks < 3 };
     const write = vi.spyOn(sandbox, "write");
 
     await expect(
@@ -261,9 +309,114 @@ describe("workspace file operation receipts", () => {
     ).resolves.toBeNull();
 
     expect(relay.confirmWorkspaceFileOperationLease).toHaveBeenCalledTimes(1);
+    expect(relay.releaseWorkspaceFileOperationLease).toHaveBeenCalledWith(
+      profile.sessionId,
+      profile.memberToken,
+      confirmed.id,
+      { leaseId: confirmed.leaseId },
+    );
+    expect(order.slice(0, 4)).toEqual(["claim", "confirm", "intent", "release"]);
     expect(write).not.toHaveBeenCalled();
     expect(relay.completeWorkspaceFileOperation).not.toHaveBeenCalled();
     await expect(profiles.read()).resolves.not.toHaveProperty("fileOperationReceipt");
+  });
+
+  it("releases a recovered intent before a later FIFO claim", async () => {
+    const { profile, profiles, sandbox } = await fixture();
+    const confirmed = confirmation();
+    const claim = claimFrom(confirmed);
+    const journal = new WorkspaceFileOperationJournal(profiles, profile);
+    await journal.recordIntent(claim, confirmed);
+    const relay = relayFor(claim, confirmed);
+    const write = vi.spyOn(sandbox, "write");
+
+    await expect(
+      processNextWorkspaceFileOperation(profile, profiles, relay as never, sandbox),
+    ).resolves.toMatchObject({ id: confirmed.id, status: "queued" });
+    expect(relay.releaseWorkspaceFileOperationLease).toHaveBeenCalledTimes(1);
+    expect(relay.claimNextWorkspaceFileOperation).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
+    await expect(profiles.read()).resolves.not.toHaveProperty("fileOperationReceipt");
+
+    relay.claimNextWorkspaceFileOperation.mockResolvedValueOnce(null);
+    await processNextWorkspaceFileOperation(profile, profiles, relay as never, sandbox);
+    expect(relay.claimNextWorkspaceFileOperation).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains the confirmed intent when admission closes and release retries fail", async () => {
+    const { profile, profiles, sandbox } = await fixture();
+    const confirmed = confirmation();
+    const relay = relayFor(claimFrom(confirmed), confirmed);
+    relay.releaseWorkspaceFileOperationLease.mockRejectedValue(
+      new Error("temporary network failure"),
+    );
+    const write = vi.spyOn(sandbox, "write");
+    let checks = 0;
+    const admission = { isAllowed: () => ++checks < 3 };
+
+    await expect(
+      processNextWorkspaceFileOperation(
+        profile,
+        profiles,
+        relay as never,
+        sandbox,
+        null,
+        admission,
+      ),
+    ).rejects.toThrow(/temporary network failure/i);
+    await expect(
+      processNextWorkspaceFileOperation(profile, profiles, relay as never, sandbox),
+    ).rejects.toThrow(/temporary network failure/i);
+
+    expect(relay.releaseWorkspaceFileOperationLease).toHaveBeenCalledTimes(2);
+    expect(relay.claimNextWorkspaceFileOperation).toHaveBeenCalledTimes(1);
+    expect(relay.confirmWorkspaceFileOperationLease).toHaveBeenCalledTimes(1);
+    expect(write).not.toHaveBeenCalled();
+    await expect(profiles.read()).resolves.toMatchObject({
+      fileOperationReceipt: { phase: "intent", operationId: confirmed.id },
+    });
+  });
+
+  it.each([404, 409])(
+    "fails closed and retains the intent when lease release returns %s",
+    async (status) => {
+      const { profile, profiles, sandbox } = await fixture();
+      const confirmed = confirmation();
+      const journal = new WorkspaceFileOperationJournal(profiles, profile);
+      await journal.recordIntent(claimFrom(confirmed), confirmed);
+      const relay = relayFor(claimFrom(confirmed), confirmed);
+      relay.releaseWorkspaceFileOperationLease.mockRejectedValue(
+        new RelayRequestError(status, "release_failed", "release unavailable"),
+      );
+
+      await expect(
+        processNextWorkspaceFileOperation(profile, profiles, relay as never, sandbox),
+      ).rejects.toBeInstanceOf(DurableRecoveryBlockedError);
+      expect(relay.claimNextWorkspaceFileOperation).not.toHaveBeenCalled();
+      await expect(profiles.read()).resolves.toMatchObject({
+        fileOperationReceipt: { phase: "intent", operationId: confirmed.id },
+      });
+    },
+  );
+
+  it("retains the intent when Relay confirms a mismatched release", async () => {
+    const { profile, profiles, sandbox } = await fixture();
+    const confirmed = confirmation();
+    const journal = new WorkspaceFileOperationJournal(profiles, profile);
+    await journal.recordIntent(claimFrom(confirmed), confirmed);
+    const relay = relayFor(claimFrom(confirmed), confirmed);
+    relay.releaseWorkspaceFileOperationLease.mockResolvedValue({
+      ...queuedOperation(confirmed),
+      hostGeneration: "different-generation",
+    });
+
+    await expect(
+      processNextWorkspaceFileOperation(profile, profiles, relay as never, sandbox),
+    ).rejects.toBeInstanceOf(DurableRecoveryBlockedError);
+    expect(relay.claimNextWorkspaceFileOperation).not.toHaveBeenCalled();
+    await expect(profiles.read()).resolves.toMatchObject({
+      fileOperationReceipt: { phase: "intent", hostGeneration: "generation-1" },
+    });
   });
 
   it.each([

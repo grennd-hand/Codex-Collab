@@ -30,6 +30,7 @@ type FileOperationRelay = Pick<
   | "claimNextWorkspaceFileOperation"
   | "confirmWorkspaceFileOperationLease"
   | "completeWorkspaceFileOperation"
+  | "releaseWorkspaceFileOperationLease"
 >;
 
 function asWorkspaceFile(
@@ -278,7 +279,7 @@ export async function processNextWorkspaceFileOperation(
     profile.sessionId,
     profile.memberToken,
   );
-  if (!operation || !workspaceWorkAllowed(admission)) return null;
+  if (!operation) return null;
   const confirmed = await relay.confirmWorkspaceFileOperationLease(
     profile.sessionId,
     profile.memberToken,
@@ -287,7 +288,7 @@ export async function processNextWorkspaceFileOperation(
   );
   const intent = await journal.recordIntent(operation, confirmed);
   if (!workspaceWorkAllowed(admission)) {
-    await journal.clearIntent(intent, confirmed);
+    await journal.releaseIntent(relay, intent, confirmed);
     return null;
   }
   const executing = await journal.markExecuting(intent, confirmed);
