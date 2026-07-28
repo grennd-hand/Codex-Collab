@@ -15,6 +15,16 @@ import {
   now,
 } from "../storage/session-store-types.js";
 
+interface MessageDeliveryRow {
+  delivery_status: MessageDeliveryStatus;
+  codex_turn_id: string | null;
+  completed_at: string | null;
+}
+
+function isTerminalDeliveryStatus(status: MessageDeliveryStatus): boolean {
+  return status === "completed" || status === "failed";
+}
+
 export class MessageStore extends RoomMemberStore {
   addMessage(
     sessionId: string,
@@ -239,18 +249,69 @@ export class MessageStore extends RoomMemberStore {
     status: MessageDeliveryStatus,
     codexTurnId?: string | null,
   ): Message {
-    const completedAt = status === "completed" || status === "failed" ? now() : null;
-    const result = this.db
-      .prepare(`
-        UPDATE messages
-        SET delivery_status = ?,
-            codex_turn_id = COALESCE(?, codex_turn_id),
-            completed_at = ?
-        WHERE session_id = ? AND id = ? AND kind IN ('codex_prompt', 'codex_stop')
-      `)
-      .run(status, codexTurnId ?? null, completedAt, sessionId, messageId);
-    if (result.changes !== 1) {
-      throw new ProtocolError(404, "message_not_found", "Codex command was not found");
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const current = this.db
+        .prepare(`
+          SELECT delivery_status, codex_turn_id, completed_at
+          FROM messages
+          WHERE session_id = ? AND id = ? AND kind IN ('codex_prompt', 'codex_stop')
+        `)
+        .get(sessionId, messageId) as MessageDeliveryRow | undefined;
+      if (!current) {
+        throw new ProtocolError(404, "message_not_found", "Codex command was not found");
+      }
+      if (
+        current.codex_turn_id &&
+        codexTurnId &&
+        current.codex_turn_id !== codexTurnId
+      ) {
+        throw new ProtocolError(
+          409,
+          "codex_turn_conflict",
+          "The Codex command is already associated with another turn",
+        );
+      }
+
+      const currentIsTerminal = isTerminalDeliveryStatus(current.delivery_status);
+      const nextIsTerminal = isTerminalDeliveryStatus(status);
+      const isReplayAfterTerminal = currentIsTerminal && status === "submitted";
+      const isAllowedTransition =
+        status === current.delivery_status ||
+        isReplayAfterTerminal ||
+        (current.delivery_status === "queued" &&
+          (status === "submitted" || status === "failed")) ||
+        (current.delivery_status === "submitted" && nextIsTerminal);
+      if (!isAllowedTransition) {
+        throw new ProtocolError(
+          409,
+          "message_delivery_conflict",
+          `Cannot change Codex command delivery from ${current.delivery_status} to ${status}`,
+        );
+      }
+
+      const deliveryStatus = isReplayAfterTerminal ? current.delivery_status : status;
+      const completedAt =
+        current.completed_at ?? (nextIsTerminal && !currentIsTerminal ? now() : null);
+      this.db
+        .prepare(`
+          UPDATE messages
+          SET delivery_status = ?,
+              codex_turn_id = COALESCE(codex_turn_id, ?),
+              completed_at = ?
+          WHERE session_id = ? AND id = ?
+        `)
+        .run(
+          deliveryStatus,
+          codexTurnId ?? null,
+          completedAt,
+          sessionId,
+          messageId,
+        );
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
     }
     return this.messageById(sessionId, messageId);
   }
