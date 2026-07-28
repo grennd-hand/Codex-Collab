@@ -140,7 +140,7 @@ export async function handleWorkspaceSyncRoutes(
       );
       broadcast(hostWorkspaceSelectionMatch[1], "workspace.updated", {
         selectedThreadId: workspace.selectedThreadId,
-        syncedAt: null,
+        syncedAt: workspace.syncedAt,
         changedScopes: ["selection"],
       });
       sendJson(response, 200, { workspace });
@@ -155,7 +155,7 @@ export async function handleWorkspaceSyncRoutes(
       );
       broadcast(workspaceSelectionMatch[1], "workspace.updated", {
         selectedThreadId: workspace.selectedThreadId,
-        syncedAt: null,
+        syncedAt: workspace.syncedAt,
         changedScopes: ["selection"],
       });
       sendJson(response, 200, { workspace });
@@ -220,15 +220,17 @@ export async function handleWorkspaceSyncRoutes(
             bearerToken(request),
             input,
           );
-      broadcast(workspaceHistoryMatch[1], "workspace.updated", {
-        selectedThreadId: workspace.selectedThreadId,
-        syncedAt: workspace.syncedAt,
-        historyCount:
-          "historyCount" in workspace
-            ? workspace.historyCount
-            : workspace.history.length,
-        changedScopes: ["history"],
-      });
+      if (workspace.selectedThreadId === input.threadId) {
+        broadcast(workspaceHistoryMatch[1], "workspace.updated", {
+          selectedThreadId: workspace.selectedThreadId,
+          syncedAt: workspace.syncedAt,
+          historyCount:
+            "historyCount" in workspace
+              ? workspace.historyCount
+              : workspace.history.length,
+          changedScopes: ["history"],
+        });
+      }
       sendJson(
         response,
         200,

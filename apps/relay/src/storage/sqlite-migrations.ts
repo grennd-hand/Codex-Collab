@@ -156,6 +156,14 @@ export function migrateSessionStore(db: DatabaseSync): void {
         content TEXT NOT NULL,
         PRIMARY KEY (session_id, path)
       );
+      CREATE TABLE IF NOT EXISTS workspace_thread_histories (
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        thread_id TEXT NOT NULL,
+        history_json TEXT NOT NULL DEFAULT '[]',
+        history_count INTEGER NOT NULL DEFAULT 0,
+        synced_at TEXT NOT NULL,
+        PRIMARY KEY (session_id, thread_id)
+      );
       CREATE TABLE IF NOT EXISTS workspace_directories (
         session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
         path TEXT NOT NULL,
@@ -205,6 +213,8 @@ export function migrateSessionStore(db: DatabaseSync): void {
       CREATE INDEX IF NOT EXISTS account_memberships_session_idx
         ON account_memberships(session_id);
       CREATE INDEX IF NOT EXISTS workspace_files_session_idx ON workspace_files(session_id);
+      CREATE INDEX IF NOT EXISTS workspace_thread_histories_session_idx
+        ON workspace_thread_histories(session_id, synced_at);
       CREATE INDEX IF NOT EXISTS workspace_directories_session_idx
         ON workspace_directories(session_id);
       CREATE INDEX IF NOT EXISTS workspace_file_operations_queue_idx
@@ -267,6 +277,14 @@ export function migrateSessionStore(db: DatabaseSync): void {
     db.exec(
       "UPDATE workspace_state SET history_count = json_array_length(history_json)",
     );
+    db.exec(`
+      INSERT INTO workspace_thread_histories
+        (session_id, thread_id, history_json, history_count, synced_at)
+      SELECT session_id, selected_thread_id, history_json, history_count, synced_at
+      FROM workspace_state
+      WHERE selected_thread_id IS NOT NULL AND synced_at IS NOT NULL
+      ON CONFLICT(session_id, thread_id) DO NOTHING
+    `);
     ensureColumn(db, "workspace_file_operations", "host_generation", "TEXT");
     ensureColumn(db, "workspace_file_operations", "lease_id", "TEXT");
     ensureColumn(db, "workspace_file_operations", "lease_expires_at", "TEXT");
@@ -306,6 +324,11 @@ export function migrateSessionStore(db: DatabaseSync): void {
           .run(repairedAt);
         db.exec(`
           DELETE FROM workspace_files
+          WHERE session_id IN (
+            SELECT session_id FROM workspace_state
+            WHERE host_token_id IS NOT NULL OR host_generation IS NOT NULL
+          );
+          DELETE FROM workspace_thread_histories
           WHERE session_id IN (
             SELECT session_id FROM workspace_state
             WHERE host_token_id IS NOT NULL OR host_generation IS NOT NULL

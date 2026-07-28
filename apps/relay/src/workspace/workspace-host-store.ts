@@ -143,6 +143,9 @@ export class WorkspaceHostStore extends MessageStore {
       this.db
         .prepare("DELETE FROM workspace_directories WHERE session_id = ?")
         .run(pairing.session_id);
+      this.db
+        .prepare("DELETE FROM workspace_thread_histories WHERE session_id = ?")
+        .run(pairing.session_id);
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");

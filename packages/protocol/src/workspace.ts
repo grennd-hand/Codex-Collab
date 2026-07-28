@@ -151,6 +151,7 @@ export interface WorkspaceOverview extends Omit<WorkspaceSummary, "history"> {
 
 export interface WorkspaceSyncState extends Omit<WorkspaceOverview, "files"> {
   fileCount: number;
+  cachedThreadIds?: string[];
 }
 
 export interface WorkspaceHistoryResult {

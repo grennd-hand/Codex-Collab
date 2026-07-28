@@ -15,6 +15,7 @@ import {
 import { LocalProfileStore, type LocalProfile } from "./local-profile.js";
 import { RelayClient } from "./relay-client.js";
 import { processNextWorkspaceFileOperation } from "./workspace-file-operations.js";
+import { cacheNextWorkspaceThreadHistory } from "./workspace-history-backfill.js";
 import { openWorkspaceSandboxes } from "./workspace-roots.js";
 import {
   buildCodexConfigSnapshot,
@@ -319,6 +320,13 @@ export class WorkspaceSyncService {
           runtimeStatus,
         );
       }
+      await cacheNextWorkspaceThreadHistory(
+        profile,
+        workspace,
+        localThreads,
+        this.codex,
+        relay,
+      );
 
       const revision = await readCodexThreadRevision(selectedLocalThread);
       const syncState = {

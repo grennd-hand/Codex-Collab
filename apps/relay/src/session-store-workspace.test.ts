@@ -226,7 +226,7 @@ describe("SessionStore workspace history", () => {
         threadId: "another-thread",
         history: [],
       }),
-    ).toThrowError(/select/i);
+    ).toThrowError(/catalog/i);
   });
 
   it("pages workspace history from newest to oldest with stable opaque cursors", () => {
@@ -326,7 +326,7 @@ describe("SessionStore workspace history", () => {
     ).toThrowError(/cursor/i);
   });
 
-  it("clears stale task history but preserves root-scoped files when selecting another task", () => {
+  it("restores server-cached task history while preserving root-scoped files", () => {
     const store = createStore();
     const created = store.createSession("Switch room", "Owner");
     const pairing = store.createHostPairing(created.session.id, created.memberToken, 10);
@@ -370,6 +370,41 @@ describe("SessionStore workspace history", () => {
     ]);
     expect(switched.directories).toEqual(["src", "src/empty"]);
     expect(switched.syncedAt).toBeNull();
+
+    const backgroundSync = store.publishWorkspaceHistory(
+      created.session.id,
+      host.memberToken,
+      {
+        threadId: "one",
+        history: [
+          {
+            id: "updated",
+            role: "assistant",
+            text: "Cached task history",
+            createdAt: null,
+          },
+        ],
+      },
+    );
+    expect(backgroundSync.selectedThreadId).toBe("two");
+    expect(backgroundSync.history).toEqual([]);
+
+    const restored = store.selectWorkspaceThread(
+      created.session.id,
+      created.memberToken,
+      "one",
+    );
+    expect(restored.history).toEqual([
+      expect.objectContaining({ id: "updated", text: "Cached task history" }),
+    ]);
+    expect(restored.syncedAt).not.toBeNull();
+    expect(restored.files).toEqual([
+      expect.objectContaining({ path: "src/shared.ts" }),
+    ]);
+    expect(
+      store.getWorkspaceSyncState(created.session.id, host.memberToken)
+        .cachedThreadIds,
+    ).toEqual(["one"]);
   });
 
 });

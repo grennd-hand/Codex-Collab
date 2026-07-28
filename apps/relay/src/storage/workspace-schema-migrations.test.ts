@@ -85,4 +85,49 @@ describe("workspace schema migrations", () => {
     ).toMatchObject({ access: "read-only" });
     db.close();
   });
+
+  it("backfills the selected task into the per-task history cache", () => {
+    const db = new DatabaseSync(":memory:");
+    try {
+      migrateSessionStore(db);
+      const createdAt = "2026-07-28T00:00:00.000Z";
+      const history = JSON.stringify([
+        {
+          id: "entry-1",
+          role: "assistant",
+          text: "Already synchronized",
+          createdAt,
+        },
+      ]);
+      db.prepare(
+        `INSERT INTO sessions (id, name, owner_member_id, created_at)
+         VALUES ('session', 'Room', 'owner', ?)`,
+      ).run(createdAt);
+      db.prepare(
+        `INSERT INTO workspace_state (
+          session_id, host_device_label, root_label, catalog_json,
+          selected_thread_id, history_json, synced_at
+        ) VALUES ('session', 'Owner PC', 'Project', '[]', 'thread-1', ?, ?)`,
+      ).run(history, createdAt);
+
+      migrateSessionStore(db);
+
+      expect(
+        db
+          .prepare(`
+            SELECT thread_id, history_json, history_count, synced_at
+            FROM workspace_thread_histories
+            WHERE session_id = 'session'
+          `)
+          .get(),
+      ).toEqual({
+        thread_id: "thread-1",
+        history_json: history,
+        history_count: 1,
+        synced_at: createdAt,
+      });
+    } finally {
+      db.close();
+    }
+  });
 });
