@@ -14,7 +14,10 @@ import type { CodexExecutionPhase } from "../composer/codex-controls.js";
 import type { UnifiedTimelineItem } from "./imported-timeline.js";
 import { shouldShowExecutionStatus } from "../composer/codex-controls.js";
 import { TimelineItemList } from "./TimelineItemList.js";
-import { historyScrollIntent } from "./history-scroll.js";
+import {
+  historyScrollIntent,
+  historyTopLoadDecision,
+} from "./history-scroll.js";
 
 interface CodexTimelineProps {
   streamRef: RefObject<HTMLElement | null>;
@@ -86,9 +89,11 @@ export function CodexTimeline({
   onOpenFile,
 }: CodexTimelineProps) {
   const previousScrollTopRef = useRef(0);
+  const topLoadLatchedRef = useRef(false);
 
   useLayoutEffect(() => {
     previousScrollTopRef.current = streamRef.current?.scrollTop ?? 0;
+    topLoadLatchedRef.current = false;
   }, [history.threadId, streamRef]);
 
   const jumpToLatest = () => {
@@ -114,7 +119,13 @@ export function CodexTimeline({
         );
         previousScrollTopRef.current = stream.scrollTop;
         onPinnedChange(intent.pinned);
-        if (intent.loadOlder) onLoadOlder();
+        const topLoad = historyTopLoadDecision(
+          stream.scrollTop,
+          intent.loadOlder,
+          topLoadLatchedRef.current,
+        );
+        topLoadLatchedRef.current = topLoad.latched;
+        if (topLoad.trigger) onLoadOlder();
       }}
     >
       {initialLoading ? (
@@ -128,7 +139,15 @@ export function CodexTimeline({
               {history.olderLoading ? (
                 <><Spinner size="tiny" /><span>正在加载更早记录…</span></>
               ) : history.hasOlder ? (
-                <Button appearance="subtle" icon={<HistoryRegular />} size="small" onClick={onLoadOlder}>
+                <Button
+                  appearance="subtle"
+                  icon={<HistoryRegular />}
+                  size="small"
+                  onClick={() => {
+                    topLoadLatchedRef.current = true;
+                    onLoadOlder();
+                  }}
+                >
                   查看更早记录
                 </Button>
               ) : null}

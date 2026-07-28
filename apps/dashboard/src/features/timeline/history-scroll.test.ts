@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   captureHistoryScrollAnchor,
   historyScrollIntent,
+  historyTopLoadDecision,
   restoreHistoryScrollAnchor,
 } from "./history-scroll.js";
 
@@ -27,6 +28,22 @@ describe("history scroll anchors", () => {
         true,
       ).loadOlder,
     ).toBe(true);
+  });
+
+  it("loads only once until the user leaves the top threshold", () => {
+    const first = historyTopLoadDecision(0, true, false);
+    expect(first).toEqual({ latched: true, trigger: true });
+    expect(historyTopLoadDecision(0, true, first.latched)).toEqual({
+      latched: true,
+      trigger: false,
+    });
+
+    const reset = historyTopLoadDecision(120, false, first.latched);
+    expect(reset).toEqual({ latched: false, trigger: false });
+    expect(historyTopLoadDecision(0, true, reset.latched)).toEqual({
+      latched: true,
+      trigger: true,
+    });
   });
 
   it("does not auto-load older records while the short timeline is pinned", () => {

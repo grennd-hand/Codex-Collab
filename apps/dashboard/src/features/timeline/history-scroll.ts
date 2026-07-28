@@ -18,6 +18,11 @@ export interface HistoryScrollIntent {
   loadOlder: boolean;
 }
 
+export interface HistoryTopLoadDecision {
+  latched: boolean;
+  trigger: boolean;
+}
+
 export function historyScrollIntent(
   stream: Pick<HTMLElement, "clientHeight" | "scrollHeight" | "scrollTop">,
   previousScrollTop: number,
@@ -36,6 +41,16 @@ export function historyScrollIntent(
       stream.scrollTop < 120 &&
       (stream.scrollTop + 1 < previousScrollTop || stream.scrollTop === 0),
   };
+}
+
+export function historyTopLoadDecision(
+  scrollTop: number,
+  loadOlder: boolean,
+  latched: boolean,
+): HistoryTopLoadDecision {
+  if (scrollTop >= 120) return { latched: false, trigger: false };
+  if (!loadOlder || latched) return { latched, trigger: false };
+  return { latched: true, trigger: true };
 }
 
 export function captureHistoryScrollAnchor(
