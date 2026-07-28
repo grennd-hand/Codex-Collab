@@ -15,18 +15,13 @@ import type {
   MessageKind,
   RealtimeTicketResponse,
   RecoverSessionResponse,
-  WorkspaceFileContent,
   WorkspaceFileAccess,
-  WorkspaceFileOperation,
-  WorkspaceFileOperationClaim,
-  WorkspaceFileOperationConfirmation,
+  WorkspaceFileContent,
   WorkspaceSummary,
   WorkspaceSyncState,
 } from "@codex-collab/protocol";
-import {
-  RelayHttpTransport,
-  RelayRequestError,
-} from "./relay-http-transport.js";
+import { RelayRequestError } from "./relay-http-transport.js";
+import { WorkspaceFileRelayClient } from "./workspace-file-relay-client.js";
 
 export { RelayRequestError } from "./relay-http-transport.js";
 
@@ -44,11 +39,9 @@ function toWorkspaceSyncState(response: WorkspaceSyncResponse): WorkspaceSyncSta
   };
 }
 
-export class RelayClient {
-  private readonly transport: RelayHttpTransport;
-
+export class RelayClient extends WorkspaceFileRelayClient {
   constructor(baseUrl: string) {
-    this.transport = new RelayHttpTransport(baseUrl);
+    super(baseUrl);
   }
 
   async health(): Promise<Record<string, unknown>> {
@@ -274,117 +267,6 @@ export class RelayClient {
     }
   }
 
-  async createWorkspaceFileOperation(
-    sessionId: string,
-    memberToken: string,
-    input:
-      | { kind: "read"; path: string }
-      | { kind: "write"; path: string; content: string; expectedSha256: string },
-  ): Promise<WorkspaceFileOperation> {
-    const result = await this.request<{ operation: WorkspaceFileOperation }>(
-      `/v1/sessions/${encodeURIComponent(sessionId)}/workspace/file-operations`,
-      {
-        method: "POST",
-        headers: { authorization: `Bearer ${memberToken}` },
-        body: JSON.stringify(input),
-      },
-    );
-    return result.operation;
-  }
-
-  async listWorkspaceFileOperations(
-    sessionId: string,
-    memberToken: string,
-    limit = 100,
-  ): Promise<WorkspaceFileOperation[]> {
-    const result = await this.request<{ operations: WorkspaceFileOperation[] }>(
-      `/v1/sessions/${encodeURIComponent(
-        sessionId,
-      )}/workspace/file-operations?limit=${encodeURIComponent(String(limit))}`,
-      { headers: { authorization: `Bearer ${memberToken}` } },
-    );
-    return result.operations;
-  }
-
-  async getWorkspaceFileOperation(
-    sessionId: string,
-    memberToken: string,
-    operationId: string,
-  ): Promise<WorkspaceFileOperation> {
-    const result = await this.request<{ operation: WorkspaceFileOperation }>(
-      `/v1/sessions/${encodeURIComponent(
-        sessionId,
-      )}/workspace/file-operations/${encodeURIComponent(operationId)}`,
-      { headers: { authorization: `Bearer ${memberToken}` } },
-    );
-    return result.operation;
-  }
-
-  async claimNextWorkspaceFileOperation(
-    sessionId: string,
-    memberToken: string,
-  ): Promise<WorkspaceFileOperationClaim | null> {
-    const result = await this.request<{
-      operation: WorkspaceFileOperationClaim | null;
-    }>(
-      `/v1/sessions/${encodeURIComponent(
-        sessionId,
-      )}/workspace/file-operations/claim`,
-      {
-        method: "POST",
-        headers: { authorization: `Bearer ${memberToken}` },
-        body: "{}",
-      },
-    );
-    return result.operation;
-  }
-
-  async completeWorkspaceFileOperation(
-    sessionId: string,
-    memberToken: string,
-    operationId: string,
-    input:
-      | { status: "completed"; leaseId: string; file?: WorkspaceFileContent }
-      | {
-          status: "failed";
-          leaseId: string;
-          errorCode: string;
-          errorMessage: string;
-          file?: WorkspaceFileContent | null;
-        },
-  ): Promise<WorkspaceFileOperation> {
-    const result = await this.request<{ operation: WorkspaceFileOperation }>(
-      `/v1/sessions/${encodeURIComponent(
-        sessionId,
-      )}/workspace/file-operations/${encodeURIComponent(operationId)}/result`,
-      {
-        method: "PATCH",
-        headers: { authorization: `Bearer ${memberToken}` },
-        body: JSON.stringify(input),
-      },
-    );
-    return result.operation;
-  }
-
-  async confirmWorkspaceFileOperationLease(
-    sessionId: string,
-    memberToken: string,
-    operationId: string,
-    leaseId: string,
-  ): Promise<WorkspaceFileOperationConfirmation> {
-    const result = await this.request<{ operation: WorkspaceFileOperationConfirmation }>(
-      `/v1/sessions/${encodeURIComponent(
-        sessionId,
-      )}/workspace/file-operations/${encodeURIComponent(operationId)}/lease-confirmation`,
-      {
-        method: "POST",
-        headers: { authorization: `Bearer ${memberToken}` },
-        body: JSON.stringify({ leaseId }),
-      },
-    );
-    return result.operation;
-  }
-
   async publishWorkspaceCatalog(
     sessionId: string,
     memberToken: string,
@@ -489,10 +371,4 @@ export class RelayClient {
     return toWorkspaceSyncState(result);
   }
 
-  private async request<T = Record<string, unknown>>(
-    path: string,
-    init: RequestInit = {},
-  ): Promise<T> {
-    return this.transport.request<T>(path, init);
-  }
 }

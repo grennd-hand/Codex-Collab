@@ -138,4 +138,27 @@ describe("RelayClient compact workspace synchronization", () => {
       headers: expect.objectContaining({ prefer: "return=minimal" }),
     });
   });
+
+  it("releases only the explicitly identified workspace operation lease", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({ operation: { id: "operation/one", status: "queued" } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new RelayClient("https://relay.example.com").releaseWorkspaceFileOperationLease(
+      "session/one",
+      "host-secret",
+      "operation/one",
+      { leaseId: "lease-one" },
+    );
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      "https://relay.example.com/v1/sessions/session%2Fone/workspace/file-operations/operation%2Fone/lease-release",
+    );
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      method: "POST",
+      headers: expect.objectContaining({ authorization: "Bearer host-secret" }),
+      body: JSON.stringify({ leaseId: "lease-one" }),
+    });
+  });
 });

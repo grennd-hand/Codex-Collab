@@ -127,6 +127,10 @@ export interface WorkspaceFileOperationConfirmation
   requestContent: string | null;
 }
 
+export interface ReleaseWorkspaceFileOperationLeaseRequest {
+  leaseId: string;
+}
+
 export interface WorkspaceFileOperationEvent {
   operationId: string;
   requestedByMemberId: string;

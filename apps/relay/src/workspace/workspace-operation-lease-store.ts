@@ -39,6 +39,18 @@ export class WorkspaceOperationLeaseStore extends WorkspaceFileOperationStore {
         `)
         .run(sessionId, host.generation, staleBefore);
 
+      const inFlight = this.db
+        .prepare(`
+          SELECT 1 AS present FROM workspace_file_operations
+          WHERE session_id = ? AND host_generation = ? AND status = 'processing'
+          LIMIT 1
+        `)
+        .get(sessionId, host.generation) as { present: number } | undefined;
+      if (inFlight) {
+        this.db.exec("COMMIT");
+        return { operation: null, rejected };
+      }
+
       for (;;) {
         const row = this.db
           .prepare(`
@@ -245,6 +257,54 @@ export class WorkspaceOperationLeaseStore extends WorkspaceFileOperationStore {
         leaseExpiresAt: current.lease_expires_at!,
         requestContent: current.request_content,
       };
+    } catch (error) {
+      if (transactionOpen) this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  releaseWorkspaceFileOperationLease(
+    sessionId: string,
+    memberToken: string,
+    operationId: string,
+    leaseId: string,
+  ): WorkspaceFileOperation {
+    this.db.exec("BEGIN IMMEDIATE");
+    let transactionOpen = true;
+    try {
+      const host = this.requireCurrentHost(sessionId, memberToken);
+      const row = this.workspaceFileOperationRowById(sessionId, operationId);
+      if (
+        row.status !== "processing" ||
+        row.host_generation !== host.generation ||
+        row.lease_id !== leaseId
+      ) {
+        throw new ProtocolError(
+          409,
+          "workspace_operation_not_processing",
+          "The file operation is not currently claimed by this lease",
+        );
+      }
+      const released = this.db
+        .prepare(`
+          UPDATE workspace_file_operations
+          SET status = 'queued', started_at = NULL, lease_id = NULL,
+              lease_expires_at = NULL, lease_confirmed_at = NULL
+          WHERE id = ? AND session_id = ? AND host_generation = ?
+            AND status = 'processing' AND lease_id = ?
+        `)
+        .run(operationId, sessionId, host.generation, leaseId);
+      if (released.changes !== 1) {
+        throw new ProtocolError(
+          409,
+          "workspace_operation_not_processing",
+          "The file operation is no longer claimed by this lease",
+        );
+      }
+      const operation = this.workspaceFileOperationById(sessionId, operationId);
+      this.db.exec("COMMIT");
+      transactionOpen = false;
+      return operation;
     } catch (error) {
       if (transactionOpen) this.db.exec("ROLLBACK");
       throw error;

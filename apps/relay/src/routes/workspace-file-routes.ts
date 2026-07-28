@@ -3,6 +3,7 @@ import {
   optionalInteger,
   ProtocolError,
   requiredString,
+  type ReleaseWorkspaceFileOperationLeaseRequest,
   type WorkspaceFileContent,
 } from "@codex-collab/protocol";
 import {
@@ -68,6 +69,33 @@ export async function handleWorkspaceFileRoutes(
         bearerToken(request),
         workspaceFileOperationLeaseMatch[2],
         requiredString(body.leaseId, "leaseId", 100),
+      );
+      sendJson(response, 200, { operation });
+      return true;
+    }
+
+    const workspaceFileOperationReleaseMatch = url.pathname.match(
+      /^\/v1\/sessions\/([^/]+)\/workspace\/file-operations\/([^/]+)\/lease-release$/,
+    );
+    if (
+      method === "POST" &&
+      workspaceFileOperationReleaseMatch?.[1] &&
+      workspaceFileOperationReleaseMatch[2]
+    ) {
+      const body = await readJson(request, 4_096);
+      const input: ReleaseWorkspaceFileOperationLeaseRequest = {
+        leaseId: requiredString(body.leaseId, "leaseId", 100),
+      };
+      const operation = store.releaseWorkspaceFileOperationLease(
+        workspaceFileOperationReleaseMatch[1],
+        bearerToken(request),
+        workspaceFileOperationReleaseMatch[2],
+        input.leaseId,
+      );
+      broadcast(
+        workspaceFileOperationReleaseMatch[1],
+        "file.operation.updated",
+        toWorkspaceFileOperationEvent(operation),
       );
       sendJson(response, 200, { operation });
       return true;
