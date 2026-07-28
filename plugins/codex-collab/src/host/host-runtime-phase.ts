@@ -36,6 +36,13 @@ export class HostRoomLifecycle {
     this.setPhase("unpaired");
   }
 
+  markFailed(error?: unknown): void {
+    if (this.stopped || this.phase === "failed") return;
+    this.transitionVersion += 1;
+    this.setPhase("failed");
+    if (error) this.options.reportError("[codex-collab durable recovery]", error);
+  }
+
   applyRoomStatus(roomStatus: RoomStatus): void {
     if (this.stopped) return;
     const retryFailedOpen = roomStatus === "open" && this.phase === "failed";
@@ -57,12 +64,16 @@ export class HostRoomLifecycle {
           (error: unknown) => ({ error }),
         )
       : null;
-    const pending = this.transition.then(
-      () => this.applyTransition(roomStatus, version, cancellation),
+    const pending = this.transition.then(() =>
+      this.applyTransition(roomStatus, version, cancellation),
     );
     this.transition = pending.catch((error: unknown) => {
-      this.options.reportError("[codex-collab resume]", error);
-      if (!this.stopped && version === this.transitionVersion) this.setPhase("failed");
+      if (this.phase !== "failed") {
+        this.options.reportError("[codex-collab resume]", error);
+      }
+      if (!this.stopped && version === this.transitionVersion) {
+        this.setPhase("failed");
+      }
     });
   }
 

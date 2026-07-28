@@ -19,6 +19,10 @@ export class WorkspaceCommandForwarder {
     private readonly codex: CodexAppServerClient,
   ) {}
 
+  async waitForActiveWork(): Promise<void> {
+    await this.forwarding;
+  }
+
   forward(
     profile: LocalProfile,
     threadId: string,

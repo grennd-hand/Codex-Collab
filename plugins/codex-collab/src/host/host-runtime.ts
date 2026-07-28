@@ -1,31 +1,17 @@
 import type { RealtimeEnvelope } from "@codex-collab/protocol";
-import type { LocalProfile } from "../local-profile.js";
 import { RelayClient, RelayRequestError } from "../relay-client.js";
 import { HostRoomLifecycle, type HostRuntimePhase } from "./host-runtime-phase.js";
 import type { HostWorkAdmission } from "./host-runtime-admission.js";
 import { withHostRuntimeTimeout } from "./host-runtime-timeout.js";
 import { hostRealtimeProfileKey, reportHostRuntimeError, type RealtimeSocket, type RealtimeTicketClient } from "./host-runtime-realtime.js";
+import {
+  isDurableRecoveryBlockedError,
+} from "../durable-recovery.js";
+import type { HostRuntimeOptions } from "./host-runtime-options.js";
+export type { HostRuntimeApplication, HostRuntimeOptions } from "./host-runtime-options.js";
 export type { HostRuntimePhase } from "./host-runtime-phase.js";
 const defaultSyncIntervalMs = 1_000;
 
-export interface HostRuntimeOptions {
-  application: HostRuntimeApplication;
-  syncIntervalMs?: number;
-  createRelayClient?: (relayUrl: string) => RealtimeTicketClient;
-  createRealtimeSocket?: (url: URL) => RealtimeSocket;
-  random?: () => number;
-  reportError?: (scope: string, error: unknown) => void;
-  onPhaseChange?: (phase: HostRuntimePhase) => void;
-  cancelTimeoutMs?: number;
-}
-export interface HostRuntimeApplication {
-  readRuntimeProfile(): Promise<LocalProfile | null>;
-  runBackgroundCycle(admission?: HostWorkAdmission): Promise<void>;
-  reconcileAfterResume?(admission?: HostWorkAdmission): Promise<void>;
-  cancelActiveWork?(): Promise<void>;
-  forwardPendingCommand(admission?: HostWorkAdmission): Promise<string | null>;
-  close(): Promise<void>;
-}
 export class HostRuntime {
   private readonly syncIntervalMs: number;
   private readonly createRelayClient: (relayUrl: string) => RealtimeTicketClient;
@@ -65,6 +51,9 @@ export class HostRuntime {
       reconcileAfterResume: () => this.runResumeReconciliation(),
       reportError: this.reportError,
       ...(options.onPhaseChange ? { onPhaseChange: options.onPhaseChange } : {}),
+    });
+    options.application.setDurableFailureHandler?.((error) => {
+      this.roomLifecycle.markFailed(error);
     });
   }
 
@@ -122,7 +111,7 @@ export class HostRuntime {
       try {
         await this.options.application.runBackgroundCycle(admission);
       } catch (error) {
-        this.reportError("[codex-collab workspace]", error);
+        this.handleWorkError("[codex-collab workspace]", error);
       }
     } while (this.syncRequested && !this.stopping && this.getPhase() === "active");
   }
@@ -134,7 +123,7 @@ export class HostRuntime {
       try {
         await this.options.application.forwardPendingCommand(this.admissionFor("active"));
       } catch (error) {
-        this.reportError("[codex-collab command]", error);
+        this.handleWorkError("[codex-collab command]", error);
       } finally {
         void this.runSync(true);
       }
@@ -150,7 +139,10 @@ export class HostRuntime {
     const work = [this.activeSync, this.activeForward].filter(
       (pending): pending is Promise<void> => pending !== null,
     );
-    await Promise.all(work);
+    await Promise.all([
+      ...work,
+      this.options.application.waitForActiveWork?.() ?? Promise.resolve(),
+    ]);
   }
 
   private async runResumeReconciliation(): Promise<void> {
@@ -168,6 +160,14 @@ export class HostRuntime {
 
   private admissionFor(phase: HostRuntimePhase): HostWorkAdmission {
     return { isAllowed: () => !this.stopping && this.getPhase() === phase };
+  }
+
+  private handleWorkError(scope: string, error: unknown): void {
+    if (isDurableRecoveryBlockedError(error)) {
+      this.roomLifecycle.markFailed(error);
+      return;
+    }
+    this.reportError(scope, error);
   }
 
   private closeRealtimeConnection(): void {

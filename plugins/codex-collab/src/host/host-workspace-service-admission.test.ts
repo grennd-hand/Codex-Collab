@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { CodexAppServerClient } from "../app-server-client.js";
+import { recoverCommandReceipt } from "../command-outbox.js";
+import { DurableRecoveryBlockedError } from "../durable-recovery.js";
 import type { LocalProfile } from "../local-profile.js";
 import type { RelayClient } from "../relay-client.js";
 import type { WorkspaceSyncService } from "../workspace-sync-service.js";
@@ -10,6 +12,38 @@ import type { HostProfileContext } from "./host-profile-context.js";
 import { HostWorkspaceService } from "./host-workspace-service.js";
 
 describe("HostWorkspaceService runtime admission", () => {
+  it("does not manually forward a prompt while file recovery is blocked", async () => {
+    const profile: LocalProfile = {
+      relayUrl: "https://relay.example/",
+      sessionId: "session-1",
+      memberId: "owner-1",
+      displayName: "Owner",
+      role: "owner",
+      memberToken: "host-token",
+      projectRoot: "C:\\project",
+      threadId: "thread-1",
+    };
+    const relay = { listMessages: vi.fn() } as unknown as RelayClient;
+    const context = {
+      current: vi.fn().mockResolvedValue({ profile, relay }),
+    } as unknown as HostProfileContext;
+    const workspaceSync = {
+      reconcileDurableReceipts: vi.fn().mockRejectedValue(
+        new DurableRecoveryBlockedError("ambiguous file execution"),
+      ),
+    } as unknown as WorkspaceSyncService;
+    const service = new HostWorkspaceService(
+      context,
+      {} as CodexAppServerClient,
+      workspaceSync,
+    );
+
+    await expect(
+      service.callTool("collab_forward_prompt", { messageId: "message-1" }),
+    ).rejects.toBeInstanceOf(DurableRecoveryBlockedError);
+    expect(relay.listMessages).not.toHaveBeenCalled();
+  });
+
   it("does not manually submit after the room closes during attachment loading", async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), "codex-collab-admission-"));
     try {
@@ -67,7 +101,9 @@ describe("HostWorkspaceService runtime admission", () => {
       const service = new HostWorkspaceService(
         context,
         codex,
-        {} as WorkspaceSyncService,
+        {
+          reconcileDurableReceipts: vi.fn().mockResolvedValue(null),
+        } as unknown as WorkspaceSyncService,
       );
       let allowed = true;
 
@@ -145,7 +181,11 @@ describe("HostWorkspaceService runtime admission", () => {
         stopPeerPrompt: vi.fn(),
         listThreads: vi.fn(),
       } as unknown as CodexAppServerClient;
-      const service = new HostWorkspaceService(context, codex, {} as WorkspaceSyncService);
+      const service = new HostWorkspaceService(context, codex, {
+        reconcileDurableReceipts: vi.fn().mockImplementation(() =>
+          recoverCommandReceipt(profile, relay, codex, profiles)
+        ),
+      } as unknown as WorkspaceSyncService);
 
       await expect(
         service.callTool("collab_forward_prompt", { messageId: message.id }),

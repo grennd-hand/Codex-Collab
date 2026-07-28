@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { LocalProfile } from "../local-profile.js";
+import { DurableRecoveryBlockedError } from "../durable-recovery.js";
 import { HostRuntime, type HostRuntimeOptions } from "./host-runtime.js";
 
 class FakeRealtimeSocket {
@@ -449,6 +450,81 @@ describe("HostRuntime", () => {
     await vi.waitFor(() => expect(runtime.getPhase()).toBe("active"));
     expect(reconcileAfterResume).toHaveBeenCalledTimes(2);
     await runtime.stop();
+  });
+
+  it("fails closed when durable reconciliation is permanently blocked", async () => {
+    const socket = new FakeRealtimeSocket();
+    const runBackgroundCycle = vi.fn().mockResolvedValue(undefined);
+    const runtime = new HostRuntime({
+      application: {
+        readRuntimeProfile: vi.fn().mockResolvedValue(ownerProfile),
+        runBackgroundCycle,
+        reconcileAfterResume: vi.fn().mockRejectedValue(
+          new DurableRecoveryBlockedError("ambiguous durable receipt"),
+        ),
+        forwardPendingCommand: vi.fn().mockResolvedValue(null),
+        close: vi.fn().mockResolvedValue(undefined),
+      },
+      syncIntervalMs: 60_000,
+      createRelayClient: () => ({
+        createRealtimeTicket: vi.fn().mockResolvedValue({ ticket: "ticket-1" }),
+      }),
+      createRealtimeSocket: () => socket,
+      reportError: vi.fn(),
+    });
+
+    await runtime.start();
+    socket.emit("message", {
+      data: JSON.stringify({
+        type: "ready",
+        sessionId: "session-1",
+        payload: { session: { roomStatus: "open" } },
+      }),
+    });
+
+    await vi.waitFor(() => expect(runtime.getPhase()).toBe("failed"));
+    socket.emit("message", {
+      data: JSON.stringify({
+        type: "file.operation.updated",
+        sessionId: "session-1",
+        payload: {},
+      }),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(runBackgroundCycle).not.toHaveBeenCalled();
+    await runtime.stop();
+  });
+
+  it("fails globally when a background durable gate becomes blocked", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const fixture = createFixture();
+    await fixture.runtime.start();
+    fixture.emitReady("open");
+    await vi.waitFor(() => expect(fixture.runtime.getPhase()).toBe("active"));
+    fixture.processPendingFileOperations.mockRejectedValueOnce(
+      new DurableRecoveryBlockedError("ambiguous file execution"),
+    );
+
+    fixture.socket.emit("message", {
+      data: JSON.stringify({
+        type: "file.operation.updated",
+        sessionId: "session-1",
+        payload: {},
+      }),
+    });
+
+    await vi.waitFor(() => expect(fixture.runtime.getPhase()).toBe("failed"));
+    const forwards = fixture.forwardPendingCommand.mock.calls.length;
+    fixture.socket.emit("message", {
+      data: JSON.stringify({
+        type: "message.created",
+        sessionId: "session-1",
+        payload: {},
+      }),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(fixture.forwardPendingCommand).toHaveBeenCalledTimes(forwards);
+    await fixture.runtime.stop();
   });
 
   it.each(["close", "error"] as const)(

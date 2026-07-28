@@ -3,7 +3,6 @@ import { basename } from "node:path";
 import type { CodexAppServerClient } from "../app-server-client.js";
 import {
   deliverCodexCommand,
-  recoverCommandReceipt,
 } from "../command-outbox.js";
 import type { LocalProfile } from "../local-profile.js";
 import { RelayClient } from "../relay-client.js";
@@ -160,11 +159,8 @@ export class HostWorkspaceService {
     if (profile.role !== "owner") throw new Error("Only the owner host can forward prompts");
     if (!profile.threadId) throw new Error("Bind a Codex thread first");
     const messageId = stringArgument(args, "messageId")!;
-    const recovered = await recoverCommandReceipt(
-      profile,
-      relay,
-      this.codex,
-      this.context.profiles,
+    const recovered = await this.workspaceSync.reconcileDurableReceipts(
+      admission ? { admission } : {},
     );
     if (recovered && recovered.messageId !== messageId) {
       throw new Error(

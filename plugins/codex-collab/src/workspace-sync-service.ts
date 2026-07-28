@@ -32,6 +32,8 @@ import {
   hasInFlightCodexCommand,
   reconcileCodexCommandStatuses,
 } from "./codex-command-sync.js";
+import type { CommandDelivery } from "./command-outbox.js";
+import { DurableReceiptReconciler } from "./durable-receipt-reconciler.js";
 import { WorkspaceCommandForwarder } from "./workspace-command-forwarder.js";
 import {
   runAdmittedBatch,
@@ -116,12 +118,27 @@ export class WorkspaceSyncService {
   private workspaceDigest: string | null = null;
   private filesDirty = false;
   private processingFileOperations: Promise<number> | null = null;
+  private readonly durableReceipts: DurableReceiptReconciler;
 
   constructor(
     private readonly profiles: LocalProfileStore,
     private readonly codex: CodexAppServerClient,
   ) {
     this.commandForwarder = new WorkspaceCommandForwarder(profiles, codex);
+    this.durableReceipts = new DurableReceiptReconciler(
+      profiles,
+      codex,
+      () => Promise.all([
+        this.processingFileOperations ?? Promise.resolve(),
+        this.commandForwarder.waitForActiveWork(),
+      ]).then(() => undefined),
+    );
+  }
+
+  async reconcileDurableReceipts(
+    options: { admission?: WorkspaceSyncAdmission } = {},
+  ): Promise<CommandDelivery | null> {
+    return this.durableReceipts.reconcile(options.admission);
   }
 
   async forwardPendingCommand(options: { admission?: WorkspaceSyncAdmission } = {}): Promise<string | null> {

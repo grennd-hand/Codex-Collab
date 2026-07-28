@@ -12,6 +12,7 @@ import type {
   LocalProfileStore,
 } from "./local-profile.js";
 import type { RelayClient } from "./relay-client.js";
+import { DurableRecoveryBlockedError } from "./durable-recovery.js";
 
 export interface CommandAdmission {
   isAllowed(): boolean;
@@ -33,8 +34,13 @@ type CommandCodex = Pick<
   "submitPeerPrompt" | "stopPeerPrompt"
 > & Partial<Pick<CodexAppServerClient, "findPeerPromptTurnIds">>;
 
-export class CommandOutboxBlockedError extends Error {
+export class CommandOutboxBlockedError extends DurableRecoveryBlockedError {
   readonly code = "command_outbox_blocked";
+
+  constructor(message: string) {
+    super(message);
+    this.name = "CommandOutboxBlockedError";
+  }
 }
 
 function assertSameProfile(current: LocalProfile, expected: LocalProfile): void {

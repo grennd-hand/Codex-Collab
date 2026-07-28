@@ -11,6 +11,7 @@ import {
   LocalProfileStore,
 } from "./local-profile.js";
 import type { RelayClient } from "./relay-client.js";
+import { DurableRecoveryBlockedError } from "./durable-recovery.js";
 
 type CompletionRelay = Pick<RelayClient, "completeWorkspaceFileOperation">;
 
@@ -128,7 +129,9 @@ function receiptsMatch(
 
 function completionInput(receipt: LocalFileOperationReceipt) {
   if (receipt.phase !== "result" || !receipt.result) {
-    throw new Error("Workspace file operation result receipt is incomplete");
+    throw new DurableRecoveryBlockedError(
+      "Workspace file operation result receipt is incomplete",
+    );
   }
   return { ...receipt.result, leaseId: receipt.leaseId };
 }
@@ -141,7 +144,7 @@ export class WorkspaceFileOperationJournal {
 
   private assertCurrentProfile(current: LocalProfile): void {
     if (!profileIdentityMatches(current, this.profile)) {
-      throw new Error(
+      throw new DurableRecoveryBlockedError(
         "Workspace file operation recovery is blocked because the local profile or shared root changed",
       );
     }
@@ -155,7 +158,9 @@ export class WorkspaceFileOperationJournal {
     await this.profiles.mutate((current) => {
       this.assertCurrentProfile(current);
       if (!receiptsMatch(current.fileOperationReceipt, expected)) {
-        throw new Error("Workspace file operation receipt changed unexpectedly");
+        throw new DurableRecoveryBlockedError(
+          "Workspace file operation receipt changed unexpectedly",
+        );
       }
       next = update(expected);
       return next
@@ -176,7 +181,7 @@ export class WorkspaceFileOperationJournal {
     const receipt = current.fileOperationReceipt;
     if (!receipt) return null;
     if (!receiptProfileMatches(receipt, current)) {
-      throw new Error(
+      throw new DurableRecoveryBlockedError(
         "Workspace file operation recovery is blocked because its profile or shared root no longer matches",
       );
     }
@@ -191,10 +196,14 @@ export class WorkspaceFileOperationJournal {
         diagnostic: ambiguousExecutionMessage,
         updatedAt: new Date().toISOString(),
       }));
-      throw new Error(blocked?.diagnostic ?? ambiguousExecutionMessage);
+      throw new DurableRecoveryBlockedError(
+        blocked?.diagnostic ?? ambiguousExecutionMessage,
+      );
     }
     if (receipt.phase === "blocked") {
-      throw new Error(receipt.diagnostic ?? ambiguousExecutionMessage);
+      throw new DurableRecoveryBlockedError(
+        receipt.diagnostic ?? ambiguousExecutionMessage,
+      );
     }
     const operation = await relay.completeWorkspaceFileOperation(
       receipt.sessionId,
@@ -207,7 +216,9 @@ export class WorkspaceFileOperationJournal {
       operation.hostGeneration !== receipt.hostGeneration ||
       operation.status !== receipt.result?.status
     ) {
-      throw new Error("Relay returned a mismatched workspace file operation receipt");
+      throw new DurableRecoveryBlockedError(
+        "Relay returned a mismatched workspace file operation receipt",
+      );
     }
     await this.transition(receipt, () => null);
     return operation;
@@ -223,14 +234,17 @@ export class WorkspaceFileOperationJournal {
         throw new Error("Workspace file operation confirmation belongs to another profile");
       }
     } catch (error) {
-      await this.recordBlockedClaim(claim, (error as Error).message);
-      throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      await this.recordBlockedClaim(claim, message);
+      throw new DurableRecoveryBlockedError(message, { cause: error });
     }
     const receipt = receiptFromConfirmation(this.profile, confirmed);
     await this.profiles.mutate((current) => {
       this.assertCurrentProfile(current);
       if (current.fileOperationReceipt) {
-        throw new Error("A workspace file operation receipt is already pending");
+        throw new DurableRecoveryBlockedError(
+          "A workspace file operation receipt is already pending",
+        );
       }
       return { ...current, fileOperationReceipt: receipt };
     });
@@ -245,7 +259,9 @@ export class WorkspaceFileOperationJournal {
     await this.profiles.mutate((current) => {
       this.assertCurrentProfile(current);
       if (current.fileOperationReceipt) {
-        throw new Error("A workspace file operation receipt is already pending");
+        throw new DurableRecoveryBlockedError(
+          "A workspace file operation receipt is already pending",
+        );
       }
       return {
         ...current,
@@ -279,7 +295,9 @@ export class WorkspaceFileOperationJournal {
     operation: WorkspaceFileOperationConfirmation,
   ): Promise<void> {
     if (receipt.phase !== "intent" || !operationIdentityMatches(receipt, operation)) {
-      throw new Error("Workspace file operation intent no longer matches its confirmation");
+      throw new DurableRecoveryBlockedError(
+        "Workspace file operation intent no longer matches its confirmation",
+      );
     }
     await this.transition(receipt, () => null);
   }
@@ -289,7 +307,9 @@ export class WorkspaceFileOperationJournal {
     operation: WorkspaceFileOperationConfirmation,
   ): Promise<LocalFileOperationReceipt> {
     if (receipt.phase !== "intent" || !operationIdentityMatches(receipt, operation)) {
-      throw new Error("Workspace file operation intent no longer matches its confirmation");
+      throw new DurableRecoveryBlockedError(
+        "Workspace file operation intent no longer matches its confirmation",
+      );
     }
     return (await this.transition(receipt, (value) => ({
       ...value,
@@ -304,7 +324,9 @@ export class WorkspaceFileOperationJournal {
     result: LocalFileOperationResult,
   ): Promise<LocalFileOperationReceipt> {
     if (receipt.phase !== "executing" || !operationIdentityMatches(receipt, operation)) {
-      throw new Error("Workspace file operation execution receipt no longer matches");
+      throw new DurableRecoveryBlockedError(
+        "Workspace file operation execution receipt no longer matches",
+      );
     }
     return (await this.transition(receipt, (value) => ({
       ...value,

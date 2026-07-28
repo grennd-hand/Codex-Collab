@@ -5,12 +5,15 @@ import { HostProfileContext } from "./host-profile-context.js";
 import { HostSessionService, isSessionToolName } from "./host-session-service.js";
 import { hostToolArguments } from "./host-tool-arguments.js";
 import { HostWorkspaceService } from "./host-workspace-service.js";
-import { hostWorkAllowed, type HostWorkAdmission } from "./host-runtime-admission.js";
+import type { HostWorkAdmission } from "./host-runtime-admission.js";
+import type { DurableRecoveryBlockedError } from "../durable-recovery.js";
+import { HostApplicationWork } from "./host-application-work.js";
 
 export class HostApplication {
   private readonly context: HostProfileContext;
   private readonly sessions: HostSessionService;
   private readonly workspace: HostWorkspaceService;
+  private readonly work: HostApplicationWork;
 
   constructor(
     private readonly profiles = new LocalProfileStore(),
@@ -20,6 +23,7 @@ export class HostApplication {
     this.context = new HostProfileContext(profiles);
     this.sessions = new HostSessionService(this.context);
     this.workspace = new HostWorkspaceService(this.context, codex, workspaceSync);
+    this.work = new HostApplicationWork(workspaceSync);
   }
 
   async callTool(
@@ -28,8 +32,24 @@ export class HostApplication {
     admission?: HostWorkAdmission,
   ): Promise<unknown> {
     const args = hostToolArguments(rawArguments);
-    if (isSessionToolName(name)) return this.sessions.callTool(name, args);
-    return this.workspace.callTool(name, args, admission);
+    if (isSessionToolName(name)) {
+      return this.work.runSessionTool(name, () => this.sessions.callTool(name, args));
+    }
+    return this.work.runWorkspaceTool(
+      name,
+      admission,
+      () => this.workspace.callTool(name, args, admission),
+    );
+  }
+
+  setDurableFailureHandler(
+    handler: (error: DurableRecoveryBlockedError) => void,
+  ): void {
+    this.work.setFailureHandler(handler);
+  }
+
+  async waitForActiveWork(): Promise<void> {
+    await this.work.waitForActiveWork();
   }
 
   async readRuntimeProfile(): Promise<LocalProfile | null> {
@@ -37,22 +57,15 @@ export class HostApplication {
   }
 
   async runBackgroundCycle(admission?: HostWorkAdmission): Promise<void> {
-    await this.workspaceSync.processPendingFileOperations(
-      admission ? { admission } : {},
-    );
-    if (!hostWorkAllowed(admission)) return;
-    await this.workspaceSync.sync(false, admission ? { admission } : {});
+    await this.work.runBackgroundCycle(admission);
   }
 
   async reconcileAfterResume(admission?: HostWorkAdmission): Promise<void> {
-    await this.workspaceSync.sync(true, {
-      allowNewWork: false,
-      ...(admission ? { admission } : {}),
-    });
+    await this.work.reconcileAfterResume(admission);
   }
 
   async forwardPendingCommand(admission?: HostWorkAdmission): Promise<string | null> {
-    return this.workspaceSync.forwardPendingCommand(admission ? { admission } : {});
+    return this.work.forwardPendingCommand(admission);
   }
 
   async cancelActiveWork(): Promise<void> {
@@ -64,4 +77,5 @@ export class HostApplication {
   async close(): Promise<void> {
     await this.codex.close();
   }
+
 }

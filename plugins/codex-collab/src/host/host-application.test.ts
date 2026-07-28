@@ -18,6 +18,7 @@ function createApplication() {
     close: vi.fn().mockResolvedValue(undefined),
   } as unknown as CodexAppServerClient;
   const workspaceSync = {
+    reconcileDurableReceipts: vi.fn().mockResolvedValue(null),
     processPendingFileOperations: vi.fn().mockResolvedValue(0),
     sync: vi.fn().mockResolvedValue({}),
     forwardPendingCommand: vi.fn().mockResolvedValue("message-1"),
