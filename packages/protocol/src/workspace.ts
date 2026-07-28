@@ -19,13 +19,38 @@ export type CodexFileChangeKind =
 
 export type CodexFileChangeLifecycle = "running" | "completed" | "failed";
 
+export type CodexFileChangeActorType = "codex" | "owner" | "member" | "host";
+
+export interface CodexFileChangeActor {
+  type: CodexFileChangeActorType;
+  id?: string;
+  displayName?: string;
+}
+
+export interface CodexFileChangeRange {
+  startLine: number;
+  startColumn?: number;
+  endLine: number;
+  endColumn?: number;
+}
+
+export interface CodexFileChangeDiff {
+  format: "unified";
+  text: string;
+  truncated: boolean;
+}
+
+export const MAX_CODEX_FILE_CHANGE_DIFF_LENGTH = 64_000;
+
 /**
- * A safe file-activity summary imported from Codex. Diff bodies are deliberately
- * excluded; browser file access still resolves against the approved workspace snapshot.
+ * A safe file-activity summary imported from Codex. Optional diff text is admitted only
+ * after Relay validation and never replaces approved-root workspace access checks.
  */
 export interface CodexFileChange {
   operationId: string;
   taskId?: string;
+  actor?: CodexFileChangeActor;
+  timestamp?: string;
   path: string;
   previousPath?: string | null;
   kind: CodexFileChangeKind;
@@ -34,6 +59,11 @@ export interface CodexFileChange {
   deletions: number;
   line?: number;
   column?: number;
+  range?: CodexFileChangeRange;
+  beforeSha256?: string | null;
+  afterSha256?: string | null;
+  /** String input is accepted for legacy publishers; Relay responses normalize it to an object. */
+  diff?: CodexFileChangeDiff | string;
 }
 
 export interface CodexRecordEntry {
@@ -133,6 +163,7 @@ export interface UpdateMemberWorkspaceFileAccessRequest {
 
 export interface WorkspaceSummary {
   hostConnected: boolean;
+  hostGeneration?: string | null;
   hostDeviceLabel: string | null;
   rootLabel: string | null;
   threads: CodexThreadCatalogEntry[];

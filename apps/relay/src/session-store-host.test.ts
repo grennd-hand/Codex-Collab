@@ -319,6 +319,7 @@ describe("SessionStore migration and host boundaries", () => {
       created.memberToken,
       "codex_prompt",
       "Run",
+      { expectedWorkspaceThreadId: "thread-host" },
     );
     expect(() =>
       store.updateMessageDeliveryStatus(

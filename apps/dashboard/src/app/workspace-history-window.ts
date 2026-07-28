@@ -7,6 +7,7 @@ import type {
 export interface WorkspaceHistoryWindow {
   sessionId: string | null;
   threadId: string | null;
+  hostGeneration: string | null;
   items: WorkspaceHistoryPageItem[];
   totalCount: number;
   hasOlder: boolean;
@@ -21,10 +22,12 @@ export function createWorkspaceHistoryWindow(
   sessionId: string | null,
   threadId: string | null,
   initialLoading = false,
+  hostGeneration: string | null = null,
 ): WorkspaceHistoryWindow {
   return {
     sessionId,
     threadId,
+    hostGeneration,
     items: [],
     totalCount: 0,
     hasOlder: false,
@@ -40,9 +43,19 @@ export function beginLatestHistoryLoad(
   current: WorkspaceHistoryWindow,
   sessionId: string,
   threadId: string | null,
+  hostGeneration: string | null,
 ): WorkspaceHistoryWindow {
-  if (current.sessionId !== sessionId || current.threadId !== threadId) {
-    return createWorkspaceHistoryWindow(sessionId, threadId, Boolean(threadId));
+  if (
+    current.sessionId !== sessionId ||
+    current.threadId !== threadId ||
+    current.hostGeneration !== hostGeneration
+  ) {
+    return createWorkspaceHistoryWindow(
+      sessionId,
+      threadId,
+      Boolean(threadId),
+      hostGeneration,
+    );
   }
   return {
     ...current,
@@ -55,9 +68,14 @@ export function beginLatestHistoryLoad(
 export function reconcileLatestHistoryPage(
   current: WorkspaceHistoryWindow,
   sessionId: string,
+  hostGeneration: string | null,
   page: WorkspaceHistoryPage,
 ): WorkspaceHistoryWindow {
-  if (current.sessionId !== sessionId || current.threadId !== page.selectedThreadId) {
+  if (
+    current.sessionId !== sessionId ||
+    current.threadId !== page.selectedThreadId ||
+    current.hostGeneration !== hostGeneration
+  ) {
     return current;
   }
 
@@ -101,11 +119,13 @@ export function beginOlderHistoryLoad(
 export function prependOlderHistoryPage(
   current: WorkspaceHistoryWindow,
   sessionId: string,
+  hostGeneration: string | null,
   requestedCursor: string,
   page: WorkspaceHistoryPage,
 ): WorkspaceHistoryWindow {
   if (
     current.sessionId !== sessionId ||
+    current.hostGeneration !== hostGeneration ||
     current.threadId !== page.selectedThreadId ||
     current.olderCursor !== requestedCursor
   ) {

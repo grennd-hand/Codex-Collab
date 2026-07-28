@@ -21,6 +21,25 @@ export interface MessageAttachmentInput {
   dataBase64: string;
 }
 
+export type CreateMessageRequest =
+  | {
+      kind?: "chat";
+      body: string;
+      attachments?: MessageAttachmentInput[];
+    }
+  | {
+      kind: "codex_prompt";
+      body: string;
+      attachments?: MessageAttachmentInput[];
+      codexOptions?: CodexPromptOptions;
+      /** The task selected when the composer was submitted. */
+      expectedWorkspaceThreadId: string;
+    }
+  | {
+      kind: "codex_stop";
+      body: string;
+    };
+
 export const MAX_MESSAGE_ATTACHMENT_COUNT = 8;
 export const MAX_MESSAGE_ATTACHMENT_SIZE = 4_000_000;
 export const MAX_MESSAGE_ATTACHMENT_TOTAL_SIZE = 6_000_000;

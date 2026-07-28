@@ -2,9 +2,6 @@ import type { OnMount } from "@monaco-editor/react";
 import {
   Badge,
   Button,
-  MessageBar,
-  MessageBarBody,
-  MessageBarTitle,
 } from "@fluentui/react-components";
 import {
   CheckmarkCircleRegular,
@@ -12,13 +9,17 @@ import {
   DocumentRegular,
   LockClosedRegular,
   SaveRegular,
-  WarningRegular,
 } from "@fluentui/react-icons";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { EditorTabState } from "./ide-tab-state.js";
 import { fileName } from "./ide-tab-state.js";
 import type { IdeOpenFileRequest } from "./types.js";
 import { IdeEditorStage } from "./IdeEditorStage.js";
+import { IdeEditorNotices } from "./IdeEditorNotices.js";
+import {
+  monacoModelScope,
+  retainMonacoModel,
+} from "./monaco-model-registry.js";
 
 interface IdeEditorPaneProps {
   tabs: EditorTabState[];
@@ -30,11 +31,14 @@ interface IdeEditorPaneProps {
   activeReadOnlyReason: string;
   language: string;
   themeMode: "light" | "dark";
+  taskUiScope: string;
+  workspaceDataScope: string;
   navigationTarget?: IdeOpenFileRequest | null;
   onActivateTab: (path: string) => void;
   onCloseTab: (path: string) => void;
   onSaveTab: (path: string) => void;
   onRetryFile: (path: string) => void;
+  onReloadFile: (path: string) => void;
   onUseRemoteVersion: () => void;
   onKeepLocalDraft: () => void;
   onUpdateValue: (path: string, value: string) => void;
@@ -50,16 +54,20 @@ export function IdeEditorPane({
   activeReadOnlyReason,
   language,
   themeMode,
+  taskUiScope,
+  workspaceDataScope,
   navigationTarget = null,
   onActivateTab,
   onCloseTab,
   onSaveTab,
   onRetryFile,
+  onReloadFile,
   onUseRemoteVersion,
   onKeepLocalDraft,
   onUpdateValue,
 }: IdeEditorPaneProps) {
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
+  const cursorSubscriptionRef = useRef<{ dispose(): void } | null>(null);
   const handledNavigationRef = useRef<number | null>(null);
   const [editorMounted, setEditorMounted] = useState(false);
   const [cursorPosition, setCursorPosition] = useState({ line: 1, column: 1 });
@@ -77,21 +85,34 @@ export function IdeEditorPane({
     }
     const line = Math.max(1, Math.trunc(navigationTarget.line ?? 1));
     const column = Math.max(1, Math.trunc(navigationTarget.column ?? 1));
-    editor.setPosition({ lineNumber: line, column });
-    editor.revealPositionInCenter({ lineNumber: line, column });
+    const endLine = Math.max(line, Math.trunc(navigationTarget.endLine ?? line));
+    const defaultEndColumn = endLine === line ? column : 1;
+    const endColumn = Math.max(
+      defaultEndColumn,
+      Math.trunc(navigationTarget.endColumn ?? defaultEndColumn),
+    );
+    const range = {
+      startLineNumber: line,
+      startColumn: column,
+      endLineNumber: endLine,
+      endColumn,
+    };
+    editor.setSelection(range);
+    editor.revealRangeInCenter(range);
     editor.focus();
     handledNavigationRef.current = navigationTarget.requestId;
   }, [activePath, activeTab?.status, navigationTarget]);
 
   const handleEditorMount: OnMount = useCallback(
     (editor) => {
+      cursorSubscriptionRef.current?.dispose();
       editorRef.current = editor;
       setEditorMounted(true);
       setCursorPosition({
         line: editor.getPosition()?.lineNumber ?? 1,
         column: editor.getPosition()?.column ?? 1,
       });
-      editor.onDidChangeCursorPosition((event) =>
+      cursorSubscriptionRef.current = editor.onDidChangeCursorPosition((event) =>
         setCursorPosition({
           line: event.position.lineNumber,
           column: event.position.column,
@@ -99,6 +120,7 @@ export function IdeEditorPane({
       );
       editor.layout();
       window.requestAnimationFrame(() => {
+        if (editorRef.current !== editor) return;
         editor.layout();
         revealNavigationTarget();
       });
@@ -106,12 +128,25 @@ export function IdeEditorPane({
     [revealNavigationTarget],
   );
 
+  const handleEditorUnmount = useCallback(
+    (editor: Parameters<OnMount>[0]) => {
+      if (editorRef.current !== editor) return;
+      cursorSubscriptionRef.current?.dispose();
+      cursorSubscriptionRef.current = null;
+      editorRef.current = null;
+      setEditorMounted(false);
+    },
+    [],
+  );
+
   useEffect(() => {
     if (!editorMounted) return;
     const editor = editorRef.current;
     const node = editor?.getContainerDomNode();
     if (!editor || !node || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => editor.layout());
+    const observer = new ResizeObserver(() => {
+      if (editorRef.current === editor) editor.layout();
+    });
     observer.observe(node.parentElement ?? node);
     return () => observer.disconnect();
   }, [editorMounted]);
@@ -119,6 +154,15 @@ export function IdeEditorPane({
   useEffect(() => {
     revealNavigationTarget();
   }, [revealNavigationTarget]);
+  useEffect(() => {
+    if (!editorMounted) return;
+    retainMonacoModel(
+      workspaceDataScope,
+      taskUiScope,
+      monacoModelScope(workspaceDataScope, taskUiScope),
+      editorRef.current?.getModel() ?? null,
+    );
+  }, [activePath, editorMounted, taskUiScope, workspaceDataScope]);
 
   return (
     <main className="ide-editor-pane">
@@ -182,39 +226,16 @@ export function IdeEditorPane({
         </div>
       </div>
 
-      <div className="ide-notices">
-        {activeFileReadOnly ? (
-          <div className="ide-readonly-notice">
-            <LockClosedRegular aria-hidden="true" />
-            <span>{activeReadOnlyReason}</span>
-          </div>
-        ) : null}
-
-        {activeTab?.saveError ? (
-          <MessageBar intent="error" className="ide-messagebar">
-            <MessageBarBody>
-              <MessageBarTitle>保存失败</MessageBarTitle>
-              {activeTab.saveError}
-            </MessageBarBody>
-          </MessageBar>
-        ) : null}
-
-        {activeTab?.conflict ? (
-          <div className="ide-conflict-bar" role="alert">
-            <WarningRegular aria-hidden="true" />
-            <div>
-              <strong>检测到版本冲突</strong>
-              <span>{activeTab.conflict.message}</span>
-            </div>
-            <Button size="small" appearance="secondary" onClick={onUseRemoteVersion}>
-              使用主机版本
-            </Button>
-            <Button size="small" appearance="primary" onClick={onKeepLocalDraft}>
-              保留草稿并重新保存
-            </Button>
-          </div>
-        ) : null}
-      </div>
+      <IdeEditorNotices
+        activeDirty={activeDirty}
+        activeFileReadOnly={activeFileReadOnly}
+        activePath={activePath}
+        activeReadOnlyReason={activeReadOnlyReason}
+        activeTab={activeTab}
+        onKeepLocalDraft={onKeepLocalDraft}
+        onReloadFile={onReloadFile}
+        onUseRemoteVersion={onUseRemoteVersion}
+      />
 
       <IdeEditorStage
         activeTab={activeTab}
@@ -222,7 +243,10 @@ export function IdeEditorPane({
         activeReadOnlyReason={activeReadOnlyReason}
         language={language}
         themeMode={themeMode}
+        taskUiScope={taskUiScope}
+        workspaceDataScope={workspaceDataScope}
         onEditorMount={handleEditorMount}
+        onEditorUnmount={handleEditorUnmount}
         onRetryFile={onRetryFile}
         onUpdateValue={onUpdateValue}
       />
@@ -234,6 +258,10 @@ export function IdeEditorPane({
             <span>Ln {cursorPosition.line}, Col {cursorPosition.column}</span>
             <span>SHA {activeTab.sha256.slice(0, 10)}</span>
             {activeTab.saving ? <span>等待主机保存</span> : null}
+            {activeTab.remoteState === "stale" ? <span>远端已更新</span> : null}
+            {activeTab.remoteState === "deleted-remotely" ? (
+              <span>远端已删除</span>
+            ) : null}
             {activeTab.savedNotice ? (
               <span className="ide-saved-status">
                 <CheckmarkCircleRegular aria-hidden="true" /> 已保存

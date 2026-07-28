@@ -28,6 +28,8 @@ export default function IdeWorkspace({
   onRefresh,
   openFileRequest = null,
   storageScope = "workspace",
+  workspaceDataScope = storageScope,
+  taskUiScope = storageScope,
   embedded = false,
   editorExpanded = true,
   onEditorExpandedChange,
@@ -45,6 +47,8 @@ export default function IdeWorkspace({
     openFileRequest,
     readOnly,
     storageScope,
+    taskUiScope,
+    workspaceDataScope,
   });
   const {
     activePath,
@@ -73,8 +77,11 @@ export default function IdeWorkspace({
     activeTab?.status === "ready" && activeTab.value !== activeTab.savedValue,
   );
   const activeConfigReadOnly = activePath?.startsWith(".codex/") ?? false;
-  const activeFileReadOnly = readOnly || activeConfigReadOnly;
-  const activeReadOnlyReason = activeConfigReadOnly
+  const activeDeletedRemotely = activeTab?.remoteState === "deleted-remotely";
+  const activeFileReadOnly = readOnly || activeConfigReadOnly || activeDeletedRemotely;
+  const activeReadOnlyReason = activeDeletedRemotely
+    ? "文件已在主机上删除。本地草稿会保留，但不能覆盖已删除的路径。"
+    : activeConfigReadOnly
     ? ".codex 配置是单独的只读共享范围，项目文件写权限不会开放此目录。"
     : readOnlyReason ?? "当前成员只有项目文件只读权限。";
   const forceExpanded = query.trim().length > 0;
@@ -122,11 +129,14 @@ export default function IdeWorkspace({
       activeReadOnlyReason={activeReadOnlyReason}
       language={language}
       themeMode={themeMode}
+      taskUiScope={taskUiScope}
+      workspaceDataScope={workspaceDataScope}
       navigationTarget={openFileRequest}
       onActivateTab={setActivePath}
       onCloseTab={closeTab}
       onSaveTab={(path) => void saveTab(path)}
       onRetryFile={(path) => void loadFile(path)}
+      onReloadFile={(path) => void loadFile(path)}
       onUseRemoteVersion={useRemoteVersion}
       onKeepLocalDraft={keepLocalDraft}
       onUpdateValue={(path, value) =>
@@ -182,7 +192,7 @@ export default function IdeWorkspace({
             separatorLabel="调整资源管理器和代码编辑器宽度"
             primaryLabel="文件资源管理器"
             secondaryLabel="代码编辑器"
-            storageKey={`codex-collab:ide:explorer-width:${storageScope}`}
+            storageKey={`codex-collab:ide:explorer-width:${taskUiScope}`}
           />
         ) : (
           explorerPane

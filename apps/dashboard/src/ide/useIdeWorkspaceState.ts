@@ -9,10 +9,11 @@ import {
   createReadyTab,
   fileName,
   messageFromError,
-  type EditorTabState,
 } from "./ide-tab-state.js";
 import type { IdeSaveResult, IdeWorkspaceProps } from "./types.js";
 import type { IdeTreeSelection } from "./ide-create-entry.js";
+import { useIdeScopedState } from "./useIdeScopedState.js";
+import { canReloadStaleTab } from "./ide-task-state.js";
 
 type IdeWorkspaceStateOptions = Pick<
   IdeWorkspaceProps,
@@ -27,6 +28,8 @@ type IdeWorkspaceStateOptions = Pick<
   | "openFileRequest"
   | "readOnly"
   | "storageScope"
+  | "taskUiScope"
+  | "workspaceDataScope"
 >;
 
 export function useIdeWorkspaceState({
@@ -41,6 +44,8 @@ export function useIdeWorkspaceState({
   openFileRequest = null,
   readOnly,
   storageScope = "workspace",
+  taskUiScope = storageScope,
+  workspaceDataScope = storageScope,
 }: IdeWorkspaceStateOptions) {
   const tree = useMemo(
     () => buildFileTree(files, directories),
@@ -49,61 +54,25 @@ export function useIdeWorkspaceState({
   const [query, setQuery] = useState("");
   const visibleTree = useMemo(() => filterFileTree(tree, query), [query, tree]);
   const allDirectories = useMemo(() => collectDirectoryPaths(tree), [tree]);
-  const expansionStorageKey = `codex-collab:ide:expanded:${storageScope}`;
-  const [expandedDirectories, setExpandedDirectories] = useState<Set<string>>(
-    () => {
-      try {
-        if (typeof window === "undefined") return new Set();
-        const stored = window.localStorage.getItem(expansionStorageKey);
-        const parsed = stored ? (JSON.parse(stored) as unknown) : [];
-        return new Set(
-          Array.isArray(parsed)
-            ? parsed.filter((item): item is string => typeof item === "string")
-            : [],
-        );
-      } catch {
-        return new Set();
-      }
-    },
-  );
-  const [tabs, setTabs] = useState<EditorTabState[]>([]);
-  const tabsRef = useRef<EditorTabState[]>([]);
+  const {
+    activePath,
+    expandedDirectories,
+    setActivePath,
+    setExpandedDirectories,
+    setTabs,
+    tabs,
+    tabsRef,
+    updateTab,
+  } = useIdeScopedState({
+    allDirectories,
+    files,
+    taskUiScope,
+    workspaceDataScope,
+  });
   const loadingPathsRef = useRef(new Map<string, Promise<void>>());
   const handledOpenRequestRef = useRef<number | null>(null);
   const shellRef = useRef<HTMLElement>(null);
-  const [activePath, setActivePath] = useState<string | null>(null);
   const [mobileExplorerOpen, setMobileExplorerOpen] = useState(false);
-
-  useEffect(() => {
-    setExpandedDirectories((current) => {
-      const next = new Set([...current].filter((path) => allDirectories.has(path)));
-      return next.size === current.size ? current : next;
-    });
-  }, [allDirectories]);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(
-        expansionStorageKey,
-        JSON.stringify([...expandedDirectories]),
-      );
-    } catch {
-      // Local layout preferences are optional.
-    }
-  }, [expandedDirectories, expansionStorageKey]);
-
-  const updateTab = useCallback(
-    (path: string, update: (tab: EditorTabState) => EditorTabState) => {
-      setTabs((current) => {
-        const next = current.map((tab) =>
-          tab.path === path ? update(tab) : tab,
-        );
-        tabsRef.current = next;
-        return next;
-      });
-    },
-    [],
-  );
 
   const loadFile = useCallback(
     async (path: string) => {
@@ -117,7 +86,7 @@ export function useIdeWorkspaceState({
         .map((_part, index, parts) => parts.slice(0, index + 1).join("/"));
       setExpandedDirectories((current) => new Set([...current, ...ancestorPaths]));
       const existing = tabsRef.current.find((tab) => tab.path === path);
-      if (existing && existing.status !== "error") return;
+      if (existing?.status === "ready" && !canReloadStaleTab(existing)) return;
       const inFlight = loadingPathsRef.current.get(path);
       if (inFlight) return inFlight;
 
@@ -145,6 +114,8 @@ export function useIdeWorkspaceState({
             error: null,
             saveError: null,
             conflict: null,
+            remoteState: "current",
+            remoteSha256: document.sha256,
           }));
         } catch (caught) {
           updateTab(path, (tab) => ({
@@ -274,7 +245,8 @@ export function useIdeWorkspaceState({
         tab.value === tab.savedValue ||
         readOnly ||
         path.startsWith(".codex/") ||
-        tab.conflict
+        tab.conflict ||
+        tab.remoteState === "deleted-remotely"
       ) {
         return;
       }
@@ -311,6 +283,8 @@ export function useIdeWorkspaceState({
           sha256: result.file.sha256,
           savedNotice: true,
           conflict: null,
+          remoteState: "current",
+          remoteSha256: result.file.sha256,
         }));
       } catch (caught) {
         updateTab(path, (current) => ({
@@ -360,6 +334,8 @@ export function useIdeWorkspaceState({
       sha256: tab.conflict?.remote.sha256 ?? tab.sha256,
       conflict: null,
       saveError: null,
+      remoteState: "current",
+      remoteSha256: tab.conflict?.remote.sha256 ?? tab.remoteSha256,
     }));
   };
 
@@ -376,6 +352,8 @@ export function useIdeWorkspaceState({
         conflict: null,
         saveError: null,
         savedNotice: false,
+        remoteState: "current",
+        remoteSha256: remote.sha256,
       };
     });
   };

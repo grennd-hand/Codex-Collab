@@ -19,6 +19,8 @@ import type {
 import { HeaderIdentity } from "./HeaderIdentity.js";
 import { PanelVisibilityControls } from "./PanelVisibilityControls.js";
 import type { ThemeMode } from "./theme.js";
+import type { HostStatusV1 } from "../../shared/runtime/index.js";
+import { HostStatusBadge } from "./HostStatusBadge.js";
 
 export interface AppHeaderProps {
   member: Member | null;
@@ -33,6 +35,7 @@ export interface AppHeaderProps {
     label: string;
     color: "success" | "warning" | "danger" | "informative";
   };
+  hostStatus: HostStatusV1 | null;
   collaborationPanelVisible: boolean;
   directoryPanelVisible: boolean;
   onSelectThread: (threadId: string) => void;
@@ -55,6 +58,7 @@ export function AppHeader({
   themeMode,
   hasSession,
   connectionStatus,
+  hostStatus,
   collaborationPanelVisible,
   directoryPanelVisible,
   onSelectThread,
@@ -165,6 +169,7 @@ export function AppHeader({
             onClick={onResetSession}
           />
         ) : null}
+        <HostStatusBadge status={hostStatus} />
         <Badge
           appearance="tint"
           aria-label={connectionStatus.label}

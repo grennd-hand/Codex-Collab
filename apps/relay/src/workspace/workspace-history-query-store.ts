@@ -94,6 +94,7 @@ export class WorkspaceHistoryQueryStore extends WorkspaceThreadHistoryStore {
     if (!state?.host_token_id || !state.host_generation) {
       return {
         hostConnected: false,
+        hostGeneration: null,
         hostDeviceLabel: null,
         rootLabel: null,
         threads: [],
@@ -117,6 +118,7 @@ export class WorkspaceHistoryQueryStore extends WorkspaceThreadHistoryStore {
       .all(sessionId) as unknown as WorkspaceFileMetadataRow[];
     return {
       hostConnected: true,
+      hostGeneration: state.host_generation,
       hostDeviceLabel: state.host_device_label,
       rootLabel: state.root_label,
       threads: includeThreadCatalog ? fullCatalog : [],

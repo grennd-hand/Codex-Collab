@@ -56,7 +56,7 @@
 }
 
 .ide-file-changes-totals,
-.ide-file-change-details {
+.ide-file-change-stats {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -180,12 +180,55 @@
 }
 
 .ide-file-change-details {
-  min-height: 28px;
   margin: 1px 9px 4px 32px;
-  padding: 0 9px;
   border: 1px solid var(--colorNeutralStroke2);
   border-radius: 4px;
   background: var(--colorNeutralBackground1);
+  overflow: hidden;
+}
+
+.ide-file-change-stats {
+  min-height: 28px;
+  padding: 0 9px;
+}
+
+.ide-unified-diff {
+  border-top: 1px solid var(--colorNeutralStroke2);
+  background: var(--colorNeutralBackground3);
+}
+
+.ide-unified-diff pre {
+  max-height: 240px;
+  margin: 0;
+  padding: 7px 9px;
+  overflow: auto;
+  font: 11px/17px "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  white-space: pre;
+}
+
+.ide-unified-diff code {
+  display: block;
+}
+
+.ide-unified-diff [data-diff-line="addition"] {
+  color: var(--ide-change-added);
+  background: color-mix(in srgb, var(--ide-change-added) 10%, transparent);
+}
+
+.ide-unified-diff [data-diff-line="deletion"] {
+  color: var(--ide-change-deleted);
+  background: color-mix(in srgb, var(--ide-change-deleted) 10%, transparent);
+}
+
+.ide-unified-diff [data-diff-line="hunk"] {
+  color: var(--ide-change-modified);
+}
+
+.ide-unified-diff small {
+  display: block;
+  padding: 5px 9px;
+  border-top: 1px solid var(--colorNeutralStroke2);
+  color: var(--colorNeutralForeground3);
 }
 
 .ide-file-change-kind-label {

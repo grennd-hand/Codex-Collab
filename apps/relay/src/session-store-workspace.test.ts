@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
+import { ProtocolError } from "@codex-collab/protocol";
 import { createStore } from "./session-store-test-support.js";
 
 describe("SessionStore workspace history", () => {
@@ -7,8 +8,14 @@ describe("SessionStore workspace history", () => {
     const store = createStore();
     const created = store.createSession("Task room", "Owner");
     expect(() =>
-      store.addMessage(created.session.id, created.memberToken, "codex_prompt", "No task"),
-    ).toThrowError(/select/i);
+      store.addMessage(
+        created.session.id,
+        created.memberToken,
+        "codex_prompt",
+        "No task",
+        { expectedWorkspaceThreadId: "thread-missing" },
+      ),
+    ).toThrowError(/changed/i);
     const pairing = store.createHostPairing(created.session.id, created.memberToken, 10);
     const host = store.claimHostPairing(pairing.pairingToken, "Owner PC", "Project");
     store.publishWorkspaceCatalog(created.session.id, host.memberToken, {
@@ -25,6 +32,7 @@ describe("SessionStore workspace history", () => {
       created.memberToken,
       "codex_prompt",
       "First task",
+      { expectedWorkspaceThreadId: "thread-one" },
     );
     store.selectWorkspaceThread(created.session.id, created.memberToken, "thread-two");
     const second = store.addMessage(
@@ -35,6 +43,52 @@ describe("SessionStore workspace history", () => {
     );
     expect(first.workspaceThreadId).toBe("thread-one");
     expect(second.workspaceThreadId).toBe("thread-two");
+  });
+
+  it("rejects missing and stale prompt task preconditions without storing a message", () => {
+    const store = createStore();
+    const created = store.createSession("Task precondition", "Owner");
+    const pairing = store.createHostPairing(created.session.id, created.memberToken, 10);
+    const host = store.claimHostPairing(pairing.pairingToken, "Owner PC", "Project");
+    store.publishWorkspaceCatalog(created.session.id, host.memberToken, {
+      deviceLabel: "Owner PC",
+      rootLabel: "Project",
+      threads: [
+        { id: "thread-one", name: "One", preview: "", updatedAt: null },
+        { id: "thread-two", name: "Two", preview: "", updatedAt: null },
+      ],
+    });
+    store.selectWorkspaceThread(created.session.id, created.memberToken, "thread-one");
+
+    let missingError: unknown;
+    try {
+      store.addMessage(created.session.id, created.memberToken, "codex_prompt", "Missing");
+    } catch (error) {
+      missingError = error;
+    }
+    expect(missingError).toMatchObject<Partial<ProtocolError>>({
+      statusCode: 400,
+      code: "invalid_request",
+    });
+
+    store.selectWorkspaceThread(created.session.id, created.memberToken, "thread-two");
+    let staleError: unknown;
+    try {
+      store.addMessage(
+        created.session.id,
+        created.memberToken,
+        "codex_prompt",
+        "Stale task",
+        { expectedWorkspaceThreadId: "thread-one" },
+      );
+    } catch (error) {
+      staleError = error;
+    }
+    expect(staleError).toMatchObject<Partial<ProtocolError>>({
+      statusCode: 409,
+      code: "stale_workspace_thread",
+    });
+    expect(store.listMessages(created.session.id, created.memberToken)).toEqual([]);
   });
 
   it("imports an owner-selected Codex task and exposes it only to approved members", () => {
@@ -141,6 +195,7 @@ describe("SessionStore workspace history", () => {
       created.memberToken,
     );
     expect(ownerOverview.historyCount).toBe(1);
+    expect(ownerOverview.hostGeneration).toEqual(expect.any(String));
     expect(ownerOverview.files[0]).not.toHaveProperty("content");
     expect(ownerOverview.threads).toHaveLength(1);
     expect(ownerOverview).not.toHaveProperty("history");

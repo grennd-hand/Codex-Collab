@@ -9,10 +9,12 @@ import { copyText } from "../../shared/clipboard.js";
 import {
   inviteLinkForCurrentOrigin,
   type SavedCredential,
+  updateCredential,
 } from "./session-storage.js";
 
 type InviteControllerOptions = {
   authHeaders: (includeJson?: boolean) => HeadersInit;
+  credential: SavedCredential | null;
   member: Member | null;
   onError: (caught: unknown) => void;
   pushActivity: (
@@ -24,11 +26,11 @@ type InviteControllerOptions = {
   saveCredential: (credential: SavedCredential) => void;
   session: Session | null;
   setError: (message: string | null) => void;
-  token: string | null;
 };
 
 export function useInviteController({
   authHeaders,
+  credential,
   member,
   onError,
   pushActivity,
@@ -36,7 +38,6 @@ export function useInviteController({
   saveCredential,
   session,
   setError,
-  token,
 }: InviteControllerOptions) {
   const [open, setOpen] = useState(false);
   const [link, setLink] = useState("");
@@ -74,7 +75,7 @@ export function useInviteController({
   };
 
   const updateRoomStatus = async (nextOpen: boolean) => {
-    if (!session || !member || !token || member.role !== "owner") return;
+    if (!session || !member || !credential || member.role !== "owner") return;
     setRoomStatusUpdating(true);
     try {
       const result = await requestJson<{ session: Session }>(
@@ -85,7 +86,7 @@ export function useInviteController({
           body: JSON.stringify({ roomStatus: nextOpen ? "open" : "closed" }),
         },
       );
-      saveCredential({ session: result.session, member, token });
+      saveCredential(updateCredential(credential, result.session, member));
       if (!nextOpen) setOpen(false);
       setError(null);
     } catch (caught) {

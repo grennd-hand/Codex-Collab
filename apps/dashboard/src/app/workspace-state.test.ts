@@ -4,6 +4,7 @@ import { mergeWorkspaceHistory, mergeWorkspaceOverview } from "./workspace-state
 
 const overview: WorkspaceOverview = {
   hostConnected: true,
+  hostGeneration: "generation-1",
   hostDeviceLabel: "Owner PC",
   rootLabel: "Project",
   threads: [],
@@ -30,6 +31,15 @@ describe("compact workspace state", () => {
       mergeWorkspaceOverview(current, {
         ...overview,
         selectedThreadId: "thread-2",
+      }).history,
+    ).toEqual([]);
+  });
+
+  it("drops history when the Host generation changes for the same task id", () => {
+    expect(
+      mergeWorkspaceOverview(current, {
+        ...overview,
+        hostGeneration: "generation-2",
       }).history,
     ).toEqual([]);
   });

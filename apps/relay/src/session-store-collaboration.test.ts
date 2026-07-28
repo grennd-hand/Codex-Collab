@@ -124,6 +124,7 @@ describe("SessionStore collaboration and messages", () => {
       joined.memberToken,
       "codex_prompt",
       "Run the tests",
+      { expectedWorkspaceThreadId: "thread-1" },
     );
     expect(message.senderDisplayName).toBe("Guest");
     expect(store.listMessages(created.session.id, created.memberToken)).toEqual([message]);
@@ -163,6 +164,7 @@ describe("SessionStore collaboration and messages", () => {
       "codex_prompt",
       "Keep this history",
       {
+        expectedWorkspaceThreadId: "thread-1",
         attachments: [
           {
             name: "kept.txt",
@@ -198,6 +200,7 @@ describe("SessionStore collaboration and messages", () => {
         "codex_prompt",
         "blocked prompt",
         {
+          expectedWorkspaceThreadId: "thread-1",
           attachments: [
             {
               name: "blocked.txt",
@@ -280,6 +283,7 @@ describe("SessionStore collaboration and messages", () => {
       "codex_prompt",
       "Review the attachment",
       {
+        expectedWorkspaceThreadId: "thread-1",
         attachments: [
           {
             name: "notes.txt",

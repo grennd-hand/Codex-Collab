@@ -12,6 +12,7 @@ import type {
   MessageAttachment,
   MessageAttachmentInput,
 } from "@codex-collab/protocol";
+import { getDashboardRuntime } from "../../shared/runtime/index.js";
 import {
   MAX_MESSAGE_ATTACHMENT_COUNT,
   MAX_MESSAGE_ATTACHMENT_SIZE,
@@ -146,19 +147,14 @@ async function fetchMessageAttachment(
   token: string,
   signal?: AbortSignal,
 ): Promise<Blob> {
-  const response = await fetch(
-    `/v1/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(
-      messageId,
-    )}/attachments/${encodeURIComponent(attachmentId)}`,
-    {
-      headers: { authorization: `Bearer ${token}` },
-      signal,
-    },
-  );
-  if (!response.ok) {
-    throw new Error(`附件读取失败（HTTP ${response.status}）`);
-  }
-  return response.blob();
+  const runtime = getDashboardRuntime();
+  return runtime.downloadMessageAttachment({
+    sessionId,
+    messageId,
+    attachmentId,
+    authorization: runtime.kind === "browser" ? token : undefined,
+    signal,
+  });
 }
 
 export function PeerChatAttachment(props: {

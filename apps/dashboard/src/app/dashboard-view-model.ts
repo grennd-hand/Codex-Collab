@@ -24,6 +24,7 @@ import type { useWorkspaceConnectionController } from "../features/workspace/use
 import type { useWorkspaceFileController } from "../features/workspace/useWorkspaceFileController.js";
 import type { useWorkspaceHistoryController } from "../features/workspace/useWorkspaceHistoryController.js";
 import type { Message } from "@codex-collab/protocol";
+import type { HostStatusV1 } from "../shared/runtime/index.js";
 
 export type DashboardViewModel = {
   activities: ActivityItem[];
@@ -45,6 +46,7 @@ export type DashboardViewModel = {
   hasCodexContent: boolean;
   hasRunningExecutionEntry: boolean;
   hiddenUnassignedMessageCount: number;
+  hostStatus: HostStatusV1 | null;
   identityForMember: (memberId: string) => MemberIdentity;
   initialInviteToken: string;
   invite: ReturnType<typeof useInviteController>;

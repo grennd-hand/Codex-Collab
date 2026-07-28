@@ -34,10 +34,12 @@ describe("workspace history window", () => {
       createWorkspaceHistoryWindow(null, null),
       "session-1",
       "thread-1",
+      "generation-1",
     );
     const result = reconcileLatestHistoryPage(
       loading,
       "session-1",
+      "generation-1",
       page(["61", "62"], {
         totalCount: 62,
         hasOlder: true,
@@ -57,8 +59,10 @@ describe("workspace history window", () => {
         createWorkspaceHistoryWindow(null, null),
         "session-1",
         "thread-1",
+        "generation-1",
       ),
       "session-1",
+      "generation-1",
       page(["same:2", "new"], {
         totalCount: 3,
         hasOlder: true,
@@ -69,6 +73,7 @@ describe("workspace history window", () => {
     const result = prependOlderHistoryPage(
       loading,
       "session-1",
+      "generation-1",
       "before-same-2",
       page(["same:1"], { totalCount: 3 }),
     );
@@ -83,7 +88,12 @@ describe("workspace history window", () => {
 
   it("reconciles a changed latest page while retaining the loaded older prefix", () => {
     const current = {
-      ...createWorkspaceHistoryWindow("session-1", "thread-1"),
+      ...createWorkspaceHistoryWindow(
+        "session-1",
+        "thread-1",
+        false,
+        "generation-1",
+      ),
       items: page(["old", "running", "tail"]).items,
       totalCount: 3,
       olderCursor: "before-old",
@@ -99,7 +109,12 @@ describe("workspace history window", () => {
         createdAt: null,
       },
     };
-    const result = reconcileLatestHistoryPage(current, "session-1", updatedPage);
+    const result = reconcileLatestHistoryPage(
+      current,
+      "session-1",
+      "generation-1",
+      updatedPage,
+    );
     expect(result.items.map((item) => item.key)).toEqual([
       "old",
       "running",
@@ -111,9 +126,36 @@ describe("workspace history window", () => {
   });
 
   it("ignores a page returned for an obsolete task", () => {
-    const current = createWorkspaceHistoryWindow("session-1", "thread-2");
-    expect(reconcileLatestHistoryPage(current, "session-1", page(["old"]))).toBe(
-      current,
+    const current = createWorkspaceHistoryWindow(
+      "session-1",
+      "thread-2",
+      false,
+      "generation-1",
     );
+    expect(
+      reconcileLatestHistoryPage(
+        current,
+        "session-1",
+        "generation-1",
+        page(["old"]),
+      ),
+    ).toBe(current);
+  });
+
+  it("does not reconcile the same task id from another Host generation", () => {
+    const current = createWorkspaceHistoryWindow(
+      "session-1",
+      "thread-1",
+      false,
+      "generation-1",
+    );
+    expect(
+      reconcileLatestHistoryPage(
+        current,
+        "session-1",
+        "generation-2",
+        page(["other-host"]),
+      ),
+    ).toBe(current);
   });
 });

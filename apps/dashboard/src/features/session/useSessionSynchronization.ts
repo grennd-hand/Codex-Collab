@@ -14,13 +14,18 @@ import {
 import type { ConnectionState } from "../../app/connection.js";
 import { isCredentialRejected, requestJson } from "../../shared/api/api-client.js";
 import type { ActivityItem } from "../activity/ActivityPanel.js";
-import type { SavedCredential } from "./session-storage.js";
+import {
+  credentialAuthorization,
+  type SavedCredential,
+  updateCredential,
+} from "./session-storage.js";
 import { useRealtimeConnection } from "./useRealtimeConnection.js";
 
 type SessionSynchronizationOptions = {
   addMessage: (message: Message) => void;
   approved: boolean;
   authHeaders: (includeJson?: boolean) => HeadersInit;
+  credential: SavedCredential | null;
   credentialValidated: boolean;
   member: Member | null;
   pushActivity: (
@@ -41,7 +46,6 @@ type SessionSynchronizationOptions = {
   setMessages: Dispatch<SetStateAction<Message[]>>;
   setWorkspaceSummary: Dispatch<SetStateAction<WorkspaceSummary | null>>;
   showError: (caught: unknown) => void;
-  token: string | null;
   workspaceHistoryRequestedAtRef: MutableRefObject<number>;
 };
 
@@ -49,6 +53,7 @@ export function useSessionSynchronization({
   addMessage,
   approved,
   authHeaders,
+  credential,
   credentialValidated,
   member,
   pushActivity,
@@ -65,24 +70,19 @@ export function useSessionSynchronization({
   setMessages,
   setWorkspaceSummary,
   showError,
-  token,
   workspaceHistoryRequestedAtRef,
 }: SessionSynchronizationOptions) {
   useEffect(() => {
-    if (!session || !token || credentialValidated) return;
+    if (!session || !credential || credentialValidated) return;
     let stopped = false;
     setConnection("connecting");
     void requestJson<{ member: Member; session: Session }>(
       `/v1/sessions/${session.id}/me`,
-      { headers: { authorization: `Bearer ${token}` } },
+      { headers: authHeaders() },
     )
       .then((result) => {
         if (stopped) return;
-        saveCredential({
-          session: result.session,
-          member: result.member,
-          token,
-        });
+        saveCredential(updateCredential(credential, result.session, result.member));
         setCredentialValidated(true);
         setConnection(result.member.status === "pending" ? "waiting" : "connecting");
         setError(null);
@@ -101,11 +101,12 @@ export function useSessionSynchronization({
     setCredentialValidated,
     setError,
     showError,
-    token,
+    credential,
+    authHeaders,
   ]);
 
   const refresh = useCallback(async () => {
-    if (!session || !token || !approved || !member) return;
+    if (!session || !credential || !approved || !member) return;
     setLoading(true);
     try {
       const [messageResult, memberResult, meResult] = await Promise.all([
@@ -129,11 +130,7 @@ export function useSessionSynchronization({
         meResult.member.status !== member.status ||
         meResult.session.roomStatus !== session.roomStatus
       ) {
-        saveCredential({
-          session: meResult.session,
-          member: meResult.member,
-          token,
-        });
+        saveCredential(updateCredential(credential, meResult.session, meResult.member));
       }
       setError(null);
     } catch (caught) {
@@ -155,7 +152,7 @@ export function useSessionSynchronization({
     setMembers,
     setMessages,
     showError,
-    token,
+    credential,
   ]);
 
   useEffect(() => {
@@ -163,7 +160,7 @@ export function useSessionSynchronization({
   }, [approved, credentialValidated, refresh]);
 
   useEffect(() => {
-    if (!session || !token || !credentialValidated || member?.status !== "pending") {
+    if (!session || !credential || !credentialValidated || member?.status !== "pending") {
       return;
     }
     let stopped = false;
@@ -172,16 +169,12 @@ export function useSessionSynchronization({
       try {
         const result = await requestJson<{ member: Member; session: Session }>(
           `/v1/sessions/${session.id}/me`,
-          { headers: { authorization: `Bearer ${token}` } },
+          { headers: authHeaders() },
         );
         if (stopped) return;
         if (result.member.status === "approved") {
           setConversationLoading(true);
-          saveCredential({
-            session: result.session,
-            member: result.member,
-            token,
-          });
+          saveCredential(updateCredential(credential, result.session, result.member));
           setConnection("connecting");
           setError(null);
           pushActivity("主人已批准", "实时协作已启用", "success");
@@ -210,16 +203,17 @@ export function useSessionSynchronization({
     setConversationLoading,
     setError,
     showError,
-    token,
+    credential,
+    authHeaders,
   ]);
 
   useRealtimeConnection({
     session,
-    token,
+    authorization: credentialAuthorization(credential),
+    credentialAvailable: Boolean(credential),
     approved,
     credentialValidated,
     member,
-    authHeaders,
     addMessage,
     pushActivity,
     refresh,

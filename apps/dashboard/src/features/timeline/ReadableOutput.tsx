@@ -1,5 +1,11 @@
-import type { ReactNode } from "react";
+import type { MouseEvent, ReactNode } from "react";
+import { getDashboardRuntime } from "../../shared/runtime/index.js";
 import { classifyReadableSource, parseReadableBlocks } from "./readable-output.js";
+
+function openExternal(event: MouseEvent<HTMLAnchorElement>, url: string): void {
+  event.preventDefault();
+  void getDashboardRuntime().shell.openExternal(url).catch(() => undefined);
+}
 
 function renderInlineText(text: string): ReactNode[] {
   const pattern =
@@ -11,6 +17,7 @@ function renderInlineText(text: string): ReactNode[] {
         <a
           href={link[2]}
           key={`${index}-${part}`}
+          onClick={(event) => openExternal(event, link[2])}
           rel="noreferrer"
           target="_blank"
         >
@@ -89,4 +96,3 @@ export function ReadableSource({ text }: { text: string }) {
   }
   return <ReadableOutput text={text} />;
 }
-

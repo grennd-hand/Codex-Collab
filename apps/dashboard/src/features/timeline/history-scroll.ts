@@ -8,6 +8,7 @@ export interface HistoryScrollAnchor {
 export interface PendingHistoryScrollRestore {
   sessionId: string;
   threadId: string;
+  hostGeneration: string | null;
   historyEpoch: number;
   requestId: number;
   anchor: HistoryScrollAnchor | null;

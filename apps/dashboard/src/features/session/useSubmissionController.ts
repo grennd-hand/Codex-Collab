@@ -15,6 +15,7 @@ import {
 } from "@codex-collab/protocol";
 import { useCallback, useRef, useState } from "react";
 import type { ConnectionState } from "../../app/connection.js";
+import type { DashboardRuntimeV1 } from "../../shared/runtime/index.js";
 import { requestJson } from "../../shared/api/api-client.js";
 import { serializeAttachment } from "../composer/attachments.js";
 import {
@@ -24,6 +25,13 @@ import {
 } from "../composer/codex-controls.js";
 import type { useComposerController } from "../composer/useComposerController.js";
 import {
+  STALE_WORKSPACE_THREAD_MESSAGE,
+  expectedWorkspaceThreadForSubmission,
+  isStaleWorkspaceThreadError,
+} from "../composer/submission-contract.js";
+import {
+  clearInviteFromLocation,
+  createCredential,
   deviceLabel,
   type SavedCredential,
 } from "./session-storage.js";
@@ -33,6 +41,16 @@ import {
 } from "./invite-session.js";
 
 type ComposerController = ReturnType<typeof useComposerController>;
+
+type RuntimeCreateSessionResponse = Omit<CreateSessionResponse, "memberToken"> & {
+  memberToken?: string;
+};
+type RuntimeRecoverSessionResponse = Omit<RecoverSessionResponse, "memberToken"> & {
+  memberToken?: string;
+};
+type RuntimeJoinInviteResponse = Omit<JoinInviteResponse, "memberToken"> & {
+  memberToken?: string;
+};
 
 type SubmissionControllerOptions = {
   addMessage: (message: Message) => void;
@@ -49,7 +67,9 @@ type SubmissionControllerOptions = {
     tone?: "info" | "success" | "warning" | "danger",
   ) => void;
   roomOpen: boolean;
+  runtime: DashboardRuntimeV1;
   saveCredential: (credential: SavedCredential) => void;
+  selectedThreadId: string | null;
   session: Session | null;
   setConnection: (state: ConnectionState) => void;
   setConversationLoading: (loading: boolean) => void;
@@ -72,7 +92,9 @@ export function useSubmissionController({
   onError,
   pushActivity,
   roomOpen,
+  runtime,
   saveCredential,
+  selectedThreadId,
   session,
   setConnection,
   setConversationLoading,
@@ -99,7 +121,7 @@ export function useSubmissionController({
   const createSession = async () => {
     setSubmitting(true);
     try {
-      const result = await requestJson<CreateSessionResponse>("/v1/sessions", {
+      const result = await requestJson<RuntimeCreateSessionResponse>("/v1/sessions", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -109,11 +131,9 @@ export function useSubmissionController({
         }),
       });
       setConversationLoading(true);
-      saveCredential({
-        session: result.session,
-        member: result.owner,
-        token: result.memberToken,
-      });
+      saveCredential(
+        createCredential(runtime, result.session, result.owner, result.memberToken),
+      );
       setCredentialValidated(true);
       setMembers([result.owner]);
       setSetupOpen(false);
@@ -132,7 +152,7 @@ export function useSubmissionController({
   const recoverSession = async () => {
     setSubmitting(true);
     try {
-      const result = await requestJson<RecoverSessionResponse>(
+      const result = await requestJson<RuntimeRecoverSessionResponse>(
         "/v1/sessions/recover",
         {
           method: "POST",
@@ -145,11 +165,9 @@ export function useSubmissionController({
         },
       );
       setConversationLoading(true);
-      saveCredential({
-        session: result.session,
-        member: result.owner,
-        token: result.memberToken,
-      });
+      saveCredential(
+        createCredential(runtime, result.session, result.owner, result.memberToken),
+      );
       setCredentialValidated(true);
       setMembers([result.owner]);
       setRecoveryKey("");
@@ -168,7 +186,7 @@ export function useSubmissionController({
   const joinSession = async () => {
     setSubmitting(true);
     try {
-      const result = await requestJson<JoinInviteResponse>("/v1/invites/join", {
+      const result = await requestJson<RuntimeJoinInviteResponse>("/v1/invites/join", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -177,22 +195,16 @@ export function useSubmissionController({
           deviceLabel: deviceLabel(),
         }),
       });
-      saveCredential({
-        session: result.session,
-        member: result.member,
-        token: result.memberToken,
-      });
+      saveCredential(
+        createCredential(runtime, result.session, result.member, result.memberToken),
+      );
       setCredentialValidated(true);
       setMembers([result.member]);
       setSetupOpen(false);
       setConnection("waiting");
       setError(null);
       setCredentialNotice(null);
-      window.history.replaceState(
-        null,
-        "",
-        `${window.location.pathname}${window.location.search}`,
-      );
+      clearInviteFromLocation();
       pushActivity("加入申请已发送", "等待主人批准", "warning");
     } catch (caught) {
       onError(caught);
@@ -219,8 +231,15 @@ export function useSubmissionController({
           : composer.codexTextareaRef.current;
       restoreComposerControlFocus(control);
     };
+    const codexDraft = composer.draft;
+    const codexOptions = composer.codexOptions;
+    const codexAttachments = composer.pendingAttachments;
+    const expectedWorkspaceThreadId = expectedWorkspaceThreadForSubmission(
+      kind,
+      selectedThreadId,
+    );
     const trimmedDraft =
-      kind === "chat" ? composer.chatDraft.trim() : composer.draft.trim();
+      kind === "chat" ? composer.chatDraft.trim() : codexDraft.trim();
     const body =
       kind === "codex_stop"
         ? "停止当前 Codex 任务"
@@ -230,9 +249,14 @@ export function useSubmissionController({
               composer.pendingChatAttachments.length,
             )
           : trimmedDraft ||
-            (kind === "codex_prompt" && composer.pendingAttachments.length > 0
+            (kind === "codex_prompt" && codexAttachments.length > 0
               ? "请处理所附文件。"
               : "");
+    if (kind === "codex_prompt" && !expectedWorkspaceThreadId) {
+      setError("请先选择一个 Codex 任务，再发送指令");
+      restoreFocus();
+      return;
+    }
     if (
       !session ||
       !token ||
@@ -247,12 +271,12 @@ export function useSubmissionController({
     }
     if (kind === "codex_prompt") {
       const modelLabel =
-        getCodexModelOption(composer.codexOptions.model)?.label ?? "当前模型";
+        getCodexModelOption(codexOptions.model)?.label ?? "当前模型";
       if (
-        composer.pendingAttachments.some((attachment) =>
+        codexAttachments.some((attachment) =>
           attachment.file.type.startsWith("image/"),
         ) &&
-        !codexModelSupportsImages(composer.codexOptions.model)
+        !codexModelSupportsImages(codexOptions.model)
       ) {
         setError(`${modelLabel} 仅支持文本，请移除图片后再发送`);
         restoreFocus();
@@ -260,8 +284,8 @@ export function useSubmissionController({
       }
       if (
         !codexModelSupportsReasoningEffort(
-          composer.codexOptions.model,
-          composer.codexOptions.reasoningEffort,
+          codexOptions.model,
+          codexOptions.reasoningEffort,
         )
       ) {
         composer.setCodexOptions((current) =>
@@ -272,8 +296,8 @@ export function useSubmissionController({
         return;
       }
       if (
-        composer.codexOptions.speed === "fast" &&
-        !codexModelSupportsFast(composer.codexOptions.model)
+        codexOptions.speed === "fast" &&
+        !codexModelSupportsFast(codexOptions.model)
       ) {
         composer.setCodexOptions((current) =>
           normalizeCodexOptionsForUi(current),
@@ -287,7 +311,7 @@ export function useSubmissionController({
     try {
       const attachments =
         kind === "codex_prompt"
-          ? await Promise.all(composer.pendingAttachments.map(serializeAttachment))
+          ? await Promise.all(codexAttachments.map(serializeAttachment))
           : kind === "chat"
             ? await Promise.all(
                 composer.pendingChatAttachments.map(serializeAttachment),
@@ -302,14 +326,20 @@ export function useSubmissionController({
             kind,
             body,
             attachments,
-            codexOptions: kind === "codex_prompt" ? composer.codexOptions : null,
+            codexOptions: kind === "codex_prompt" ? codexOptions : null,
+            ...(expectedWorkspaceThreadId
+              ? { expectedWorkspaceThreadId }
+              : {}),
           }),
         },
       );
       addMessage(result.message);
-      if (kind === "codex_prompt") {
-        composer.setDraft("");
-        composer.setPendingAttachments([]);
+      if (kind === "codex_prompt" && expectedWorkspaceThreadId) {
+        composer.completeCodexSubmission(
+          expectedWorkspaceThreadId,
+          codexDraft,
+          codexAttachments.map((attachment) => attachment.id),
+        );
         pushActivity("已加入 Codex 队列", "Host 将在后台直接提交", "info");
       } else if (kind === "codex_stop") {
         pushActivity("停止请求已排队", "Host 将在后台中断当前任务", "warning");
@@ -319,7 +349,16 @@ export function useSubmissionController({
       }
       setError(null);
     } catch (caught) {
-      onError(caught);
+      if (isStaleWorkspaceThreadError(caught)) {
+        setError(STALE_WORKSPACE_THREAD_MESSAGE);
+        pushActivity(
+          "Codex 指令未发送",
+          STALE_WORKSPACE_THREAD_MESSAGE,
+          "warning",
+        );
+      } else {
+        onError(caught);
+      }
     } finally {
       setSubmitting(false);
       restoreFocus();

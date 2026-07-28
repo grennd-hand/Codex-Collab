@@ -16,6 +16,8 @@ export interface EditorTabState {
   saving: boolean;
   savedNotice: boolean;
   conflict: ConflictState | null;
+  remoteState: "current" | "stale" | "deleted-remotely";
+  remoteSha256: string | null;
 }
 
 export function fileName(path: string): string {
@@ -38,6 +40,8 @@ export function createLoadingTab(path: string): EditorTabState {
     saving: false,
     savedNotice: false,
     conflict: null,
+    remoteState: "current",
+    remoteSha256: null,
   };
 }
 
@@ -49,5 +53,6 @@ export function createReadyTab(document: IdeFileDocument): EditorTabState {
     savedValue: document.content,
     sha256: document.sha256,
     savedNotice: true,
+    remoteSha256: document.sha256,
   };
 }

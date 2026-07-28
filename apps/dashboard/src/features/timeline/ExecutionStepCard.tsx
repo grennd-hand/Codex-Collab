@@ -1,7 +1,10 @@
 import { Button } from "@fluentui/react-components";
 import { ChevronDownRegular, CopyRegular } from "@fluentui/react-icons";
 import { useEffect, useId, useState } from "react";
-import { IdeFileChanges } from "../../ide/IdeFileChanges.js";
+import {
+  IdeFileChanges,
+  navigationTargetForFileChange,
+} from "../../ide/IdeFileChanges.js";
 import type { IdeNavigationTarget } from "../../ide/types.js";
 import { copyText } from "../../shared/clipboard.js";
 import { executionOutputNeedsViewport, type ReadableExecution } from "./readable-output.js";
@@ -118,12 +121,8 @@ export function ExecutionStepCard({
               defaultExpanded
               onOpenFile={
                 onOpenFile
-                  ? (path, change) =>
-                      onOpenFile({
-                        path,
-                        ...(change.line ? { line: change.line } : {}),
-                        ...(change.column ? { column: change.column } : {}),
-                      })
+                  ? (_path, change) =>
+                      onOpenFile(navigationTargetForFileChange(change))
                   : undefined
               }
             />
@@ -180,4 +179,3 @@ export function ExecutionStepCard({
     </article>
   );
 }
-

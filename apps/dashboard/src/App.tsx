@@ -26,7 +26,6 @@ import {
 import { useCollaborationController } from "./features/collaboration/useCollaborationController.js";
 import {
   isCredentialRejected,
-  requestJson,
 } from "./shared/api/api-client.js";
 import { useComposerController } from "./features/composer/useComposerController.js";
 import {
@@ -46,8 +45,8 @@ import { useSessionSynchronization } from "./features/session/useSessionSynchron
 import { type ThemeMode } from "./app/shell/theme.js";
 import {
   clearCredential,
-  inviteTokenFromLocation,
-  loadCredential,
+  credentialAccessKey,
+  credentialHeaders,
   persistCredential,
   type SavedCredential,
   type SessionExitReason,
@@ -66,15 +65,23 @@ import {
   memberWorkspaceFileAccess,
 } from "./features/workspace/member-file-access.js";
 import { type ActivityItem } from "./features/activity/ActivityPanel.js";
+import type { DashboardRuntimeV1 } from "./shared/runtime/index.js";
+import { useHostStatus } from "./shared/runtime/use-host-status.js";
 
-export function App() {
-  const initialInviteToken = useMemo(inviteTokenFromLocation, []);
-  const initialCredential = useMemo(
-    () => (shouldRestoreCredential(initialInviteToken) ? loadCredential() : null),
-    [initialInviteToken],
+export interface AppProps {
+  runtime: DashboardRuntimeV1;
+  initialCredential: SavedCredential | null;
+  initialInviteToken: string;
+}
+
+export function App({ runtime, initialCredential, initialInviteToken }: AppProps) {
+  const hostStatus = useHostStatus(runtime);
+  const restoredCredential = useMemo(
+    () => (shouldRestoreCredential(initialInviteToken) ? initialCredential : null),
+    [initialCredential, initialInviteToken],
   );
-  const [credential, setCredential] = useState<SavedCredential | null>(initialCredential);
-  const [credentialValidated, setCredentialValidated] = useState(!initialCredential);
+  const [credential, setCredential] = useState<SavedCredential | null>(restoredCredential);
+  const [credentialValidated, setCredentialValidated] = useState(!restoredCredential);
   const [members, setMembers] = useState<Member[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [activities, setActivities] = useState<ActivityItem[]>([
@@ -87,15 +94,15 @@ export function App() {
     },
   ]);
   const [connection, setConnection] = useState<ConnectionState>(
-    initialCredential?.member.status === "pending" ? "waiting" : "ready",
+    restoredCredential?.member.status === "pending" ? "waiting" : "ready",
   );
   const [loading, setLoading] = useState(false);
   const [conversationLoading, setConversationLoading] = useState(
-    initialCredential?.member.status === "approved",
+    restoredCredential?.member.status === "approved",
   );
   const [error, setError] = useState<string | null>(null);
   const [credentialNotice, setCredentialNotice] = useState<string | null>(null);
-  const [setupOpen, setSetupOpen] = useState(!initialCredential);
+  const [setupOpen, setSetupOpen] = useState(!restoredCredential);
   const [membersExpanded, setMembersExpanded] = useState(true);
   const [messageStreamPinned, setMessageStreamPinned] = useState(true);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() =>
@@ -112,7 +119,7 @@ export function App() {
 
   const session = credential?.session ?? null;
   const member = credential?.member ?? null;
-  const token = credential?.token ?? null;
+  const token = credentialAccessKey(credential);
   const approved = member?.status === "approved";
   const roomOpen = session?.roomStatus !== "closed";
   const composerStorageKey = session ? `codexCollabComposer:${session.id}` : null;
@@ -141,7 +148,9 @@ export function App() {
 
   const clearSessionState = useCallback(
     (reason: SessionExitReason) => {
-      clearCredential();
+      void clearCredential().catch((caught: unknown) => {
+        setError(caught instanceof Error ? caught.message : "无法清除本机会话凭据");
+      });
       setCredential(null);
       setCredentialValidated(true);
       setMembers([]);
@@ -184,33 +193,18 @@ export function App() {
   );
   sessionErrorHandlerRef.current = showError;
 
-  const composer = useComposerController({
-    onActivity: pushActivity,
-    roomOpen,
-    setError,
-    storageKey: composerStorageKey,
-  });
-  const {
-    chatDraft,
-    draft,
-    pendingAttachments,
-    pendingChatAttachments,
-    preparingChatAttachments,
-    preparingCodexAttachments,
-  } = composer;
-  composerResetRef.current = composer.reset;
-
-  const saveCredential = useCallback((next: SavedCredential) => {
-    setCredential(next);
-    persistCredential(next);
-  }, []);
+  const saveCredential = useCallback(
+    (next: SavedCredential) => {
+      setCredential(next);
+      void persistCredential(next).catch(showError);
+    },
+    [showError],
+  );
 
   const authHeaders = useCallback(
-    (includeJson = false): HeadersInit => ({
-      authorization: `Bearer ${token ?? ""}`,
-      ...(includeJson ? { "content-type": "application/json" } : {}),
-    }),
-    [token],
+    (includeJson = false): HeadersInit =>
+      credentialHeaders(credential, includeJson),
+    [credential],
   );
 
   const workspaceHistory = useWorkspaceHistoryController({
@@ -229,6 +223,24 @@ export function App() {
   const workspaceHistoryRequestedAtRef = workspaceHistory.historyRequestedAtRef;
   const workspaceHistoryPrependingRef = workspaceHistory.prependingRef;
   workspaceResetRef.current = workspaceHistory.reset;
+
+  const selectedThreadId = workspaceSummary?.selectedThreadId ?? null;
+  const composer = useComposerController({
+    onActivity: pushActivity,
+    roomOpen,
+    selectedThreadId,
+    setError,
+    storageKey: composerStorageKey,
+  });
+  const {
+    chatDraft,
+    draft,
+    pendingAttachments,
+    pendingChatAttachments,
+    preparingChatAttachments,
+    preparingCodexAttachments,
+  } = composer;
+  composerResetRef.current = composer.reset;
 
   const workspaceFiles = useWorkspaceFileController({
     authHeaders,
@@ -263,6 +275,7 @@ export function App() {
 
   const invite = useInviteController({
     authHeaders,
+    credential,
     member,
     onError: showError,
     pushActivity,
@@ -270,7 +283,6 @@ export function App() {
     saveCredential,
     session,
     setError,
-    token,
   });
   const ownerRecovery = useOwnerRecoveryController();
   const setInviteOpen = invite.setOpen;
@@ -296,7 +308,9 @@ export function App() {
     onError: showError,
     pushActivity,
     roomOpen,
+    runtime,
     saveCredential,
+    selectedThreadId,
     session,
     setConnection,
     setConversationLoading,
@@ -313,6 +327,7 @@ export function App() {
     addMessage,
     approved,
     authHeaders,
+    credential,
     credentialValidated,
     member,
     pushActivity,
@@ -329,7 +344,6 @@ export function App() {
     setMessages,
     setWorkspaceSummary,
     showError,
-    token,
     workspaceHistoryRequestedAtRef,
   });
   const refresh = sessionSynchronization.refresh;
@@ -452,7 +466,9 @@ export function App() {
     !preparingChatAttachments && (chatDraft.trim() || pendingChatAttachments.length > 0),
   );
   const canSendCodex = Boolean(
-    !preparingCodexAttachments && (draft.trim() || pendingAttachments.length > 0),
+    selectedThreadId &&
+      !preparingCodexAttachments &&
+      (draft.trim() || pendingAttachments.length > 0),
   );
   const viewModel: DashboardViewModel = {
     activities,
@@ -474,6 +490,7 @@ export function App() {
     hasCodexContent,
     hasRunningExecutionEntry,
     hiddenUnassignedMessageCount,
+    hostStatus,
     identityForMember,
     initialInviteToken,
     invite,

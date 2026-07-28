@@ -29,12 +29,10 @@ export class MessageStore extends RoomMemberStore {
         content: Uint8Array;
       }>;
       codexOptions?: CodexPromptOptions | null;
+      expectedWorkspaceThreadId?: string;
     } = {},
   ): Message {
     const sender = this.requireMember(sessionId, memberToken, true);
-    if (kind === "chat" || kind === "codex_prompt") {
-      this.requireRoomOpen(sessionId);
-    }
     const attachments = input.attachments ?? [];
     if (
       attachments.length > 0 &&
@@ -58,35 +56,57 @@ export class MessageStore extends RoomMemberStore {
         "Only the owner can change Codex approval permissions",
       );
     }
-    const workspaceThreadId =
-      kind === "codex_prompt" || kind === "codex_stop"
-        ? this.selectedWorkspaceThreadId(sessionId)
-        : null;
-    if ((kind === "codex_prompt" || kind === "codex_stop") && !workspaceThreadId) {
+    const expectedWorkspaceThreadId = input.expectedWorkspaceThreadId?.trim() || null;
+    if (kind === "codex_prompt" && !expectedWorkspaceThreadId) {
       throw new ProtocolError(
-        409,
-        "workspace_thread_not_selected",
-        "Select a Codex task before sending a Codex command",
+        400,
+        "invalid_request",
+        "expectedWorkspaceThreadId is required for Codex prompts",
       );
     }
-    const message: Message = {
-      id: randomUUID(),
-      sessionId,
-      senderMemberId: sender.id,
-      senderDisplayName: sender.displayName,
-      kind,
-      body,
-      attachments: [],
-      codexOptions: input.codexOptions ?? null,
-      deliveryStatus:
-        kind === "codex_prompt" || kind === "codex_stop" ? "queued" : null,
-      codexTurnId: null,
-      workspaceThreadId,
-      completedAt: null,
-      createdAt: now(),
-    };
+    const messageId = randomUUID();
     this.db.exec("BEGIN IMMEDIATE");
     try {
+      if (kind === "chat" || kind === "codex_prompt") {
+        this.requireRoomOpen(sessionId);
+      }
+      const workspaceThreadId =
+        kind === "codex_prompt" || kind === "codex_stop"
+          ? this.selectedWorkspaceThreadId(sessionId)
+          : null;
+      if (
+        kind === "codex_prompt" &&
+        workspaceThreadId !== expectedWorkspaceThreadId
+      ) {
+        throw new ProtocolError(
+          409,
+          "stale_workspace_thread",
+          "The selected Codex task changed before the prompt was submitted",
+        );
+      }
+      if ((kind === "codex_prompt" || kind === "codex_stop") && !workspaceThreadId) {
+        throw new ProtocolError(
+          409,
+          "workspace_thread_not_selected",
+          "Select a Codex task before sending a Codex command",
+        );
+      }
+      const message: Message = {
+        id: messageId,
+        sessionId,
+        senderMemberId: sender.id,
+        senderDisplayName: sender.displayName,
+        kind,
+        body,
+        attachments: [],
+        codexOptions: input.codexOptions ?? null,
+        deliveryStatus:
+          kind === "codex_prompt" || kind === "codex_stop" ? "queued" : null,
+        codexTurnId: null,
+        workspaceThreadId,
+        completedAt: null,
+        createdAt: now(),
+      };
       this.db
         .prepare(`
           INSERT INTO messages
@@ -127,7 +147,7 @@ export class MessageStore extends RoomMemberStore {
       this.db.exec("ROLLBACK");
       throw error;
     }
-    return this.messageById(sessionId, message.id);
+    return this.messageById(sessionId, messageId);
   }
 
   listMessages(sessionId: string, memberToken: string, after?: string): Message[] {
@@ -297,4 +317,3 @@ export class MessageStore extends RoomMemberStore {
     };
   }
 }
-

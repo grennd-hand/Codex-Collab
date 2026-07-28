@@ -2,28 +2,28 @@ import { useEffect, type Dispatch, type RefObject, type SetStateAction } from "r
 import type {
   Member,
   Message,
-  RealtimeEnvelope,
-  RealtimeTicketResponse,
   Session,
   WorkspaceSummary,
 } from "@codex-collab/protocol";
+import { isCredentialRejected } from "../../shared/api/api-client.js";
 import {
-  ApiRequestError,
-  isCredentialRejected,
-  requestJson,
-} from "../../shared/api/api-client.js";
+  getDashboardRuntime,
+  RuntimeRequestError,
+  type RuntimeRealtimeEventV1,
+} from "../../shared/runtime/index.js";
 import type { ActivityItem } from "../activity/ActivityPanel.js";
 import type { ConnectionState } from "../../app/connection.js";
 import type { SavedCredential } from "../session/session-storage.js";
 import { shouldRefreshRealtimeHistory } from "./realtime-history-refresh.js";
+import { realtimeNotification } from "./realtime-notifications.js";
 
 interface RealtimeConnectionOptions {
   session: Session | null;
-  token: string | null;
+  authorization?: string;
+  credentialAvailable: boolean;
   approved: boolean;
   credentialValidated: boolean;
   member: Member | null;
-  authHeaders: (includeJson?: boolean) => HeadersInit;
   addMessage: (message: Message) => void;
   pushActivity: (
     title: string,
@@ -43,11 +43,11 @@ interface RealtimeConnectionOptions {
 
 export function useRealtimeConnection({
   session,
-  token,
+  authorization,
+  credentialAvailable,
   approved,
   credentialValidated,
   member,
-  authHeaders,
   addMessage,
   pushActivity,
   refresh,
@@ -61,11 +61,11 @@ export function useRealtimeConnection({
   workspaceHistoryRequestedAtRef,
 }: RealtimeConnectionOptions): void {
   useEffect(() => {
-    if (!session || !token || !member || !approved || !credentialValidated) {
+    if (!session || !credentialAvailable || !member || !approved || !credentialValidated) {
       return;
     }
     let stopped = false;
-    let socket: WebSocket | null = null;
+    let realtime: { close(): Promise<void> } | null = null;
     let reconnectTimer: number | undefined;
     let reconnectAttempt = 0;
     let connecting = false;
@@ -85,24 +85,125 @@ export function useRealtimeConnection({
       if (stopped || connecting) return;
       connecting = true;
       setConnection("connecting");
-      let ticket: string;
       try {
-        ticket = (
-          await requestJson<RealtimeTicketResponse>(
-            `/v1/sessions/${encodeURIComponent(session.id)}/realtime-tickets`,
-            {
-              method: "POST",
-              headers: authHeaders(true),
-              body: "{}",
-            },
-          )
-        ).ticket;
+        const handleEvent = (event: RuntimeRealtimeEventV1) => {
+          if (stopped) return;
+          if (event.type === "open") {
+            reconnectAttempt = 0;
+            setConnection("live");
+            setError(null);
+            return;
+          }
+          if (event.type === "close") {
+            realtime = null;
+            if (event.code === 4001) {
+              setConnection("error");
+              return;
+            }
+            setConnection("connecting");
+            scheduleReconnect();
+            return;
+          }
+          if (event.type === "error") {
+            setConnection("error");
+            return;
+          }
+          const envelope = event.envelope;
+          const notification = realtimeNotification(envelope, member);
+          if (notification) {
+            void getDashboardRuntime().shell.notify(notification).catch(() => undefined);
+          }
+          if (envelope.type === "message.created") {
+            const next = envelope.payload as Message;
+            addMessage(next);
+            pushActivity("收到新消息", next.senderDisplayName, "info");
+          }
+          if (envelope.type === "member.updated") {
+            const next = envelope.payload as Member;
+            pushActivity("成员状态已变化", next.displayName, "success");
+            void refresh();
+          }
+          if (envelope.type === "session.updated") {
+            const next = envelope.payload as Session;
+            saveCredential(
+              authorization
+                ? {
+                    session: next,
+                    member,
+                    authorization: {
+                      kind: "browser-bearer",
+                      bearerToken: authorization,
+                    },
+                  }
+                : {
+                    session: next,
+                    member,
+                    authorization: { kind: "desktop-managed" },
+                  },
+            );
+            if (next.roomStatus === "closed") setInviteOpen(false);
+            pushActivity(
+              next.roomStatus === "open" ? "房间已开启" : "房间已关闭",
+              next.roomStatus === "open"
+                ? "成员可以继续发送消息和 Codex 指令"
+                : "历史记录仍可查看，新的协作操作已暂停",
+              next.roomStatus === "open" ? "success" : "warning",
+            );
+          }
+          if (envelope.type === "workspace.updated") {
+            pushActivity("共享工作区已更新", "Codex 记录或文件发生变化", "success");
+            const payload = envelope.payload as {
+              changedScopes?: string[];
+              codexRuntimeStatus?: WorkspaceSummary["codexRuntimeStatus"];
+            };
+            const scopes = payload.changedScopes ?? [];
+            if (
+              scopes.length === 1 &&
+              scopes[0] === "runtime" &&
+              payload.codexRuntimeStatus
+            ) {
+              setWorkspaceSummary((current) =>
+                current
+                  ? { ...current, codexRuntimeStatus: payload.codexRuntimeStatus! }
+                  : current,
+              );
+              if (payload.codexRuntimeStatus === "running") {
+                workspaceHistoryRequestedAtRef.current = 0;
+                return;
+              }
+            }
+            const historyChanged =
+              scopes.length === 0 ||
+              scopes.includes("history") ||
+              scopes.includes("selection");
+            const terminalRuntime =
+              scopes.includes("runtime") &&
+              payload.codexRuntimeStatus !== undefined &&
+              payload.codexRuntimeStatus !== "running";
+            const includeHistory =
+              terminalRuntime ||
+              (historyChanged &&
+                shouldRefreshRealtimeHistory(
+                  workspaceHistoryRequestedAtRef.current,
+                  Date.now(),
+                ));
+            if (includeHistory) workspaceHistoryRequestedAtRef.current = Date.now();
+            void refreshWorkspace(includeHistory).catch(showError);
+          }
+          if (envelope.type === "file.operation.updated") {
+            void refreshWorkspace(false).catch(showError);
+          }
+        };
+        realtime = await getDashboardRuntime().connectRealtime(
+          { sessionId: session.id, authorization },
+          { onEvent: handleEvent },
+        );
       } catch (caught) {
         connecting = false;
         if (stopped) return;
         if (
           isCredentialRejected(caught) ||
-          (caught instanceof ApiRequestError && caught.status === 403)
+          (caught instanceof RuntimeRequestError && caught.status === 403)
         ) {
           showError(caught);
           return;
@@ -112,106 +213,7 @@ export function useRealtimeConnection({
         return;
       }
       connecting = false;
-      if (stopped) return;
-      const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-      const query = new URLSearchParams({ ticket });
-      socket = new WebSocket(
-        `${protocol}//${location.host}/v1/realtime?${query.toString()}`,
-      );
-      socket.addEventListener("open", () => {
-        if (!stopped) {
-          reconnectAttempt = 0;
-          setConnection("live");
-          setError(null);
-        }
-      });
-      socket.addEventListener("message", (event) => {
-        const envelope = JSON.parse(event.data as string) as RealtimeEnvelope;
-        if (envelope.type === "message.created") {
-          const next = envelope.payload as Message;
-          addMessage(next);
-          pushActivity("收到新消息", next.senderDisplayName, "info");
-        }
-        if (envelope.type === "member.updated") {
-          const next = envelope.payload as Member;
-          pushActivity("成员状态已变化", next.displayName, "success");
-          void refresh();
-        }
-        if (envelope.type === "session.updated") {
-          const next = envelope.payload as Session;
-          saveCredential({ session: next, member, token });
-          if (next.roomStatus === "closed") {
-            setInviteOpen(false);
-          }
-          pushActivity(
-            next.roomStatus === "open" ? "房间已开启" : "房间已关闭",
-            next.roomStatus === "open"
-              ? "成员可以继续发送消息和 Codex 指令"
-              : "历史记录仍可查看，新的协作操作已暂停",
-            next.roomStatus === "open" ? "success" : "warning",
-          );
-        }
-        if (envelope.type === "workspace.updated") {
-          pushActivity("共享工作区已更新", "Codex 记录或文件发生变化", "success");
-          const payload = envelope.payload as {
-            changedScopes?: string[];
-            codexRuntimeStatus?: WorkspaceSummary["codexRuntimeStatus"];
-          };
-          const scopes = payload.changedScopes ?? [];
-          if (
-            scopes.length === 1 &&
-            scopes[0] === "runtime" &&
-            payload.codexRuntimeStatus
-          ) {
-            setWorkspaceSummary((current) =>
-              current
-                ? { ...current, codexRuntimeStatus: payload.codexRuntimeStatus! }
-                : current,
-            );
-            if (payload.codexRuntimeStatus === "running") {
-              workspaceHistoryRequestedAtRef.current = 0;
-              return;
-            }
-          }
-          const historyChanged =
-            scopes.length === 0 ||
-            scopes.includes("history") ||
-            scopes.includes("selection");
-          const terminalRuntime =
-            scopes.includes("runtime") &&
-            payload.codexRuntimeStatus !== undefined &&
-            payload.codexRuntimeStatus !== "running";
-          const includeHistory =
-            terminalRuntime ||
-            (historyChanged &&
-              shouldRefreshRealtimeHistory(
-                workspaceHistoryRequestedAtRef.current,
-                Date.now(),
-              ));
-          if (includeHistory) {
-            workspaceHistoryRequestedAtRef.current = Date.now();
-          }
-          void refreshWorkspace(includeHistory).catch(showError);
-        }
-        if ((envelope.type as string) === "file.operation.updated") {
-          void refreshWorkspace(false).catch(showError);
-        }
-      });
-      socket.addEventListener("close", (event) => {
-        if (!stopped) {
-          if (event.code === 4001) {
-            setConnection("error");
-            return;
-          }
-          setConnection("connecting");
-          scheduleReconnect();
-        }
-      });
-      socket.addEventListener("error", () => {
-        if (!stopped) {
-          setConnection("error");
-        }
-      });
+      if (stopped) await realtime?.close();
     };
 
     void connect();
@@ -220,12 +222,12 @@ export function useRealtimeConnection({
       if (reconnectTimer !== undefined) {
         window.clearTimeout(reconnectTimer);
       }
-      socket?.close();
+      void realtime?.close();
     };
   }, [
     addMessage,
     approved,
-    authHeaders,
+    authorization,
     credentialValidated,
     member,
     pushActivity,
@@ -234,7 +236,7 @@ export function useRealtimeConnection({
     saveCredential,
     session,
     showError,
-    token,
+    credentialAvailable,
   ]);
 
 

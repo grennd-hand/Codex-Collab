@@ -59,6 +59,14 @@ export async function handleMessageRoutes(
       }
       const codexOptions =
         kind === "codex_prompt" ? parseCodexOptions(body.codexOptions) : null;
+      const expectedWorkspaceThreadId =
+        kind === "codex_prompt"
+          ? requiredString(
+              body.expectedWorkspaceThreadId,
+              "expectedWorkspaceThreadId",
+              160,
+            )
+          : undefined;
       if (codexOptions) {
         validateCodexPromptCapabilities(codexOptions, attachments);
       }
@@ -70,6 +78,9 @@ export async function handleMessageRoutes(
         {
           attachments,
           codexOptions,
+          ...(expectedWorkspaceThreadId === undefined
+            ? {}
+            : { expectedWorkspaceThreadId }),
         },
       );
       broadcast(messagesMatch[1], "message.created", message);

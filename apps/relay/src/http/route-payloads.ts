@@ -7,7 +7,6 @@ import {
   MAX_MESSAGE_ATTACHMENT_TOTAL_SIZE,
   MAX_WORKSPACE_HISTORY_ENTRIES,
   MAX_WORKSPACE_HISTORY_TEXT_LENGTH,
-  type CodexFileChange,
   type CodexRecordEntry,
   type CodexThreadCatalogEntry,
   type MessageAttachmentInput,
@@ -17,6 +16,9 @@ import {
   isPublishableWorkspaceDirectoryPath,
   ProtocolError,
 } from "@codex-collab/protocol";
+import { parseCodexFileChanges } from "./codex-file-change-payloads.js";
+
+export { parseCodexFileChanges } from "./codex-file-change-payloads.js";
 
 export function requiredObject(value: unknown, field: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -47,68 +49,6 @@ export function parseThreadCatalog(value: unknown): CodexThreadCatalogEntry[] {
       preview:
         typeof record.preview === "string" ? record.preview.trim().slice(0, 1_000) : "",
       updatedAt,
-    };
-  });
-}
-
-export function parseCodexFileChanges(
-  value: unknown,
-  entryIndex: number,
-): CodexFileChange[] | undefined {
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value) || value.length > 100) {
-    throw new ProtocolError(
-      400,
-      "invalid_request",
-      `history[${entryIndex}].fileChanges must contain at most 100 entries`,
-    );
-  }
-  return value.map((item, changeIndex) => {
-    const field = `history[${entryIndex}].fileChanges[${changeIndex}]`;
-    if (!item || typeof item !== "object" || Array.isArray(item)) {
-      throw new ProtocolError(400, "invalid_request", `${field} must be an object`);
-    }
-    const record = item as Record<string, unknown>;
-    if (
-      record.kind !== "added" &&
-      record.kind !== "modified" &&
-      record.kind !== "deleted" &&
-      record.kind !== "renamed"
-    ) {
-      throw new ProtocolError(400, "invalid_request", `${field}.kind is invalid`);
-    }
-    if (
-      record.lifecycle !== "running" &&
-      record.lifecycle !== "completed" &&
-      record.lifecycle !== "failed"
-    ) {
-      throw new ProtocolError(400, "invalid_request", `${field}.lifecycle is invalid`);
-    }
-    const path = requiredString(record.path, `${field}.path`, 500);
-    const previousPath =
-      typeof record.previousPath === "string" && record.previousPath.trim()
-        ? requiredString(record.previousPath, `${field}.previousPath`, 500)
-        : null;
-    if (path.includes("\0") || previousPath?.includes("\0")) {
-      throw new ProtocolError(400, "invalid_request", `${field} contains an invalid path`);
-    }
-    return {
-      operationId: requiredString(record.operationId, `${field}.operationId`, 180),
-      ...(typeof record.taskId === "string" && record.taskId.trim()
-        ? { taskId: requiredString(record.taskId, `${field}.taskId`, 160) }
-        : {}),
-      path,
-      ...(previousPath ? { previousPath } : {}),
-      kind: record.kind,
-      lifecycle: record.lifecycle,
-      additions: optionalInteger(record.additions, 0, `${field}.additions`, 0, 1_000_000),
-      deletions: optionalInteger(record.deletions, 0, `${field}.deletions`, 0, 1_000_000),
-      ...(record.line === undefined
-        ? {}
-        : { line: optionalInteger(record.line, 1, `${field}.line`, 1, 10_000_000) }),
-      ...(record.column === undefined
-        ? {}
-        : { column: optionalInteger(record.column, 1, `${field}.column`, 1, 1_000_000) }),
     };
   });
 }

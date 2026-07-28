@@ -11,10 +11,25 @@ export function mergeWorkspaceOverview(
   return {
     ...overview,
     history:
+      sameWorkspaceIdentity(current, overview) &&
       current?.selectedThreadId === overview.selectedThreadId
         ? current.history
         : [],
   };
+}
+
+function sameWorkspaceIdentity(
+  current: WorkspaceSummary | null,
+  overview: WorkspaceOverview,
+): boolean {
+  if (!current) return false;
+  if (current.hostGeneration || overview.hostGeneration) {
+    return current.hostGeneration === overview.hostGeneration;
+  }
+  return (
+    current.hostDeviceLabel === overview.hostDeviceLabel &&
+    current.rootLabel === overview.rootLabel
+  );
 }
 
 export function mergeWorkspaceHistory(

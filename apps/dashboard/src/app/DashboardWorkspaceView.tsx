@@ -2,7 +2,8 @@ import { Button, Skeleton, SkeletonItem } from "@fluentui/react-components";
 import { ArrowSyncRegular } from "@fluentui/react-icons";
 import { lazy, Suspense } from "react";
 import type { DashboardViewModel } from "./dashboard-view-model.js";
-import { workspaceRootScope } from "../ide/workspace-file-cache.js";
+import { taskUiScope, workspaceDataScope } from "../ide/workspace-file-cache.js";
+import { useIdeWorkspaceRelease } from "../ide/ide-workspace-lifecycle.js";
 import { AppHeader } from "./shell/AppHeader.js";
 import { ErrorBanner } from "./shell/ErrorBanner.js";
 import { ActivityPanel } from "../features/activity/ActivityPanel.js";
@@ -16,11 +17,7 @@ import {
 
 const IdeWorkspace = lazy(() => import("../ide/IdeWorkspace.js"));
 
-export function DashboardWorkspaceView({
-  model,
-}: {
-  model: DashboardViewModel;
-}) {
+export function DashboardWorkspaceView({ model }: { model: DashboardViewModel }) {
   const {
     activities,
     approved,
@@ -39,7 +36,7 @@ export function DashboardWorkspaceView({
     executionPhase,
     hasCodexContent,
     hasRunningExecutionEntry,
-    hiddenUnassignedMessageCount,
+    hiddenUnassignedMessageCount, hostStatus,
     identityForMember,
     invite,
     loading,
@@ -71,14 +68,22 @@ export function DashboardWorkspaceView({
     workspaceReadOnly,
   } = model;
   const workspaceSummary = workspaceHistory.summary;
-  const panelStorageScope = workspaceRootScope(
+  const dataScope = workspaceDataScope(
     session?.id ?? "anonymous",
     workspaceSummary?.hostDeviceLabel,
     workspaceSummary?.rootLabel,
+    workspaceSummary?.hostGeneration,
   );
+  const taskScope = taskUiScope(
+    session?.id ?? "anonymous",
+    workspaceSummary?.rootLabel,
+    workspaceSummary?.selectedThreadId,
+    workspaceSummary?.hostGeneration,
+  );
+  useIdeWorkspaceRelease(dataScope);
   const panelVisibility = useWorkspacePanelVisibility({
     editorExpanded: workspaceFiles.editorExpanded,
-    scope: panelStorageScope,
+    scope: taskScope,
     setEditorExpanded: workspaceFiles.setEditorExpanded,
     workspaceConnected,
   });
@@ -95,6 +100,7 @@ export function DashboardWorkspaceView({
         themeMode={themeMode}
         hasSession={Boolean(session)}
         connectionStatus={connectionStatus}
+        hostStatus={hostStatus}
         collaborationPanelVisible={panelVisibility.collaborationVisible}
         directoryPanelVisible={panelVisibility.filesVisible}
         onSelectThread={(threadId) => void workspaceConnection.selectThread(threadId)}
@@ -123,7 +129,7 @@ export function DashboardWorkspaceView({
         editorExpanded={workspaceFiles.editorExpanded}
         showFiles={panelVisibility.filesVisible}
         showPeople={panelVisibility.collaborationVisible}
-        storageScope={panelStorageScope}
+        storageScope={taskScope}
       >
         {workspaceConnected && workspaceSummary ? (
           <section
@@ -146,7 +152,7 @@ export function DashboardWorkspaceView({
               }
             >
               <IdeWorkspace
-                key={panelStorageScope}
+                key={`${dataScope}:${taskScope}`}
                 files={workspaceSummary.files}
                 directories={workspaceSummary.directories ?? []}
                 fileChanges={workspaceFileChanges}
@@ -176,7 +182,9 @@ export function DashboardWorkspaceView({
                 onRenameEntry={workspaceFiles.renameEntry}
                 onRefresh={workspaceConnection.reload}
                 openFileRequest={workspaceFiles.openFileRequest}
-                storageScope={panelStorageScope}
+                storageScope={taskScope}
+                taskUiScope={taskScope}
+                workspaceDataScope={dataScope}
               />
             </Suspense>
           </section>

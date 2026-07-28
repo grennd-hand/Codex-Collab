@@ -1,16 +1,33 @@
 import type { CodexPromptOptions } from "@codex-collab/protocol";
 import {
-  DEFAULT_CODEX_PROMPT_OPTIONS,
   codexModelSupportsImages,
   getCodexModelOption,
 } from "@codex-collab/protocol";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import {
   appendPendingAttachments,
   prepareAttachmentBatch,
   type PendingAttachment,
 } from "./attachments.js";
 import { normalizeCodexOptionsForUi } from "./codex-controls.js";
+import {
+  codexComposerStorageKey,
+  completeCodexComposerTaskSubmission,
+  emptyCodexComposerTaskState,
+  loadCodexComposerTaskState,
+  loadSessionChatDraft,
+  persistCodexComposerTaskState,
+  persistSessionChatDraft,
+  type CodexComposerTaskState,
+} from "./composer-scope.js";
 import type {
   SpeechRecognitionConstructor,
   SpeechRecognitionLike,
@@ -23,6 +40,7 @@ type ComposerControllerOptions = {
     tone?: "info" | "success" | "warning" | "danger",
   ) => void;
   roomOpen: boolean;
+  selectedThreadId: string | null;
   setError: (message: string | null) => void;
   storageKey: string | null;
 };
@@ -30,20 +48,19 @@ type ComposerControllerOptions = {
 export function useComposerController({
   onActivity,
   roomOpen,
+  selectedThreadId,
   setError,
   storageKey,
 }: ComposerControllerOptions) {
-  const [draft, setDraft] = useState("");
   const [chatDraft, setChatDraft] = useState("");
   const [pendingChatAttachments, setPendingChatAttachments] = useState<
     PendingAttachment[]
   >([]);
-  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
+  const [codexStates, setCodexStates] = useState<
+    Record<string, CodexComposerTaskState>
+  >({});
   const [preparingChatAttachments, setPreparingChatAttachments] = useState(false);
   const [preparingCodexAttachments, setPreparingCodexAttachments] = useState(false);
-  const [codexOptions, setCodexOptions] = useState<CodexPromptOptions>(
-    DEFAULT_CODEX_PROMPT_OPTIONS,
-  );
   const [dictating, setDictating] = useState(false);
   const [draggingChatFiles, setDraggingChatFiles] = useState(false);
   const [draggingFiles, setDraggingFiles] = useState(false);
@@ -51,74 +68,115 @@ export function useComposerController({
   const codexTextareaRef = useRef<HTMLTextAreaElement>(null);
   const chatAttachmentInputRef = useRef<HTMLInputElement>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
-  const preparationEpochRef = useRef(0);
+  const chatPreparationEpochRef = useRef(0);
+  const codexPreparationEpochRef = useRef(0);
   const chatPreparationBusyRef = useRef(false);
   const codexPreparationBusyRef = useRef(false);
   const speechRecognitionRef = useRef<SpeechRecognitionLike | null>(null);
-  const loadedStorageKeyRef = useRef<string | null>(null);
+  const loadedChatStorageKeyRef = useRef<string | null>(null);
+  const taskStorageKey = codexComposerStorageKey(storageKey, selectedThreadId);
+  const codexState = taskStorageKey
+    ? codexStates[taskStorageKey] ?? emptyCodexComposerTaskState()
+    : emptyCodexComposerTaskState();
+  const { codexOptions, draft, pendingAttachments } = codexState;
+
+  const updateCodexState = useCallback(
+    (update: SetStateAction<CodexComposerTaskState>) => {
+      if (!taskStorageKey) return;
+      setCodexStates((current) => {
+        const previous = current[taskStorageKey] ?? emptyCodexComposerTaskState();
+        const next = typeof update === "function" ? update(previous) : update;
+        return { ...current, [taskStorageKey]: next };
+      });
+    },
+    [taskStorageKey],
+  );
+
+  const setDraft = useCallback<Dispatch<SetStateAction<string>>>(
+    (update) =>
+      updateCodexState((current) => ({
+        ...current,
+        draft: typeof update === "function" ? update(current.draft) : update,
+      })),
+    [updateCodexState],
+  );
+  const setCodexOptions = useCallback<Dispatch<SetStateAction<CodexPromptOptions>>>(
+    (update) =>
+      updateCodexState((current) => ({
+        ...current,
+        codexOptions:
+          typeof update === "function" ? update(current.codexOptions) : update,
+      })),
+    [updateCodexState],
+  );
+  const setPendingAttachments = useCallback<
+    Dispatch<SetStateAction<PendingAttachment[]>>
+  >(
+    (update) =>
+      updateCodexState((current) => ({
+        ...current,
+        pendingAttachments:
+          typeof update === "function"
+            ? update(current.pendingAttachments)
+            : update,
+      })),
+    [updateCodexState],
+  );
 
   const reset = useCallback(() => {
-    setDraft("");
+    setCodexStates({});
     setChatDraft("");
     setPendingChatAttachments([]);
-    setPendingAttachments([]);
-    preparationEpochRef.current += 1;
+    chatPreparationEpochRef.current += 1;
+    codexPreparationEpochRef.current += 1;
     chatPreparationBusyRef.current = false;
     codexPreparationBusyRef.current = false;
     setPreparingChatAttachments(false);
     setPreparingCodexAttachments(false);
     speechRecognitionRef.current?.stop();
-    loadedStorageKeyRef.current = null;
+    loadedChatStorageKeyRef.current = null;
   }, []);
 
   useEffect(() => {
     if (!storageKey) return;
-    if (loadedStorageKeyRef.current !== storageKey) {
-      loadedStorageKeyRef.current = storageKey;
-      try {
-        const saved = JSON.parse(localStorage.getItem(storageKey) ?? "{}") as {
-          draft?: unknown;
-          codexDraft?: unknown;
-          chatDraft?: unknown;
-          codexOptions?: unknown;
-          composerMode?: unknown;
-        };
-        const legacyDraft = typeof saved.draft === "string" ? saved.draft : "";
-        setDraft(
-          typeof saved.codexDraft === "string"
-            ? saved.codexDraft
-            : saved.composerMode === "chat"
-              ? ""
-              : legacyDraft,
-        );
-        setChatDraft(
-          typeof saved.chatDraft === "string"
-            ? saved.chatDraft
-            : saved.composerMode === "chat"
-              ? legacyDraft
-              : "",
-        );
-        setCodexOptions(
-          saved.codexOptions &&
-            typeof saved.codexOptions === "object" &&
-            !Array.isArray(saved.codexOptions)
-            ? normalizeCodexOptionsForUi(saved.codexOptions)
-            : DEFAULT_CODEX_PROMPT_OPTIONS,
-        );
-      } catch {
-        setDraft("");
-        setChatDraft("");
-        setCodexOptions(DEFAULT_CODEX_PROMPT_OPTIONS);
-      }
+    if (loadedChatStorageKeyRef.current !== storageKey) {
+      loadedChatStorageKeyRef.current = storageKey;
+      chatPreparationEpochRef.current += 1;
+      chatPreparationBusyRef.current = false;
+      setPreparingChatAttachments(false);
+      setChatDraft(loadSessionChatDraft(localStorage, storageKey));
       setPendingChatAttachments([]);
-      setPendingAttachments([]);
       return;
     }
-    localStorage.setItem(
+    persistSessionChatDraft(localStorage, storageKey, chatDraft);
+  }, [chatDraft, storageKey]);
+
+  useLayoutEffect(() => {
+    codexPreparationEpochRef.current += 1;
+    codexPreparationBusyRef.current = false;
+    setPreparingCodexAttachments(false);
+    speechRecognitionRef.current?.stop();
+    if (!taskStorageKey || !storageKey) return;
+    const storedState = loadCodexComposerTaskState(
+      localStorage,
+      taskStorageKey,
       storageKey,
-      JSON.stringify({ codexDraft: draft, chatDraft, codexOptions }),
     );
-  }, [chatDraft, codexOptions, draft, storageKey]);
+    setCodexStates((current) =>
+      current[taskStorageKey]
+        ? current
+        : {
+            ...current,
+            [taskStorageKey]: storedState,
+          },
+    );
+  }, [storageKey, taskStorageKey]);
+
+  useEffect(() => {
+    for (const [key, state] of Object.entries(codexStates)) {
+      persistCodexComposerTaskState(localStorage, key, state);
+    }
+  }, [codexStates]);
 
   useEffect(
     () => () => {
@@ -131,12 +189,12 @@ export function useComposerController({
     if (!roomOpen || chatPreparationBusyRef.current) return;
     const incoming = Array.from(files);
     if (incoming.length === 0) return;
-    const preparationEpoch = preparationEpochRef.current;
+    const preparationEpoch = chatPreparationEpochRef.current;
     chatPreparationBusyRef.current = true;
     setPreparingChatAttachments(true);
     try {
       const prepared = await prepareAttachmentBatch(incoming);
-      if (preparationEpoch !== preparationEpochRef.current) return;
+      if (preparationEpoch !== chatPreparationEpochRef.current) return;
       const merged = appendPendingAttachments(
         pendingChatAttachments,
         prepared.attachments,
@@ -144,7 +202,7 @@ export function useComposerController({
       setPendingChatAttachments(merged.attachments);
       setError(merged.warning ?? prepared.warnings.at(-1) ?? null);
     } finally {
-      if (preparationEpoch === preparationEpochRef.current) {
+      if (preparationEpoch === chatPreparationEpochRef.current) {
         chatPreparationBusyRef.current = false;
         setPreparingChatAttachments(false);
       }
@@ -152,7 +210,7 @@ export function useComposerController({
   };
 
   const addAttachments = async (files: FileList | File[]) => {
-    if (!roomOpen || codexPreparationBusyRef.current) return;
+    if (!roomOpen || !taskStorageKey || codexPreparationBusyRef.current) return;
     const incoming = Array.from(files);
     if (incoming.length === 0) return;
     const modelLabel = getCodexModelOption(codexOptions.model)?.label ?? "当前模型";
@@ -168,19 +226,19 @@ export function useComposerController({
       setError(unsupportedWarning);
       return;
     }
-    const preparationEpoch = preparationEpochRef.current;
+    const preparationEpoch = codexPreparationEpochRef.current;
     codexPreparationBusyRef.current = true;
     setPreparingCodexAttachments(true);
     try {
       const prepared = await prepareAttachmentBatch(allowed);
-      if (preparationEpoch !== preparationEpochRef.current) return;
+      if (preparationEpoch !== codexPreparationEpochRef.current) return;
       const merged = appendPendingAttachments(pendingAttachments, prepared.attachments);
       setPendingAttachments(merged.attachments);
       setError(
         merged.warning ?? prepared.warnings.at(-1) ?? unsupportedWarning ?? null,
       );
     } finally {
-      if (preparationEpoch === preparationEpochRef.current) {
+      if (preparationEpoch === codexPreparationEpochRef.current) {
         codexPreparationBusyRef.current = false;
         setPreparingCodexAttachments(false);
       }
@@ -241,6 +299,26 @@ export function useComposerController({
     [onActivity, setError],
   );
 
+  const completeCodexSubmission = useCallback(
+    (threadId: string, submittedDraft: string, submittedAttachmentIds: string[]) => {
+      const completedStorageKey = codexComposerStorageKey(storageKey, threadId);
+      if (!completedStorageKey) return;
+      setCodexStates((current) => {
+        const previous = current[completedStorageKey];
+        if (!previous) return current;
+        return {
+          ...current,
+          [completedStorageKey]: completeCodexComposerTaskSubmission(
+            previous,
+            submittedDraft,
+            submittedAttachmentIds,
+          ),
+        };
+      });
+    },
+    [storageKey],
+  );
+
   return {
     addAttachments,
     addChatAttachments,
@@ -250,6 +328,7 @@ export function useComposerController({
     chatInputRef,
     codexOptions,
     codexTextareaRef,
+    completeCodexSubmission,
     dictating,
     draft,
     draggingChatFiles,

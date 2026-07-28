@@ -33,6 +33,8 @@ export interface IdeNavigationTarget {
   path: string;
   line?: number;
   column?: number;
+  endLine?: number;
+  endColumn?: number;
 }
 
 export interface IdeOpenFileRequest extends IdeNavigationTarget {
@@ -69,6 +71,11 @@ export interface IdeWorkspaceProps {
   onRenameEntry: (request: IdeRenameRequest) => Promise<IdeFileDocument | null>;
   onRefresh: () => void | Promise<void>;
   openFileRequest?: IdeOpenFileRequest | null;
+  /** Workspace-level data identity: session + host + approved root. */
+  workspaceDataScope?: string;
+  /** Task-level UI identity: session + approved root + selected task. */
+  taskUiScope?: string;
+  /** @deprecated Use taskUiScope for UI persistence. */
   storageScope?: string;
   embedded?: boolean;
   editorExpanded?: boolean;

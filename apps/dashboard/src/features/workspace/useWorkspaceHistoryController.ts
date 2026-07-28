@@ -119,7 +119,8 @@ export function useWorkspaceHistoryController({
     if (!pending) return;
     if (
       olderRequestIdRef.current === pending.requestId &&
-      historyWindowRef.current.olderLoading
+      historyWindowRef.current.olderLoading &&
+      historyWindowRef.current.hostGeneration === pending.hostGeneration
     ) {
       // Remove the loading row first, then restore against the final geometry in
       // the following layout pass. Restoring before this state change makes the
@@ -132,7 +133,8 @@ export function useWorkspaceHistoryController({
       sessionIdRef.current === pending.sessionId &&
       historyEpochRef.current === pending.historyEpoch &&
       olderRequestIdRef.current === pending.requestId &&
-      historyWindowRef.current.threadId === pending.threadId
+      historyWindowRef.current.threadId === pending.threadId &&
+      historyWindowRef.current.hostGeneration === pending.hostGeneration
     ) {
       restoreHistoryScrollAnchor(messageStreamRef.current, pending.anchor);
     }
@@ -183,12 +185,24 @@ export function useWorkspaceHistoryController({
       });
       if (!includeHistory || priorityFileReadsRef.current > 0) return overviewSummary;
       if (!overview.selectedThreadId) {
-        commitHistoryWindow(() => createWorkspaceHistoryWindow(sessionId, null));
+        commitHistoryWindow(() =>
+          createWorkspaceHistoryWindow(
+            sessionId,
+            null,
+            false,
+            overview.hostGeneration ?? null,
+          ),
+        );
         setConversationLoading(false);
         return overviewSummary;
       }
       commitHistoryWindow((current) =>
-        beginLatestHistoryLoad(current, sessionId, overview.selectedThreadId),
+        beginLatestHistoryLoad(
+          current,
+          sessionId,
+          overview.selectedThreadId,
+          overview.hostGeneration ?? null,
+        ),
       );
       try {
         const historyResult = await requestJson<{
@@ -205,7 +219,12 @@ export function useWorkspaceHistoryController({
           page.selectedThreadId === overview.selectedThreadId
         ) {
           commitHistoryWindow((current) =>
-            reconcileLatestHistoryPage(current, sessionId, page),
+            reconcileLatestHistoryPage(
+              current,
+              sessionId,
+              overview.hostGeneration ?? null,
+              page,
+            ),
           );
           setConversationLoading(
             workspaceNeedsConversationLoad({
@@ -268,6 +287,7 @@ export function useWorkspaceHistoryController({
     }
     const sessionId = session.id;
     const threadId = current.threadId;
+    const hostGeneration = current.hostGeneration;
     const requestedCursor = current.olderCursor;
     const historyEpoch = historyEpochRef.current;
     const requestId = ++olderRequestIdRef.current;
@@ -294,6 +314,7 @@ export function useWorkspaceHistoryController({
       if (
         latest.sessionId !== sessionId ||
         latest.threadId !== threadId ||
+        latest.hostGeneration !== hostGeneration ||
         latest.olderCursor !== requestedCursor
       ) {
         return;
@@ -301,6 +322,7 @@ export function useWorkspaceHistoryController({
       const next = prependOlderHistoryPage(
         latest,
         sessionId,
+        hostGeneration,
         requestedCursor,
         result.workspaceHistoryPage,
       );
@@ -308,6 +330,7 @@ export function useWorkspaceHistoryController({
       pendingScrollRestoreRef.current = {
         sessionId,
         threadId,
+        hostGeneration,
         historyEpoch,
         requestId,
         anchor,
@@ -320,13 +343,19 @@ export function useWorkspaceHistoryController({
         sessionIdRef.current !== sessionId ||
         historyEpochRef.current !== historyEpoch ||
         olderRequestIdRef.current !== requestId ||
-        historyWindowRef.current.threadId !== threadId
+        historyWindowRef.current.threadId !== threadId ||
+        historyWindowRef.current.hostGeneration !== hostGeneration
       ) {
         return;
       }
       if (caught instanceof ApiRequestError && caught.code === "history_cursor_stale") {
         commitHistoryWindow(() =>
-          createWorkspaceHistoryWindow(sessionId, threadId, true),
+          createWorkspaceHistoryWindow(
+            sessionId,
+            threadId,
+            true,
+            hostGeneration,
+          ),
         );
         void refresh(true).catch(onError);
         return;
@@ -396,7 +425,12 @@ export function useWorkspaceHistoryController({
     (workspace: WorkspaceSummary, sessionId: string, threadId: string) => {
       setSummary({ ...workspace, history: [] });
       commitHistoryWindow(() =>
-        createWorkspaceHistoryWindow(sessionId, threadId, true),
+        createWorkspaceHistoryWindow(
+          sessionId,
+          threadId,
+          true,
+          workspace.hostGeneration ?? null,
+        ),
       );
       setConversationLoading(workspaceNeedsConversationLoad(workspace));
     },

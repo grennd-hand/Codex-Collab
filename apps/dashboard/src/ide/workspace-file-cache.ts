@@ -63,12 +63,39 @@ export class WorkspaceFileCache {
   }
 }
 
-export function workspaceRootScope(
+export function workspaceDataScope(
   sessionId: string,
   hostDeviceLabel: string | null | undefined,
   rootLabel: string | null | undefined,
+  hostGeneration?: string | null,
 ): string {
-  return JSON.stringify([sessionId, hostDeviceLabel ?? null, rootLabel ?? null]);
+  return hostGeneration
+    ? JSON.stringify([sessionId, hostGeneration])
+    : JSON.stringify([
+        sessionId,
+        null,
+        hostDeviceLabel ?? null,
+        rootLabel ?? null,
+      ]);
+}
+
+/**
+ * Compatibility alias for callers that still describe this as a root scope.
+ * File data deliberately does not vary with the selected Codex task.
+ */
+export const workspaceRootScope = workspaceDataScope;
+
+export function taskUiScope(
+  sessionId: string,
+  rootLabel: string | null | undefined,
+  threadId: string | null | undefined,
+  hostGeneration?: string | null,
+): string {
+  return JSON.stringify([
+    sessionId,
+    hostGeneration ?? rootLabel ?? null,
+    threadId ?? null,
+  ]);
 }
 
 export function workspaceFileCacheKey(

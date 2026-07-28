@@ -415,12 +415,33 @@ try {
     throw new Error("Conflict events must not broadcast paths, errors, or file content");
   }
 
+  const stalePrompt = await request(
+    `/v1/sessions/${created.session.id}/messages`,
+    {
+      method: "POST",
+      headers: guestHeaders,
+      body: JSON.stringify({
+        kind: "codex_prompt",
+        body: "Must not bind to a different task",
+        expectedWorkspaceThreadId: "thread-stale-selection",
+      }),
+    },
+    409,
+  );
+  if (stalePrompt.error?.code !== "stale_workspace_thread") {
+    throw new Error("Stale task selection did not return its explicit conflict code");
+  }
+
   const attributedPrompt = await request(
     `/v1/sessions/${created.session.id}/messages`,
     {
       method: "POST",
       headers: guestHeaders,
-      body: JSON.stringify({ kind: "codex_prompt", body: "Run focused tests" }),
+      body: JSON.stringify({
+        kind: "codex_prompt",
+        body: "Run focused tests",
+        expectedWorkspaceThreadId: "thread-code-flow",
+      }),
     },
     201,
   );
@@ -465,6 +486,7 @@ try {
         "content-free realtime file event",
         "host FileSandbox write completion",
         "stale-hash conflict without overwrite",
+        "stale task selection rejected atomically",
         "selected-task Codex prompt attribution",
       ],
     }),

@@ -103,6 +103,7 @@ export function useWorkspaceFileController({
         session.id,
         summary?.hostDeviceLabel,
         summary?.rootLabel,
+        summary?.hostGeneration,
       );
       const key = workspaceFileCacheKey(
         workspaceScope,

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   WorkspaceFileCache,
+  taskUiScope,
+  workspaceDataScope,
   workspaceFileCacheKey,
   workspaceRootScope,
 } from "./workspace-file-cache.js";
@@ -20,6 +22,33 @@ describe("WorkspaceFileCache", () => {
     expect(workspaceRootScope("session", "Owner PC", "Project")).not.toBe(
       workspaceRootScope("session", "Owner PC", "Other Project"),
     );
+  });
+
+  it("separates workspace data identity from task UI identity", () => {
+    expect(workspaceDataScope("session", "Owner PC", "Project")).toBe(
+      workspaceDataScope("session", "Owner PC", "Project"),
+    );
+    expect(taskUiScope("session", "Project", "thread-a")).not.toBe(
+      taskUiScope("session", "Project", "thread-b"),
+    );
+    expect(taskUiScope("session", "Project", "thread-a")).not.toContain(
+      "Owner PC",
+    );
+  });
+
+  it("isolates a newly paired Host even when its labels are unchanged", () => {
+    expect(workspaceDataScope("session", "Owner PC", "Project", "generation-1"))
+      .not.toBe(workspaceDataScope("session", "Owner PC", "Project", "generation-2"));
+    expect(taskUiScope("session", "Project", "thread", "generation-1")).not.toBe(
+      taskUiScope("session", "Project", "thread", "generation-2"),
+    );
+  });
+
+  it("uses stable Host identity instead of display label when available", () => {
+    expect(workspaceDataScope("session", "Old label", "Project", "generation"))
+      .toBe(workspaceDataScope("session", "New label", "Renamed", "generation"));
+    expect(taskUiScope("session", "Old label", "thread", "generation"))
+      .toBe(taskUiScope("session", "New label", "thread", "generation"));
   });
 
   it("evicts the least recently used entry at the configured bound", () => {

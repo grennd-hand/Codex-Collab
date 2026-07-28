@@ -4,6 +4,8 @@ import {
 } from "@fluentui/react-icons";
 import type { CodexFileChange } from "@codex-collab/protocol";
 import { useId, useMemo, useState } from "react";
+import type { IdeNavigationTarget } from "./types.js";
+import { IdeUnifiedDiff } from "./IdeUnifiedDiff.js";
 import "./ide-file-changes.css";
 
 export type IdeFileChangeKind = CodexFileChange["kind"];
@@ -66,6 +68,26 @@ export function summarizeIdeFileChanges(
     }),
     { files: 0, additions: 0, deletions: 0 },
   );
+}
+
+export function navigationTargetForFileChange(
+  change: IdeFileChange,
+): IdeNavigationTarget {
+  const range = change.range;
+  return {
+    path: change.path,
+    ...(range
+      ? {
+          line: range.startLine,
+          column: range.startColumn,
+          endLine: range.endLine,
+          endColumn: range.endColumn,
+        }
+      : {
+          ...(change.line ? { line: change.line } : {}),
+          ...(change.column ? { column: change.column } : {}),
+        }),
+  };
 }
 
 export function IdeFileChanges({
@@ -175,7 +197,7 @@ export function IdeFileChanges({
                 <button
                   type="button"
                   className="ide-file-change-disclosure"
-                  aria-label={`${fileExpanded ? "收起" : "展开"} ${change.path} 的变更统计`}
+                  aria-label={`${fileExpanded ? "收起" : "展开"} ${change.path} 的变更预览`}
                   aria-expanded={fileExpanded}
                   aria-controls={detailsId}
                   onClick={() => changeFileExpanded(change.path, !fileExpanded)}
@@ -189,15 +211,18 @@ export function IdeFileChanges({
                 hidden={!fileExpanded}
                 className="ide-file-change-details"
               >
-                <span className="ide-change-additions">
-                  +{safeLineCount(change.additions)} 新增
-                </span>
-                <span className="ide-change-deletions">
-                  -{safeLineCount(change.deletions)} 删除
-                </span>
-                <span className="ide-file-change-kind-label">
-                  状态：{presentation.label}
-                </span>
+                <div className="ide-file-change-stats">
+                  <span className="ide-change-additions">
+                    +{safeLineCount(change.additions)} 新增
+                  </span>
+                  <span className="ide-change-deletions">
+                    -{safeLineCount(change.deletions)} 删除
+                  </span>
+                  <span className="ide-file-change-kind-label">
+                    状态：{presentation.label}
+                  </span>
+                </div>
+                <IdeUnifiedDiff diff={change.diff} />
               </div>
             </div>
           );

@@ -1,7 +1,13 @@
 import Editor, { DiffEditor, type OnMount } from "@monaco-editor/react";
 import { Button, Skeleton, SkeletonItem } from "@fluentui/react-components";
 import { DocumentRegular, WarningRegular } from "@fluentui/react-icons";
+import { useEffect, useRef } from "react";
 import type { EditorTabState } from "./ide-tab-state.js";
+import {
+  monacoModelUri,
+  monacoModelScope,
+  retainMonacoModel,
+} from "./monaco-model-registry.js";
 
 interface IdeEditorStageProps {
   activeTab: EditorTabState | null;
@@ -9,7 +15,10 @@ interface IdeEditorStageProps {
   activeReadOnlyReason: string;
   language: string;
   themeMode: "light" | "dark";
+  taskUiScope: string;
+  workspaceDataScope: string;
   onEditorMount: OnMount;
+  onEditorUnmount: (editor: Parameters<OnMount>[0]) => void;
   onRetryFile: (path: string) => void;
   onUpdateValue: (path: string, value: string) => void;
 }
@@ -28,7 +37,10 @@ export function IdeEditorStage({
   activeReadOnlyReason,
   language,
   themeMode,
+  taskUiScope,
+  workspaceDataScope,
   onEditorMount,
+  onEditorUnmount,
   onRetryFile,
   onUpdateValue,
 }: IdeEditorStageProps) {
@@ -82,53 +94,114 @@ export function IdeEditorStage({
         />
       ) : null}
       {activeTab?.status === "ready" && !activeTab.conflict ? (
-        <Editor
-          path={`codex-collab://workspace/${activeTab.path
-            .split("/")
-            .map(encodeURIComponent)
-            .join("/")}`}
-          height="100%"
-          width="100%"
+        <ScopedMonacoEditor
+          path={activeTab.path}
           value={activeTab.value}
           language={language}
           theme={theme}
-          loading={<span className="ide-monaco-loading">正在启动编辑器</span>}
-          options={{
-            ...sharedEditorOptions,
-            readOnly: activeFileReadOnly,
-            readOnlyMessage: { value: activeReadOnlyReason },
-            accessibilityPageSize: 20,
-            fontLigatures: true,
-            lineHeight: 20,
-            folding: true,
-            foldingStrategy: "auto",
-            foldingHighlight: true,
-            showFoldingControls: "mouseover",
-            unfoldOnClickAfterEndOfLine: true,
-            glyphMargin: true,
-            renderLineHighlight: "all",
-            bracketPairColorization: { enabled: true },
-            guides: {
-              indentation: true,
-              highlightActiveIndentation: true,
-              bracketPairs: true,
-              highlightActiveBracketPair: true,
-            },
-            matchBrackets: "always",
-            autoClosingBrackets: "languageDefined",
-            autoClosingQuotes: "languageDefined",
-            autoIndent: "full",
-            stickyScroll: { enabled: true, maxLineCount: 5 },
-            minimap: { enabled: true, maxColumn: 80, scale: 1 },
-            padding: { top: 10, bottom: 18 },
-            renderWhitespace: "selection",
-            smoothScrolling: true,
-            tabSize: 2,
-          }}
+          readOnly={activeFileReadOnly}
+          readOnlyReason={activeReadOnlyReason}
+          taskUiScope={taskUiScope}
+          workspaceDataScope={workspaceDataScope}
           onMount={onEditorMount}
-          onChange={(value) => onUpdateValue(activeTab.path, value ?? "")}
+          onUnmount={onEditorUnmount}
+          onChange={(value) => onUpdateValue(activeTab.path, value)}
         />
       ) : null}
     </div>
+  );
+}
+
+interface ScopedMonacoEditorProps {
+  language: string;
+  path: string;
+  readOnly: boolean;
+  readOnlyReason: string;
+  taskUiScope: string;
+  theme: string;
+  value: string;
+  workspaceDataScope: string;
+  onChange: (value: string) => void;
+  onMount: OnMount;
+  onUnmount: (editor: Parameters<OnMount>[0]) => void;
+}
+
+function ScopedMonacoEditor({
+  language,
+  path,
+  readOnly,
+  readOnlyReason,
+  taskUiScope,
+  theme,
+  value,
+  workspaceDataScope,
+  onChange,
+  onMount,
+  onUnmount,
+}: ScopedMonacoEditorProps) {
+  const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
+  const modelScope = monacoModelScope(workspaceDataScope, taskUiScope);
+  useEffect(
+    () => () => {
+      if (editorRef.current) onUnmount(editorRef.current);
+    },
+    [onUnmount],
+  );
+
+  return (
+    <Editor
+      path={monacoModelUri(modelScope, path)}
+      keepCurrentModel
+      saveViewState
+      height="100%"
+      width="100%"
+      value={value}
+      language={language}
+      theme={theme}
+      loading={<span className="ide-monaco-loading">正在启动编辑器</span>}
+      options={{
+        ...sharedEditorOptions,
+        readOnly,
+        readOnlyMessage: { value: readOnlyReason },
+        accessibilityPageSize: 20,
+        fontLigatures: true,
+        lineHeight: 20,
+        folding: true,
+        foldingStrategy: "auto",
+        foldingHighlight: true,
+        showFoldingControls: "mouseover",
+        unfoldOnClickAfterEndOfLine: true,
+        glyphMargin: true,
+        renderLineHighlight: "all",
+        bracketPairColorization: { enabled: true },
+        guides: {
+          indentation: true,
+          highlightActiveIndentation: true,
+          bracketPairs: true,
+          highlightActiveBracketPair: true,
+        },
+        matchBrackets: "always",
+        autoClosingBrackets: "languageDefined",
+        autoClosingQuotes: "languageDefined",
+        autoIndent: "full",
+        stickyScroll: { enabled: true, maxLineCount: 5 },
+        minimap: { enabled: true, maxColumn: 80, scale: 1 },
+        padding: { top: 10, bottom: 18 },
+        renderWhitespace: "selection",
+        smoothScrolling: true,
+        tabSize: 2,
+      }}
+      onMount={(editor, monaco) => {
+        editorRef.current = editor;
+        retainMonacoModel(
+          workspaceDataScope,
+          taskUiScope,
+          modelScope,
+          editor.getModel(),
+        );
+        onMount(editor, monaco);
+      }}
+      onChange={(nextValue) => onChange(nextValue ?? "")}
+    />
   );
 }
