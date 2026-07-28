@@ -11,6 +11,7 @@ import {
   openWorkspaceSandboxes,
 } from "../workspace-roots.js";
 import { HostProfileContext, publicHostProfile } from "./host-profile-context.js";
+import { hostWorkAllowed, type HostWorkAdmission } from "./host-runtime-admission.js";
 import { stringArgument, type HostToolArguments } from "./host-tool-arguments.js";
 
 export class HostWorkspaceService {
@@ -20,24 +21,28 @@ export class HostWorkspaceService {
     private readonly workspaceSync: WorkspaceSyncService,
   ) {}
 
-  async callTool(name: string, args: HostToolArguments): Promise<unknown> {
+  async callTool(
+    name: string,
+    args: HostToolArguments,
+    admission?: HostWorkAdmission,
+  ): Promise<unknown> {
     switch (name) {
       case "collab_pair_host":
         return this.pairHost(args);
       case "collab_refresh_workspace":
-        return this.refreshWorkspace(args);
+        return this.refreshWorkspace(args, admission);
       case "collab_bind_thread":
-        return this.bindThread(args);
+        return this.bindThread(args, admission);
       case "collab_list_codex_threads":
-        return this.listCodexThreads(args);
+        return this.listCodexThreads(args, admission);
       case "collab_forward_prompt":
-        return this.forwardPrompt(args);
+        return this.forwardPrompt(args, admission);
       case "collab_list_files":
-        return this.listFiles();
+        return this.listFiles(admission);
       case "collab_read_file":
-        return this.readFile(args);
+        return this.readFile(args, admission);
       case "collab_write_file":
-        return this.writeFile(args);
+        return this.writeFile(args, admission);
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -83,8 +88,12 @@ export class HostWorkspaceService {
     };
   }
 
-  private async refreshWorkspace(args: HostToolArguments): Promise<unknown> {
+  private async refreshWorkspace(
+    args: HostToolArguments,
+    admission?: HostWorkAdmission,
+  ): Promise<unknown> {
     const currentSession = await this.context.current();
+    this.assertAdmitted(admission);
     let { profile } = currentSession;
     if (profile.role !== "owner") {
       throw new Error("Only the owner host can publish a workspace");
@@ -101,18 +110,26 @@ export class HostWorkspaceService {
     } else {
       await openWorkspaceSandboxes(profile.projectRoot, profile.codexConfigRoot);
     }
-    const workspace = await this.publishCatalog(profile, currentSession.relay);
-    const imported = await this.workspaceSync.sync(true);
+    this.assertAdmitted(admission);
+    const workspace = await this.publishCatalog(profile, currentSession.relay, admission);
+    const imported = await this.workspaceSync.sync(
+      true,
+      admission ? { admission } : {},
+    );
     return { publishedTaskCount: workspace.threads.length, ...imported };
   }
 
-  private async bindThread(args: HostToolArguments): Promise<unknown> {
+  private async bindThread(
+    args: HostToolArguments,
+    admission?: HostWorkAdmission,
+  ): Promise<unknown> {
     const { profile } = await this.context.current();
     const projectSandbox = await openBoundProjectSandbox(
       profile.projectRoot,
       stringArgument(args, "projectRoot")!,
       profile.codexConfigRoot,
     );
+    this.assertAdmitted(admission);
     const updated = await this.context.profiles.update({
       threadId: stringArgument(args, "threadId")!,
       projectRoot: projectSandbox.getRoot(),
@@ -122,13 +139,21 @@ export class HostWorkspaceService {
     return publicHostProfile(updated);
   }
 
-  private async listCodexThreads(args: HostToolArguments): Promise<unknown> {
+  private async listCodexThreads(
+    args: HostToolArguments,
+    admission?: HostWorkAdmission,
+  ): Promise<unknown> {
     const cwd = stringArgument(args, "cwd", true);
+    this.assertAdmitted(admission);
     return this.codex.listThreads(cwd ? (await openProjectSandbox(cwd)).getRoot() : undefined);
   }
 
-  private async forwardPrompt(args: HostToolArguments): Promise<unknown> {
+  private async forwardPrompt(
+    args: HostToolArguments,
+    admission?: HostWorkAdmission,
+  ): Promise<unknown> {
     const { profile, relay } = await this.context.current();
+    this.assertAdmitted(admission);
     if (profile.role !== "owner") throw new Error("Only the owner host can forward prompts");
     if (!profile.threadId) throw new Error("Bind a Codex thread first");
     const messageId = stringArgument(args, "messageId")!;
@@ -136,10 +161,26 @@ export class HostWorkspaceService {
       throw new Error("This collaboration message was already forwarded");
     }
     const messages = await relay.listMessages(profile.sessionId, profile.memberToken);
+    this.assertAdmitted(admission);
     const message = messages.find((candidate) => candidate.id === messageId);
     if (!message) throw new Error("Message was not found in the approved session");
     if (message.kind !== "codex_prompt") {
       throw new Error("Only codex_prompt messages can be forwarded");
+    }
+    const members = await relay.listMembers(profile.sessionId, profile.memberToken);
+    this.assertAdmitted(admission);
+    const senderApproved = message.senderMemberId === profile.memberId || members.some(
+      (member) => member.id === message.senderMemberId && member.status === "approved",
+    );
+    if (!senderApproved) {
+      await relay.updateMessageDeliveryStatus(
+        profile.sessionId,
+        profile.memberToken,
+        message.id,
+        "failed",
+        null,
+      );
+      throw new Error("The collaboration member is no longer approved");
     }
     const { projectSandbox } = await openWorkspaceSandboxes(
       profile.projectRoot,
@@ -148,9 +189,23 @@ export class HostWorkspaceService {
     const selectedThread = (await this.codex.listThreads(projectSandbox.getRoot())).find(
       (thread) => thread.id === profile.threadId,
     );
+    this.assertAdmitted(admission);
     if (!selectedThread) {
       throw new Error("Bound Codex task no longer belongs to the explicitly shared root");
     }
+    const attachments = await Promise.all(
+      message.attachments.map(async (attachment) => ({
+        name: attachment.name,
+        mediaType: attachment.mediaType,
+        content: await relay.readMessageAttachment(
+          profile.sessionId,
+          profile.memberToken,
+          message.id,
+          attachment,
+        ),
+      })),
+    );
+    this.assertAdmitted(admission);
     const result = await this.codex.submitPeerPrompt({
       threadId: profile.threadId,
       projectRoot: projectSandbox.getRoot(),
@@ -159,18 +214,7 @@ export class HostWorkspaceService {
       ownerMemberId: profile.memberId,
       peerDisplayName: message.senderDisplayName,
       body: message.body,
-      attachments: await Promise.all(
-        message.attachments.map(async (attachment) => ({
-          name: attachment.name,
-          mediaType: attachment.mediaType,
-          content: await relay.readMessageAttachment(
-            profile.sessionId,
-            profile.memberToken,
-            message.id,
-            attachment,
-          ),
-        })),
-      ),
+      attachments,
       codexOptions: message.codexOptions ?? DEFAULT_CODEX_PROMPT_OPTIONS,
     });
     if (result.status !== "submitted") {
@@ -191,30 +235,39 @@ export class HostWorkspaceService {
     return { forwarded: message, appServerSubmission: result };
   }
 
-  private async listFiles(): Promise<unknown> {
+  private async listFiles(admission?: HostWorkAdmission): Promise<unknown> {
     const { profile } = await this.context.current();
     const { projectSandbox } = await openWorkspaceSandboxes(
       profile.projectRoot,
       profile.codexConfigRoot,
     );
+    this.assertAdmitted(admission);
     return { root: projectSandbox.getRoot(), files: await projectSandbox.list() };
   }
 
-  private async readFile(args: HostToolArguments): Promise<unknown> {
+  private async readFile(
+    args: HostToolArguments,
+    admission?: HostWorkAdmission,
+  ): Promise<unknown> {
     const { profile } = await this.context.current();
     const { projectSandbox } = await openWorkspaceSandboxes(
       profile.projectRoot,
       profile.codexConfigRoot,
     );
+    this.assertAdmitted(admission);
     return projectSandbox.read(stringArgument(args, "path")!);
   }
 
-  private async writeFile(args: HostToolArguments): Promise<unknown> {
+  private async writeFile(
+    args: HostToolArguments,
+    admission?: HostWorkAdmission,
+  ): Promise<unknown> {
     const { profile } = await this.context.current();
     const { projectSandbox } = await openWorkspaceSandboxes(
       profile.projectRoot,
       profile.codexConfigRoot,
     );
+    this.assertAdmitted(admission);
     return projectSandbox.write(
       stringArgument(args, "path")!,
       stringArgument(args, "content", true) ?? "",
@@ -222,12 +275,17 @@ export class HostWorkspaceService {
     );
   }
 
-  private async publishCatalog(profile: LocalProfile, relay: RelayClient) {
+  private async publishCatalog(
+    profile: LocalProfile,
+    relay: RelayClient,
+    admission?: HostWorkAdmission,
+  ) {
     const { projectSandbox } = await openWorkspaceSandboxes(
       profile.projectRoot,
       profile.codexConfigRoot,
     );
     const threads = await this.codex.listThreads(projectSandbox.getRoot());
+    this.assertAdmitted(admission);
     return relay.publishWorkspaceCatalog(profile.sessionId, profile.memberToken, {
       deviceLabel: hostname(),
       rootLabel: this.rootLabel(projectSandbox.getRoot()),
@@ -245,5 +303,11 @@ export class HostWorkspaceService {
 
   private rootLabel(root: string): string {
     return basename(root) || root;
+  }
+
+  private assertAdmitted(admission?: HostWorkAdmission): void {
+    if (!hostWorkAllowed(admission)) {
+      throw new Error("Host runtime stopped accepting workspace work");
+    }
   }
 }

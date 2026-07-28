@@ -5,6 +5,7 @@ import { HostProfileContext } from "./host-profile-context.js";
 import { HostSessionService, isSessionToolName } from "./host-session-service.js";
 import { hostToolArguments } from "./host-tool-arguments.js";
 import { HostWorkspaceService } from "./host-workspace-service.js";
+import { hostWorkAllowed, type HostWorkAdmission } from "./host-runtime-admission.js";
 
 export class HostApplication {
   private readonly context: HostProfileContext;
@@ -21,27 +22,37 @@ export class HostApplication {
     this.workspace = new HostWorkspaceService(this.context, codex, workspaceSync);
   }
 
-  async callTool(name: string, rawArguments: unknown): Promise<unknown> {
+  async callTool(
+    name: string,
+    rawArguments: unknown,
+    admission?: HostWorkAdmission,
+  ): Promise<unknown> {
     const args = hostToolArguments(rawArguments);
     if (isSessionToolName(name)) return this.sessions.callTool(name, args);
-    return this.workspace.callTool(name, args);
+    return this.workspace.callTool(name, args, admission);
   }
 
   async readRuntimeProfile(): Promise<LocalProfile | null> {
     return this.profiles.read();
   }
 
-  async runBackgroundCycle(): Promise<void> {
-    await this.workspaceSync.processPendingFileOperations();
-    await this.workspaceSync.sync();
+  async runBackgroundCycle(admission?: HostWorkAdmission): Promise<void> {
+    await this.workspaceSync.processPendingFileOperations(
+      admission ? { admission } : {},
+    );
+    if (!hostWorkAllowed(admission)) return;
+    await this.workspaceSync.sync(false, admission ? { admission } : {});
   }
 
-  async reconcileAfterResume(): Promise<void> {
-    await this.workspaceSync.sync(true, { allowNewWork: false });
+  async reconcileAfterResume(admission?: HostWorkAdmission): Promise<void> {
+    await this.workspaceSync.sync(true, {
+      allowNewWork: false,
+      ...(admission ? { admission } : {}),
+    });
   }
 
-  async forwardPendingCommand(): Promise<string | null> {
-    return this.workspaceSync.forwardPendingCommand();
+  async forwardPendingCommand(admission?: HostWorkAdmission): Promise<string | null> {
+    return this.workspaceSync.forwardPendingCommand(admission ? { admission } : {});
   }
 
   async cancelActiveWork(): Promise<void> {

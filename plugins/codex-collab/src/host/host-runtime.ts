@@ -2,23 +2,12 @@ import type { RealtimeEnvelope } from "@codex-collab/protocol";
 import type { LocalProfile } from "../local-profile.js";
 import { RelayClient, RelayRequestError } from "../relay-client.js";
 import { HostRoomLifecycle, type HostRuntimePhase } from "./host-runtime-phase.js";
+import type { HostWorkAdmission } from "./host-runtime-admission.js";
 import { withHostRuntimeTimeout } from "./host-runtime-timeout.js";
-
+import { hostRealtimeProfileKey, reportHostRuntimeError, type RealtimeSocket, type RealtimeTicketClient } from "./host-runtime-realtime.js";
 export type { HostRuntimePhase } from "./host-runtime-phase.js";
 const defaultSyncIntervalMs = 1_000;
 
-interface RealtimeSocket {
-  readonly readyState: number;
-  addEventListener(type: "open", listener: () => void): void;
-  addEventListener(type: "message", listener: (event: { data: unknown }) => void): void;
-  addEventListener(type: "close", listener: (event: { code: number }) => void): void;
-  addEventListener(type: "error", listener: () => void): void;
-  close(): void;
-}
-
-interface RealtimeTicketClient {
-  createRealtimeTicket(sessionId: string, memberToken: string): Promise<{ ticket: string }>;
-}
 export interface HostRuntimeOptions {
   application: HostRuntimeApplication;
   syncIntervalMs?: number;
@@ -29,24 +18,14 @@ export interface HostRuntimeOptions {
   onPhaseChange?: (phase: HostRuntimePhase) => void;
   cancelTimeoutMs?: number;
 }
-
 export interface HostRuntimeApplication {
   readRuntimeProfile(): Promise<LocalProfile | null>;
-  runBackgroundCycle(): Promise<void>;
-  reconcileAfterResume?(): Promise<void>;
+  runBackgroundCycle(admission?: HostWorkAdmission): Promise<void>;
+  reconcileAfterResume?(admission?: HostWorkAdmission): Promise<void>;
   cancelActiveWork?(): Promise<void>;
-  forwardPendingCommand(): Promise<string | null>;
+  forwardPendingCommand(admission?: HostWorkAdmission): Promise<string | null>;
   close(): Promise<void>;
 }
-
-function profileKey(profile: LocalProfile): string {
-  return `${profile.relayUrl}\n${profile.sessionId}\n${profile.memberToken}`;
-}
-
-function defaultReportError(scope: string, error: unknown): void {
-  console.error(scope, error instanceof Error ? error.message : String(error));
-}
-
 export class HostRuntime {
   private readonly syncIntervalMs: number;
   private readonly createRelayClient: (relayUrl: string) => RealtimeTicketClient;
@@ -73,7 +52,7 @@ export class HostRuntime {
     this.createRealtimeSocket =
       options.createRealtimeSocket ?? ((url) => new WebSocket(url));
     this.random = options.random ?? Math.random;
-    this.reportError = options.reportError ?? defaultReportError;
+    this.reportError = options.reportError ?? reportHostRuntimeError;
     const cancelTimeoutMs = options.cancelTimeoutMs ?? 10_000;
     this.roomLifecycle = new HostRoomLifecycle({
       waitForActiveWork: () => this.waitForActiveWork(),
@@ -137,10 +116,11 @@ export class HostRuntime {
   }
 
   private async runSyncLoop(): Promise<void> {
+    const admission = this.admissionFor("active");
     do {
       this.syncRequested = false;
       try {
-        await this.options.application.runBackgroundCycle();
+        await this.options.application.runBackgroundCycle(admission);
       } catch (error) {
         this.reportError("[codex-collab workspace]", error);
       }
@@ -152,7 +132,7 @@ export class HostRuntime {
     if (this.activeForward) return this.activeForward;
     const pending = (async () => {
       try {
-        await this.options.application.forwardPendingCommand();
+        await this.options.application.forwardPendingCommand(this.admissionFor("active"));
       } catch (error) {
         this.reportError("[codex-collab command]", error);
       } finally {
@@ -174,15 +154,20 @@ export class HostRuntime {
   }
 
   private async runResumeReconciliation(): Promise<void> {
+    const admission = this.admissionFor("catching-up");
     const pending = this.options.application.reconcileAfterResume
-      ? this.options.application.reconcileAfterResume()
-      : this.options.application.runBackgroundCycle();
+      ? this.options.application.reconcileAfterResume(admission)
+      : this.options.application.runBackgroundCycle(admission);
     this.activeSync = pending;
     try {
       await pending;
     } finally {
       if (this.activeSync === pending) this.activeSync = null;
     }
+  }
+
+  private admissionFor(phase: HostRuntimePhase): HostWorkAdmission {
+    return { isAllowed: () => !this.stopping && this.getPhase() === phase };
   }
 
   private closeRealtimeConnection(): void {
@@ -230,7 +215,7 @@ export class HostRuntime {
       this.closeRealtimeConnection();
       return;
     }
-    const key = profileKey(profile);
+    const key = hostRealtimeProfileKey(profile);
     if (this.blockedRealtimeProfileKey === key) return;
     if (
       this.realtimeProfileKey === key &&
@@ -304,7 +289,8 @@ export class HostRuntime {
       this.handleRealtimeMessage(profile.sessionId, event.data);
     });
     socket.addEventListener("close", (event) => {
-      if (this.realtimeSocket === socket) this.realtimeSocket = null;
+      if (this.realtimeSocket !== socket) return;
+      this.handleRealtimeDisconnect(socket);
       if (event.code === 4001) {
         this.blockedRealtimeProfileKey = key;
         return;
@@ -314,12 +300,24 @@ export class HostRuntime {
       }
     });
     socket.addEventListener("error", () => {
+      if (this.realtimeSocket !== socket) return;
+      this.handleRealtimeDisconnect(socket);
       try {
         socket.close();
       } catch {
         // The close event or polling fallback will reconnect.
       }
+      if (!this.stopping && this.realtimeProfileKey === key) {
+        this.scheduleRealtimeReconnect(key);
+      }
     });
+  }
+
+  private handleRealtimeDisconnect(socket: RealtimeSocket): void {
+    if (this.realtimeSocket !== socket) return;
+    this.realtimeSocket = null;
+    this.syncRequested = false;
+    this.roomLifecycle.markUnpaired();
   }
 
   private handleRealtimeMessage(sessionId: string, data: unknown): void {

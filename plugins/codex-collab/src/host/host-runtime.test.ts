@@ -314,10 +314,9 @@ describe("HostRuntime", () => {
     expect(runtime.getPhase()).toBe("draining");
     await Promise.resolve();
     expect(runtime.getPhase()).toBe("draining");
-    expect(cancelActiveWork).not.toHaveBeenCalled();
+    expect(cancelActiveWork).toHaveBeenCalledTimes(1);
     finishActiveCycle();
     await vi.waitFor(() => expect(runtime.getPhase()).toBe("suspended"));
-    expect(cancelActiveWork).toHaveBeenCalledTimes(1);
 
     socket.emit("message", {
       data: JSON.stringify({
@@ -356,8 +355,12 @@ describe("HostRuntime", () => {
     fixture.emitRoomStatus("open");
     await vi.waitFor(() => expect(fixture.runtime.getPhase()).toBe("catching-up"));
     await vi.waitFor(() => expect(fixture.sync).toHaveBeenCalledTimes(1));
+    const cancellationsBeforeClose = fixture.cancelActiveWork.mock.calls.length;
     fixture.emitRoomStatus("closed");
     expect(fixture.runtime.getPhase()).toBe("draining");
+    await vi.waitFor(() =>
+      expect(fixture.cancelActiveWork).toHaveBeenCalledTimes(cancellationsBeforeClose + 1),
+    );
 
     finishCatchUp();
     await vi.waitFor(() => expect(fixture.runtime.getPhase()).toBe("suspended"));
@@ -447,4 +450,58 @@ describe("HostRuntime", () => {
     expect(reconcileAfterResume).toHaveBeenCalledTimes(2);
     await runtime.stop();
   });
+
+  it.each(["close", "error"] as const)(
+    "leaves active on realtime %s and catches up after reconnect",
+    async (eventType) => {
+      const sockets: FakeRealtimeSocket[] = [];
+      const reconcileAfterResume = vi.fn().mockResolvedValue(undefined);
+      const runBackgroundCycle = vi.fn().mockResolvedValue(undefined);
+      const runtime = new HostRuntime({
+        application: {
+          readRuntimeProfile: vi.fn().mockResolvedValue(ownerProfile),
+          runBackgroundCycle,
+          reconcileAfterResume,
+          forwardPendingCommand: vi.fn().mockResolvedValue(null),
+          close: vi.fn().mockResolvedValue(undefined),
+        },
+        syncIntervalMs: 60_000,
+        random: () => -2,
+        createRelayClient: () => ({
+          createRealtimeTicket: vi.fn().mockResolvedValue({ ticket: "ticket-1" }),
+        }),
+        createRealtimeSocket: () => {
+          const socket = new FakeRealtimeSocket();
+          sockets.push(socket);
+          return socket;
+        },
+      });
+
+      await runtime.start();
+      sockets[0]!.emit("message", {
+        data: JSON.stringify({
+          type: "ready",
+          sessionId: "session-1",
+          payload: { session: { roomStatus: "open" } },
+        }),
+      });
+      await vi.waitFor(() => expect(runtime.getPhase()).toBe("active"));
+
+      sockets[0]!.emit(eventType, eventType === "close" ? { code: 1006 } : undefined);
+      expect(runtime.getPhase()).toBe("unpaired");
+      await vi.waitFor(() => expect(sockets).toHaveLength(2));
+      sockets[1]!.emit("message", {
+        data: JSON.stringify({
+          type: "ready",
+          sessionId: "session-1",
+          payload: { session: { roomStatus: "open" } },
+        }),
+      });
+
+      await vi.waitFor(() => expect(runtime.getPhase()).toBe("active"));
+      expect(reconcileAfterResume).toHaveBeenCalledTimes(2);
+      expect(runBackgroundCycle).not.toHaveBeenCalled();
+      await runtime.stop();
+    },
+  );
 });

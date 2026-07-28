@@ -75,6 +75,7 @@ export class HostService {
     const runtime = new HostRuntime({ application, reportError: report });
     service = new HostService(runtime, broker, ready.instanceId, options.stateDirectory);
     dispatcher = new HostIpcRequestDispatcher(application, {
+      runtimePhase: () => runtime.getPhase(),
       status: async () => {
         const phase = runtime.getPhase();
         return {

@@ -1,8 +1,50 @@
 import { describe, expect, it, vi } from "vitest";
-import { forwardNextCodexPrompt } from "./workspace-sync-service.js";
+import type { Message } from "@codex-collab/protocol";
+import {
+  forwardNextCodexPrompt,
+  rejectUnapprovedQueuedCommands,
+} from "./workspace-sync-service.js";
 import { ownerPrompt, profile } from "./workspace-sync-test-fixtures.js";
 
 describe("Codex prompt forwarding", () => {
+  it("fails queued commands whose sender is no longer approved", async () => {
+    const revokedPrompt = {
+      ...ownerPrompt,
+      senderMemberId: "editor-1",
+      senderDisplayName: "Editor",
+    };
+    const updateMessageDeliveryStatus = vi.fn().mockResolvedValue(revokedPrompt);
+
+    await expect(
+      rejectUnapprovedQueuedCommands(
+        profile,
+        "thread-1",
+        [revokedPrompt],
+        [{
+          id: "editor-1",
+          sessionId: "session-1",
+          displayName: "Editor",
+          deviceLabel: null,
+          role: "editor",
+          status: "revoked",
+          workspaceFileAccess: "workspace-write",
+          createdAt: "2026-07-25T00:00:00.000Z",
+          approvedAt: null,
+        }],
+        { updateMessageDeliveryStatus },
+      ),
+    ).resolves.toBe(1);
+
+    expect(revokedPrompt.deliveryStatus).toBe("failed");
+    expect(updateMessageDeliveryStatus).toHaveBeenCalledWith(
+      "session-1",
+      "member-token",
+      "prompt-1",
+      "failed",
+      null,
+    );
+  });
+
   it("records a prompt only after the app-server accepts it", async () => {
     const listMessages = vi.fn().mockResolvedValue([ownerPrompt]);
     const readMessageAttachment = vi.fn();
@@ -433,6 +475,69 @@ describe("Codex prompt forwarding", () => {
         codexOptions: attachmentPrompt.codexOptions,
       }),
     );
+  });
+
+  it("does not submit after admission closes while reading an attachment", async () => {
+    let releaseAttachment!: () => void;
+    const attachmentReady = new Promise<Uint8Array>((resolve) => {
+      releaseAttachment = () => resolve(new Uint8Array([1, 2, 3]));
+    });
+    const attachmentPrompt = {
+      ...ownerPrompt,
+      attachments: [{
+        id: "attachment-1", name: "diagram.png", mediaType: "image/png", size: 3,
+      }],
+    };
+    let allowed = true;
+    const readMessageAttachment = vi.fn().mockReturnValue(attachmentReady);
+    const submitPeerPrompt = vi.fn();
+    const forwarding = forwardNextCodexPrompt(
+      profile,
+      "thread-1",
+      {
+        listMessages: vi.fn().mockResolvedValue([attachmentPrompt]),
+        readMessageAttachment,
+        updateMessageDeliveryStatus: vi.fn(),
+      },
+      { submitPeerPrompt, stopPeerPrompt: vi.fn() },
+      { update: vi.fn() },
+      false,
+      undefined,
+      { isAllowed: () => allowed },
+    );
+    await vi.waitFor(() => expect(readMessageAttachment).toHaveBeenCalledTimes(1));
+    allowed = false;
+    releaseAttachment();
+
+    await expect(forwarding).resolves.toBeNull();
+    expect(submitPeerPrompt).not.toHaveBeenCalled();
+  });
+
+  it("does not stop a turn after admission closes while loading commands", async () => {
+    let releaseMessages!: (messages: Message[]) => void;
+    const messagesReady = new Promise<Message[]>((resolve) => {
+      releaseMessages = resolve;
+    });
+    const stopMessage = { ...ownerPrompt, id: "stop-closed", kind: "codex_stop" as const };
+    let allowed = true;
+    const listMessages = vi.fn().mockReturnValue(messagesReady);
+    const stopPeerPrompt = vi.fn();
+    const forwarding = forwardNextCodexPrompt(
+      profile,
+      "thread-1",
+      { listMessages, readMessageAttachment: vi.fn(), updateMessageDeliveryStatus: vi.fn() },
+      { submitPeerPrompt: vi.fn(), stopPeerPrompt },
+      { update: vi.fn() },
+      false,
+      undefined,
+      { isAllowed: () => allowed },
+    );
+    await vi.waitFor(() => expect(listMessages).toHaveBeenCalledTimes(1));
+    allowed = false;
+    releaseMessages([stopMessage]);
+
+    await expect(forwarding).resolves.toBeNull();
+    expect(stopPeerPrompt).not.toHaveBeenCalled();
   });
 
   it("forwards a stop request even while the selected task is active", async () => {

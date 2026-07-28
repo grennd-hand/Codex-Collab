@@ -8,12 +8,15 @@ import {
   HostIpcProtocolError,
   type HostIpcRequestV1,
   type HostIpcResponseV1,
+  type HostRuntimePhase,
   type HostIpcStatusV1,
+  type HostToolMethod,
   isHostToolMethod,
   parseHostIpcRequest,
 } from "./protocol.js";
 
 export interface HostIpcDispatcherOptions {
+  runtimePhase: () => HostRuntimePhase;
   status: () => HostIpcStatusV1 | Promise<HostIpcStatusV1>;
   gracefulStop: () => void | Promise<void>;
   now?: () => number;
@@ -30,6 +33,15 @@ const maxCachedResponseBytes = 1024 * 1024;
 const maxGlobalInFlight = 32;
 const maxPeerInFlight = 8;
 const receiptTtlMs = 5 * 60_000;
+const runtimeRestrictedTools: ReadonlySet<HostToolMethod> = new Set([
+  "collab_refresh_workspace",
+  "collab_bind_thread",
+  "collab_list_codex_threads",
+  "collab_forward_prompt",
+  "collab_list_files",
+  "collab_read_file",
+  "collab_write_file",
+]);
 
 export class HostIpcRequestDispatcher {
   private readonly receipts = new Map<string, RequestReceipt>();
@@ -127,7 +139,13 @@ export class HostIpcRequestDispatcher {
           "forbidden",
         );
       }
-      return this.application.callTool(request.method, request.params);
+      assertRuntimeAdmission(request.method, this.options.runtimePhase());
+      const admission = runtimeRestrictedTools.has(request.method)
+        ? { isAllowed: () => this.options.runtimePhase() === "active" }
+        : undefined;
+      return admission
+        ? this.application.callTool(request.method, request.params, admission)
+        : this.application.callTool(request.method, request.params);
     }
     if (request.method === "host.status") {
       assertEmptyParams(request.params);
@@ -152,6 +170,16 @@ export class HostIpcRequestDispatcher {
       if (receipt.expiresAt < now) this.receipts.delete(id);
     }
   }
+}
+
+function assertRuntimeAdmission(method: HostToolMethod, phase: HostRuntimePhase): void {
+  if (phase === "active" || !runtimeRestrictedTools.has(method)) {
+    return;
+  }
+  throw new HostIpcProtocolError(
+    `Host runtime is ${phase}; ${method} is unavailable until the Host is active`,
+    "host_error",
+  );
 }
 
 function assertEmptyParams(params: Record<string, unknown>): void {

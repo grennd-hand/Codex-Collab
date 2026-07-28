@@ -51,7 +51,15 @@ export class HostRoomLifecycle {
       this.setPhase("catching-up");
     }
 
-    const pending = this.transition.then(() => this.applyTransition(roomStatus, version));
+    const cancellation = roomStatus === "closed"
+      ? this.options.cancelActiveWork().then(
+          () => ({ error: null }),
+          (error: unknown) => ({ error }),
+        )
+      : null;
+    const pending = this.transition.then(
+      () => this.applyTransition(roomStatus, version, cancellation),
+    );
     this.transition = pending.catch((error: unknown) => {
       this.options.reportError("[codex-collab resume]", error);
       if (!this.stopped && version === this.transitionVersion) this.setPhase("failed");
@@ -66,19 +74,22 @@ export class HostRoomLifecycle {
     await this.transition;
   }
 
-  private async applyTransition(roomStatus: RoomStatus, version: number): Promise<void> {
+  private async applyTransition(
+    roomStatus: RoomStatus,
+    version: number,
+    cancellation: Promise<{ error: unknown }> | null,
+  ): Promise<void> {
     if (this.stopped || version !== this.transitionVersion) return;
-    await this.options.waitForActiveWork();
-    if (this.stopped || version !== this.transitionVersion) return;
-
     if (roomStatus === "closed") {
-      await this.options.cancelActiveWork();
-      if (this.stopped || version !== this.transitionVersion) return;
       await this.options.waitForActiveWork();
       if (this.stopped || version !== this.transitionVersion) return;
+      const cancelled = await cancellation!;
+      if (cancelled.error) throw cancelled.error;
       this.setPhase("suspended");
       return;
     }
+    await this.options.waitForActiveWork();
+    if (this.stopped || version !== this.transitionVersion) return;
     this.setPhase("catching-up");
     await this.options.reconcileAfterResume();
     if (!this.stopped && version === this.transitionVersion) this.setPhase("active");

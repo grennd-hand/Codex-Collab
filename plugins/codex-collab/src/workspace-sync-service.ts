@@ -3,7 +3,6 @@ import { basename } from "node:path";
 import {
   type CodexRuntimeStatus,
   type CodexThreadCatalogEntry,
-  type Message,
   type WorkspaceSummary,
   type WorkspaceSyncState,
 } from "@codex-collab/protocol";
@@ -12,7 +11,7 @@ import {
   readCodexThreadRevision,
   type CodexThreadSummary,
 } from "./app-server-client.js";
-import { LocalProfileStore, type LocalProfile } from "./local-profile.js";
+import { LocalProfileStore } from "./local-profile.js";
 import { RelayClient } from "./relay-client.js";
 import { processNextWorkspaceFileOperation } from "./workspace-file-operations.js";
 import { cacheNextWorkspaceThreadHistory } from "./workspace-history-backfill.js";
@@ -33,9 +32,16 @@ import {
   hasInFlightCodexCommand,
   reconcileCodexCommandStatuses,
 } from "./codex-command-sync.js";
+import { WorkspaceCommandForwarder } from "./workspace-command-forwarder.js";
+import {
+  runAdmittedBatch,
+  workspaceWorkAllowed as workAllowed,
+  type WorkspaceSyncAdmission,
+} from "./workspace-sync-admission.js";
 export {
   forwardNextCodexPrompt,
   reconcileCodexCommandStatuses,
+  rejectUnapprovedQueuedCommands,
 } from "./codex-command-sync.js";
 
 export interface WorkspaceSyncResult {
@@ -43,6 +49,13 @@ export interface WorkspaceSyncResult {
   syncedAt: string | null;
   historyCount: number;
   fileCount: number;
+}
+
+function syncResult(workspace: WorkspaceSyncState): WorkspaceSyncResult {
+  return {
+    selectedThreadId: workspace.selectedThreadId, syncedAt: workspace.syncedAt,
+    historyCount: workspace.historyCount, fileCount: workspace.fileCount,
+  };
 }
 
 function syncStateFromSummary(workspace: WorkspaceSummary): WorkspaceSyncState {
@@ -98,7 +111,7 @@ function stringListsMatch(
 
 export class WorkspaceSyncService {
   private active = false;
-  private forwarding: Promise<string | null> | null = null;
+  private readonly commandForwarder: WorkspaceCommandForwarder;
   private marker: WorkspaceSyncMarker | null = null;
   private workspaceDigest: string | null = null;
   private filesDirty = false;
@@ -107,22 +120,28 @@ export class WorkspaceSyncService {
   constructor(
     private readonly profiles: LocalProfileStore,
     private readonly codex: CodexAppServerClient,
-  ) {}
+  ) {
+    this.commandForwarder = new WorkspaceCommandForwarder(profiles, codex);
+  }
 
-  async forwardPendingCommand(): Promise<string | null> {
+  async forwardPendingCommand(options: { admission?: WorkspaceSyncAdmission } = {}): Promise<string | null> {
+    if (!workAllowed(options.admission)) return null;
     const profile = await this.profiles.read();
     if (!profile || profile.role !== "owner") return null;
+    if (!workAllowed(options.admission)) return null;
     const relay = new RelayClient(profile.relayUrl);
     const workspace = await relay.getWorkspaceSyncState(
       profile.sessionId,
       profile.memberToken,
     );
+    if (!workAllowed(options.admission)) return null;
     if (!workspace.selectedThreadId) return null;
     const { projectSandbox: sandbox } = await openWorkspaceSandboxes(
       profile.projectRoot,
       profile.codexConfigRoot,
     );
     const localThreads = await this.codex.listThreads(sandbox.getRoot());
+    if (!workAllowed(options.admission)) return null;
     const selectedLocalThread = localThreads.find(
       (thread) => thread.id === workspace.selectedThreadId,
     );
@@ -135,17 +154,18 @@ export class WorkspaceSyncService {
       workspace.selectedThreadId,
       selectedLocalThread.path,
     );
-    return this.forwardValidatedCommand(
-      profile,
-      workspace.selectedThreadId,
-      relay,
-      runtimeBusy,
+    if (!workAllowed(options.admission)) return null;
+    return this.commandForwarder.forward(
+      profile, workspace.selectedThreadId, relay, runtimeBusy, undefined, options.admission,
     );
   }
 
-  async processPendingFileOperations(): Promise<number> {
+  async processPendingFileOperations(
+    options: { admission?: WorkspaceSyncAdmission } = {},
+  ): Promise<number> {
     if (this.processingFileOperations) return this.processingFileOperations;
     const pending = (async () => {
+      if (!workAllowed(options.admission)) return 0;
       const profile = await this.profiles.read();
       if (!profile || profile.role !== "owner") return 0;
       const relay = new RelayClient(profile.relayUrl);
@@ -153,8 +173,7 @@ export class WorkspaceSyncService {
         profile.projectRoot,
         profile.codexConfigRoot,
       );
-      let processed = 0;
-      while (processed < 20) {
+      return runAdmittedBatch(20, options.admission, async () => {
         const operation = await processNextWorkspaceFileOperation(
           profile.sessionId,
           profile.memberToken,
@@ -162,13 +181,12 @@ export class WorkspaceSyncService {
           projectSandbox,
           codexConfigSandbox,
         );
-        if (!operation) break;
-        processed += 1;
+        if (!operation) return null;
         if (operation.kind !== "read" && operation.status === "completed") {
           this.filesDirty = true;
         }
-      }
-      return processed;
+        return operation;
+      });
     })();
     this.processingFileOperations = pending;
     const clear = () => {
@@ -182,8 +200,11 @@ export class WorkspaceSyncService {
 
   async sync(
     force = false,
-    options: { allowNewWork?: boolean } = {},
+    options: { allowNewWork?: boolean; admission?: WorkspaceSyncAdmission } = {},
   ): Promise<WorkspaceSyncResult> {
+    if (!workAllowed(options.admission)) {
+      return { selectedThreadId: null, syncedAt: null, historyCount: 0, fileCount: 0 };
+    }
     if (this.active) {
       return { selectedThreadId: null, syncedAt: null, historyCount: 0, fileCount: 0 };
     }
@@ -193,14 +214,19 @@ export class WorkspaceSyncService {
       if (!profile || profile.role !== "owner") {
         return { selectedThreadId: null, syncedAt: null, historyCount: 0, fileCount: 0 };
       }
+      if (!workAllowed(options.admission)) {
+        return { selectedThreadId: null, syncedAt: null, historyCount: 0, fileCount: 0 };
+      }
       const relay = new RelayClient(profile.relayUrl);
       let workspace = await relay.getWorkspaceSyncState(
         profile.sessionId,
         profile.memberToken,
       );
+      if (!workAllowed(options.admission)) return syncResult(workspace);
       const { projectSandbox: sandbox, codexConfigSandbox } =
         await openWorkspaceSandboxes(profile.projectRoot, profile.codexConfigRoot);
       const localThreads = await this.codex.listThreads(sandbox.getRoot());
+      if (!workAllowed(options.admission)) return syncResult(workspace);
       const catalog = localThreads.map(catalogEntry);
       const localThreadIds = localThreads.map((thread) => thread.id);
       const observedThreadIds = profile.observedThreadIds;
@@ -226,6 +252,7 @@ export class WorkspaceSyncService {
             },
           ),
         );
+        if (!workAllowed(options.admission)) return syncResult(workspace);
       }
 
       let selectedLocalThread = localThreads.find(
@@ -238,6 +265,7 @@ export class WorkspaceSyncService {
         newestDiscoveredThread &&
         newestDiscoveredThread.id !== workspace.selectedThreadId
       ) {
+        if (!workAllowed(options.admission)) return syncResult(workspace);
         if (selectedLocalThread && workspace.selectedThreadId) {
           selectedRuntimeBusy = await this.codex.isThreadBusyForPrompt(
             workspace.selectedThreadId,
@@ -248,9 +276,11 @@ export class WorkspaceSyncService {
             selectionDeferred = hasInFlightCodexCommand(
               await relay.listMessages(profile.sessionId, profile.memberToken),
             );
+            if (!workAllowed(options.admission)) return syncResult(workspace);
           }
         }
         if (!selectionDeferred) {
+          if (!workAllowed(options.admission)) return syncResult(workspace);
           workspace = syncStateFromSummary(
             await relay.selectWorkspaceThread(
               profile.sessionId,
@@ -268,6 +298,7 @@ export class WorkspaceSyncService {
         !selectionDeferred &&
         (needsCatalogMigration || !stringListsMatch(observedThreadIds, localThreadIds))
       ) {
+        if (!workAllowed(options.admission)) return syncResult(workspace);
         await this.profiles.update({
           observedThreadIds: localThreadIds,
           threadCatalogVersion: 1,
@@ -278,12 +309,7 @@ export class WorkspaceSyncService {
         this.marker = null;
         this.workspaceDigest = null;
         this.filesDirty = false;
-        return {
-          selectedThreadId: workspace.selectedThreadId,
-          syncedAt: workspace.syncedAt,
-          historyCount: workspace.historyCount,
-          fileCount: workspace.fileCount,
-        };
+        return syncResult(workspace);
       }
 
       if (!selectedLocalThread) {
@@ -295,10 +321,12 @@ export class WorkspaceSyncService {
           workspace.selectedThreadId,
           selectedLocalThread.path,
         ));
+      if (!workAllowed(options.admission)) return syncResult(workspace);
       const relayMessages = await relay.listMessages(
         profile.sessionId,
         profile.memberToken,
       );
+      if (!workAllowed(options.admission)) return syncResult(workspace);
       await reconcileCodexCommandStatuses(
         profile,
         workspace.selectedThreadId,
@@ -307,25 +335,29 @@ export class WorkspaceSyncService {
         runtimeBusy,
         relayMessages,
       );
+      if (!workAllowed(options.admission)) return syncResult(workspace);
       const forwardedCommandId =
-        options.allowNewWork === false
+        options.allowNewWork === false || !workAllowed(options.admission)
           ? null
-          : await this.forwardValidatedCommand(
+          : await this.commandForwarder.forward(
               profile,
               workspace.selectedThreadId,
               relay,
               runtimeBusy,
               relayMessages,
+              options.admission,
             );
       const runtimeRunning = runtimeBusy || Boolean(forwardedCommandId);
       const runtimeStatus: CodexRuntimeStatus = runtimeRunning ? "running" : "idle";
       if (workspace.codexRuntimeStatus !== runtimeStatus) {
+        if (!workAllowed(options.admission)) return syncResult(workspace);
         await relay.publishCodexRuntimeStatus(
           profile.sessionId,
           profile.memberToken,
           runtimeStatus,
         );
       }
+      if (!workAllowed(options.admission)) return syncResult(workspace);
       await cacheNextWorkspaceThreadHistory(
         profile,
         workspace,
@@ -333,8 +365,10 @@ export class WorkspaceSyncService {
         this.codex,
         relay,
       );
+      if (!workAllowed(options.admission)) return syncResult(workspace);
 
       const revision = await readCodexThreadRevision(selectedLocalThread);
+      if (!workAllowed(options.admission)) return syncResult(workspace);
       const syncState = {
         force,
         sessionId: profile.sessionId,
@@ -348,6 +382,7 @@ export class WorkspaceSyncService {
         sandbox,
         codexConfigSandbox,
       );
+      if (!workAllowed(options.admission)) return syncResult(workspace);
       if (this.workspaceDigest === null) {
         this.workspaceDigest = manifest.digest;
       } else if (this.workspaceDigest !== manifest.digest) {
@@ -355,18 +390,14 @@ export class WorkspaceSyncService {
       }
       const shouldFinalizeFiles = !runtimeRunning && this.filesDirty;
       if (!historyChanged && !shouldFinalizeFiles) {
-        return {
-          selectedThreadId: workspace.selectedThreadId,
-          syncedAt: workspace.syncedAt,
-          historyCount: workspace.historyCount,
-          fileCount: workspace.fileCount,
-        };
+        return syncResult(workspace);
       }
 
       const history = await this.codex.readThreadHistory(
         workspace.selectedThreadId,
         selectedLocalThread.path,
       );
+      if (!workAllowed(options.admission)) return syncResult(workspace);
       const historyDigest = workspaceHistoryDigest(history);
       const historyNeedsPublish =
         historyChanged &&
@@ -378,12 +409,7 @@ export class WorkspaceSyncService {
           revision,
           historyDigest,
         };
-        return {
-          selectedThreadId: workspace.selectedThreadId,
-          syncedAt: workspace.syncedAt,
-          historyCount: workspace.historyCount,
-          fileCount: workspace.fileCount,
-        };
+        return syncResult(workspace);
       }
 
       const canReuseWorkspaceFiles =
@@ -392,6 +418,7 @@ export class WorkspaceSyncService {
         (runtimeRunning && workspace.syncedAt && !force) ||
         canReuseWorkspaceFiles
       ) {
+        if (!workAllowed(options.admission)) return syncResult(workspace);
         const imported = await relay.publishWorkspaceHistory(
           profile.sessionId,
           profile.memberToken,
@@ -408,12 +435,7 @@ export class WorkspaceSyncService {
         };
         this.filesDirty = runtimeRunning;
         await this.profiles.update({ threadId: workspace.selectedThreadId });
-        return {
-          selectedThreadId: imported.selectedThreadId,
-          syncedAt: imported.syncedAt,
-          historyCount: imported.historyCount,
-          fileCount: imported.fileCount,
-        };
+        return syncResult(imported);
       }
 
       const [projectFiles, codexConfigFiles] = await Promise.all([
@@ -422,6 +444,7 @@ export class WorkspaceSyncService {
           ? buildCodexConfigSnapshot(codexConfigSandbox)
           : Promise.resolve([]),
       ]);
+      if (!workAllowed(options.admission)) return syncResult(workspace);
       const imported = await relay.publishWorkspaceSnapshot(
         profile.sessionId,
         profile.memberToken,
@@ -441,41 +464,10 @@ export class WorkspaceSyncService {
       this.workspaceDigest = manifest.digest;
       this.filesDirty = runtimeRunning;
       await this.profiles.update({ threadId: workspace.selectedThreadId });
-      return {
-        selectedThreadId: imported.selectedThreadId,
-        syncedAt: imported.syncedAt,
-        historyCount: imported.historyCount,
-        fileCount: imported.fileCount,
-      };
+      return syncResult(imported);
     } finally {
       this.active = false;
     }
   }
 
-  private forwardValidatedCommand(
-    profile: LocalProfile,
-    threadId: string,
-    relay: RelayClient,
-    threadBusy: boolean,
-    prefetchedMessages?: Message[],
-  ): Promise<string | null> {
-    if (this.forwarding) return this.forwarding;
-    const pending = forwardNextCodexPrompt(
-      profile,
-      threadId,
-      relay,
-      this.codex,
-      this.profiles,
-      threadBusy,
-      prefetchedMessages,
-    );
-    this.forwarding = pending;
-    const clear = () => {
-      if (this.forwarding === pending) {
-        this.forwarding = null;
-      }
-    };
-    void pending.then(clear, clear);
-    return pending;
-  }
 }

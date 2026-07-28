@@ -134,6 +134,22 @@ describe("HostApplication", () => {
     });
   });
 
+  it("does not enter sync when room admission closes during a file operation", async () => {
+    const fixture = createApplication();
+    let allowed = true;
+    vi.mocked(fixture.workspaceSync.processPendingFileOperations).mockImplementation(
+      async () => {
+        allowed = false;
+        return 1;
+      },
+    );
+
+    await fixture.application.runBackgroundCycle({ isAllowed: () => allowed });
+
+    expect(fixture.workspaceSync.processPendingFileOperations).toHaveBeenCalledTimes(1);
+    expect(fixture.workspaceSync.sync).not.toHaveBeenCalled();
+  });
+
   it("cancels the selected owner turn before room suspension", async () => {
     const fixture = createApplication();
     vi.mocked(fixture.profiles.read).mockResolvedValue({

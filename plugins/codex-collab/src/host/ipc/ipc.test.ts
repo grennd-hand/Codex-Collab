@@ -18,6 +18,7 @@ import {
   type HostIpcMethod,
   HostIpcProtocolError,
   type HostIpcRequestV1,
+  type HostRuntimePhase,
   parseHostIpcRequest,
   parseHostIpcResponse,
 } from "./protocol.js";
@@ -259,8 +260,10 @@ describe("Host IPC mutual authentication", () => {
 });
 
 describe("Host IPC dispatcher", () => {
-  function fixture(now = () => 1_000) {
+  function fixture(now = () => 1_000, initialPhase: HostRuntimePhase = "active") {
+    let phase = initialPhase;
     const callTool = vi.fn().mockResolvedValue({ ok: true });
+    const runtimePhase = vi.fn(() => phase);
     const status = vi.fn().mockResolvedValue({
       phase: "active",
       paired: true,
@@ -271,9 +274,18 @@ describe("Host IPC dispatcher", () => {
     const application = { callTool } as unknown as Pick<HostApplication, "callTool">;
     return {
       callTool,
+      runtimePhase,
+      setPhase(nextPhase: HostRuntimePhase) {
+        phase = nextPhase;
+      },
       status,
       gracefulStop,
-      dispatcher: new HostIpcRequestDispatcher(application, { status, gracefulStop, now }),
+      dispatcher: new HostIpcRequestDispatcher(application, {
+        runtimePhase,
+        status,
+        gracefulStop,
+        now,
+      }),
     };
   }
 
@@ -325,6 +337,97 @@ describe("Host IPC dispatcher", () => {
       expect(denied).toMatchObject({ ok: false, error: { code: "forbidden" } });
     }
     expect(test.callTool).not.toHaveBeenCalled();
+  });
+
+  it.each(["unpaired", "draining", "suspended", "catching-up", "failed"] as const)(
+    "blocks Codex, workspace scan and file tools while the runtime is %s",
+    async (phase) => {
+      const test = fixture(() => 1_000, phase);
+      const deniedMethods = [
+        "collab_refresh_workspace",
+        "collab_bind_thread",
+        "collab_list_codex_threads",
+        "collab_forward_prompt",
+        "collab_list_files",
+        "collab_read_file",
+        "collab_write_file",
+      ] as const;
+      const admittedMethods = HOST_TOOL_METHODS.filter(
+        (method) => !deniedMethods.includes(method as (typeof deniedMethods)[number]),
+      );
+      for (const [index, method] of admittedMethods.entries()) {
+        await expect(
+          test.dispatcher.dispatch(
+            peer("mcp"),
+            request(method, { id: `safe-${index}` }),
+          ),
+        ).resolves.toMatchObject({ ok: true });
+      }
+
+      for (const [index, method] of deniedMethods.entries()) {
+        await expect(
+          test.dispatcher.dispatch(
+            peer("mcp"),
+            request(method, { id: `denied-${index}` }),
+          ),
+        ).resolves.toMatchObject({
+          ok: false,
+          error: {
+            code: "host_error",
+            message: `Host runtime is ${phase}; ${method} is unavailable until the Host is active`,
+          },
+        });
+      }
+      expect(test.callTool).toHaveBeenCalledTimes(admittedMethods.length);
+    },
+  );
+
+  it("uses the runtime phase instead of the status acceptingWork presentation", async () => {
+    const test = fixture(() => 1_000, "suspended");
+    const denied = await test.dispatcher.dispatch(
+      peer("mcp"),
+      request("collab_write_file"),
+    );
+    expect(denied).toMatchObject({ ok: false, error: { code: "host_error" } });
+    expect(test.runtimePhase).toHaveBeenCalledTimes(1);
+    expect(test.status).not.toHaveBeenCalled();
+    expect(test.callTool).not.toHaveBeenCalled();
+
+    test.setPhase("active");
+    await expect(
+      test.dispatcher.dispatch(
+        peer("mcp"),
+        request("collab_write_file", { id: "active-write" }),
+      ),
+    ).resolves.toMatchObject({ ok: true });
+    expect(test.callTool).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes a live admission guard into an accepted workspace tool", async () => {
+    const test = fixture();
+    let release!: () => void;
+    const paused = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    test.callTool.mockImplementation(
+      async (_method, _params, admission: { isAllowed(): boolean }) => {
+        await paused;
+        return { allowed: admission.isAllowed() };
+      },
+    );
+
+    const response = test.dispatcher.dispatch(
+      peer("mcp"),
+      request("collab_refresh_workspace", { id: "guarded-refresh" }),
+    );
+    await vi.waitFor(() => expect(test.callTool).toHaveBeenCalledTimes(1));
+    test.setPhase("suspended");
+    release();
+
+    await expect(response).resolves.toMatchObject({
+      ok: true,
+      result: { allowed: false },
+    });
   });
 
   it("returns the same receipt for an exact retry and rejects id reuse", async () => {
