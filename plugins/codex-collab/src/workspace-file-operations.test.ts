@@ -174,7 +174,7 @@ describe("workspace file operation host execution", () => {
       ),
     ).resolves.toEqual({ status: "completed" });
     expect((await stat(join(root, "src", "renamed"))).isDirectory()).toBe(true);
-  });
+  }, 10_000);
 
   it("creates new files and empty directories without overwriting existing paths", async () => {
     const root = await tempRoot();

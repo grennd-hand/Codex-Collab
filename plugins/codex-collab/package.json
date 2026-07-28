@@ -3,6 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "exports": {
+    "./host-ipc": {
+      "types": "./src/host/ipc/public.ts",
+      "default": "./dist/host/ipc/public.js"
+    },
+    "./host-worker": "./dist/workspace-sync-worker.js"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/mcp-server.ts",

@@ -57,6 +57,13 @@ try {
   if (!names.includes("collab_create_session") || !names.includes("collab_forward_prompt")) {
     throw new Error(`Expected tools are missing: ${names.join(", ")}`);
   }
+  const statusCall = await request(3, "tools/call", {
+    name: "collab_status",
+    arguments: {},
+  });
+  if (!Array.isArray(statusCall?.content) || statusCall.content.length === 0) {
+    throw new Error("collab_status did not return an MCP tool response through the Host");
+  }
   process.stdout.write(
     `${JSON.stringify(
       {
@@ -64,11 +71,28 @@ try {
         protocolVersion: initialize.protocolVersion,
         toolCount: names.length,
         tools: names,
+        hostToolRoute: {
+          tool: "collab_status",
+          responded: true,
+          isError: statusCall.isError === true,
+        },
       },
       null,
       2,
     )}\n`,
   );
+  if (process.env.CODEX_COLLAB_PROBE_STOP_HOST === "1") {
+    const { connectOrStartHostIpc } = await import(
+      "../plugins/codex-collab/dist/workspace-sync-worker-control.js"
+    );
+    const desktopClient = await connectOrStartHostIpc({
+      clientKind: "desktop",
+      stateDirectory: process.env.CODEX_COLLAB_HOST_STATE_DIR,
+      brokerPath: process.env.CODEX_COLLAB_HOST_IPC_BROKER,
+    });
+    await desktopClient.gracefulStop();
+    desktopClient.close();
+  }
 } finally {
   child.kill();
 }
