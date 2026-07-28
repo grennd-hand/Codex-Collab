@@ -36,6 +36,10 @@ export class HostApplication {
     await this.workspaceSync.sync();
   }
 
+  async reconcileAfterResume(): Promise<void> {
+    await this.workspaceSync.sync(true, { allowNewWork: false });
+  }
+
   async forwardPendingCommand(): Promise<string | null> {
     return this.workspaceSync.forwardPendingCommand();
   }

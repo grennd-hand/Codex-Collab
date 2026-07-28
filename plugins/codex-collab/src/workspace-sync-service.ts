@@ -180,7 +180,10 @@ export class WorkspaceSyncService {
     return pending;
   }
 
-  async sync(force = false): Promise<WorkspaceSyncResult> {
+  async sync(
+    force = false,
+    options: { allowNewWork?: boolean } = {},
+  ): Promise<WorkspaceSyncResult> {
     if (this.active) {
       return { selectedThreadId: null, syncedAt: null, historyCount: 0, fileCount: 0 };
     }
@@ -304,13 +307,16 @@ export class WorkspaceSyncService {
         runtimeBusy,
         relayMessages,
       );
-      const forwardedCommandId = await this.forwardValidatedCommand(
-        profile,
-        workspace.selectedThreadId,
-        relay,
-        runtimeBusy,
-        relayMessages,
-      );
+      const forwardedCommandId =
+        options.allowNewWork === false
+          ? null
+          : await this.forwardValidatedCommand(
+              profile,
+              workspace.selectedThreadId,
+              relay,
+              runtimeBusy,
+              relayMessages,
+            );
       const runtimeRunning = runtimeBusy || Boolean(forwardedCommandId);
       const runtimeStatus: CodexRuntimeStatus = runtimeRunning ? "running" : "idle";
       if (workspace.codexRuntimeStatus !== runtimeStatus) {

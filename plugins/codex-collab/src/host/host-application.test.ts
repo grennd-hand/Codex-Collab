@@ -120,6 +120,20 @@ describe("HostApplication", () => {
     expect(fixture.workspaceSync.forwardPendingCommand).toHaveBeenCalledTimes(1);
   });
 
+  it("reconciles before resume without claiming files or forwarding new prompts", async () => {
+    const fixture = createApplication();
+
+    await fixture.application.reconcileAfterResume();
+
+    expect(
+      fixture.workspaceSync.processPendingFileOperations,
+    ).not.toHaveBeenCalled();
+    expect(fixture.workspaceSync.forwardPendingCommand).not.toHaveBeenCalled();
+    expect(fixture.workspaceSync.sync).toHaveBeenCalledWith(true, {
+      allowNewWork: false,
+    });
+  });
+
   it("cancels the selected owner turn before room suspension", async () => {
     const fixture = createApplication();
     vi.mocked(fixture.profiles.read).mockResolvedValue({
