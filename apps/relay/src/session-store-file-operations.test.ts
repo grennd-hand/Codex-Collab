@@ -200,7 +200,11 @@ describe("SessionStore file operation leases", () => {
       ),
     ).toMatchObject({ status: "failed", errorCode: "member_not_approved" });
 
-    for (const path of ["../outside.txt", "C:\\outside.txt", ".codex/auth.json", ".env"]) {
+    for (const path of [
+      "../outside.txt", "C:\\outside.txt", ".codex/auth.json", ".env",
+      ".aws/settings.json", ".azure/profile.json", ".gnupg/options.conf", ".SSH/public.txt",
+      "node_modules/package/index.ts",
+    ]) {
       expect(() =>
         store.createWorkspaceFileOperation(created.session.id, created.memberToken, {
           kind: "read",

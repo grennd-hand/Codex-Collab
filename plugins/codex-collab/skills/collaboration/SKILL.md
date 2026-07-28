@@ -17,7 +17,7 @@ Use the `collab_*` MCP tools for shared sessions. Keep the owner as the security
    write the recovery key into the project, profile, logs, or chat history after that handoff.
 4. After web pairing, tell the owner to select a task in **Codex 与文件**. The single-instance
    background worker imports visible messages, reasoning summaries, command output and the
-   read-only file snapshot. Relay events wake it immediately, and it forwards approved members'
+   bounded file catalog. Relay events wake it immediately, and it forwards approved members'
    web prompts to the current Desktop conversation through the same-user local IPC router without
    opening or focusing Desktop, then republishes when the selected task changes.
 5. Share `.codex` configuration only when the owner separately supplies its absolute path as
@@ -38,13 +38,15 @@ Use the `collab_*` MCP tools for shared sessions. Keep the owner as the security
 4. Approved members' web prompts are consumed by the background worker. Use
    `collab_forward_prompt` only for a relay-backed `codex_prompt` message. Do not recreate the text
    with a claimed identity.
-5. Preserve the current Codex approval policy. Never downgrade approvals on behalf of a peer.
+5. Preserve the selected Codex approval policy for owner-authored prompts. Every non-owner prompt
+   must remain `workspace` + `on-request` at the final Host boundary.
 
 ## Files
 
 - The bound project root is the entire accessible boundary.
-- Web viewers receive only a bounded, read-only safe-text snapshot. Do not imply that the web file
-  browser exposes a live filesystem or permits edits.
+- Web viewers receive only a bounded safe-text catalog, not an unrestricted live filesystem.
+  Owner approval grants project writes through the durable operation queue; the owner may later
+  switch a member to read-only.
 - Access to the owner's `.codex` directory requires a separate, explicit binding by the owner.
 - Read a file before editing it and pass the returned SHA-256 to `collab_write_file`.
 - If the hash is stale, report the conflict and merge intentionally. Never retry as a blind overwrite.

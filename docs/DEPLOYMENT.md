@@ -39,12 +39,17 @@ Relay 不直接发布宿主机端口。Caddy 只发布 443，因而可以与已�
 
 服务器登录凭据不得写入本文档、Git、Compose 环境文件或日志。
 
+未限定实例的“部署/更新/回滚”只指主实例 `/opt/codex-collab/current`、Compose 项目
+`codex-collab`。只有用户明确点名 Guest、secondary 或 4178 时才允许操作第二实例。两套实例
+独立版本化；`/health` 都显示 `0.1.0` 不代表代码、schema 或静态资源相同。
+
 ## 3. 首次部署
 
 ```bash
 cd /opt/codex-collab/current
 cp deploy/.env.example deploy/.env
-# 编辑 deploy/.env，让 CODEX_COLLAB_DOMAIN 指向已经解析到服务器的域名。
+# 编辑 deploy/.env；当前 Caddy 配置同时引用 primary 与 secondary domain，两者都必须有效，
+# 或先拆除未启用的 secondary site block。
 docker compose \
   -p codex-collab \
   --env-file deploy/.env \
@@ -82,25 +87,33 @@ curl --fail --show-error \
 - `/health` 返回 HTTP 200 和 `status: ok`；
 - 首页返回安全响应头和受信任 HTTPS 证书。
 
+当前 `/health` 只是进程 liveness：它不查询 SQLite、数据卷写入、migration 状态，也不包含
+commit/image digest。发布验证还必须比对预期 release SHA、首页资产 hash 和真实业务闭环；
+不能用 HTTP 200 或硬编码 `0.1.0` 判定部署版本正确。
+
 ## 5. 发布新版本
 
 1. 本地运行 [TESTING.md](./TESTING.md) 的全部检查。
 2. 把提交推送到 GitHub `main`。
-3. 使用该提交的 `git archive` 创建不可变发布包。
+3. 使用该提交的 `git archive` 创建不可变源码快照。
 4. 上传至 `/opt/codex-collab/releases/<short-sha>/source.tar.gz`。
 5. 校验本地与服务器 SHA-256 一致。
-6. 解压到同目录的 `app`，复制服务器私有 `deploy/.env`。
+6. 解压到同目录的 `app`，按当前流程复制服务器私有 `deploy/.env`。这是已知债务：下一步应
+   把实例环境移到 release 外固定的私有路径并让所有版本引用，避免安全开关随源码回滚。
 7. 将 `/opt/codex-collab/current` 原子指向新发布目录。
 8. 执行 Compose `config --quiet` 后只更新目标 Relay：
    `up -d --build --no-deps relay`。仅在反向代理配置发生变化时重建 Caddy。
-9. 验证容器、HTTPS 和完整邀请闭环。
+9. 记录 commit、schema、镜像 digest、静态资产 hash，验证容器、HTTPS 和完整邀请闭环。
 
 保留上一版发布目录，便于快速回滚。
 
-实时连接迁移期间，主实例的 `deploy/.env` 保持
-`CODEX_COLLAB_ALLOW_LEGACY_REALTIME_TOKENS=1`，让尚未升级的本机 Host 仍可连接。网页和新版
-Host 会自动使用 30 秒、一次性的实时票据。确认所有 Host 都已升级后，将该值改为 `0` 并只
-重建主实例 Relay；这会彻底拒绝把长期成员 token 放进 WebSocket URL 的旧客户端。
+当前流程仍会在服务器重新 build，不能保证未来得到同一二进制。生产基线应保存 release
+manifest 并发布锁定 digest 的镜像；回滚直接切换旧 digest，而不是从旧源码重新构建。
+
+实时连接迁移期间，只有仍存在旧 Host 的实例才显式设置
+`CODEX_COLLAB_ALLOW_LEGACY_REALTIME_TOKENS=1`，并记录 owner、使用量和清退日期。网页和新版
+Host 使用 30 秒一次性票据。确认实例上的 Host 都已升级后改为 `0` 并只重建目标 Relay；
+长期目标是代码和模板默认 `0`，删除把长期 token 放进 WebSocket URL 的 fallback。
 
 ## 6. 更新第二实例
 
@@ -136,6 +149,9 @@ CODEX_COLLAB_PASSKEY_RP_ID=codex-collab-guest.217.194.133.194.sslip.io
 
 ## 7. 回滚
 
+回滚前必须确认旧程序兼容当前 SQLite schema，并先创建一致性备份。当前源码重建方式只作为
+过渡流程；已经保存镜像 digest 时应直接切换旧 digest。
+
 ```bash
 ln -sfn /opt/codex-collab/releases/<previous-sha>/app /opt/codex-collab/current
 cd /opt/codex-collab/current
@@ -143,14 +159,16 @@ docker compose \
   -p codex-collab \
   --env-file deploy/.env \
   -f deploy/docker-compose.yml \
-  up -d --build
+  up -d --build --no-deps relay
 ```
 
-回滚后仍要重新检查容器健康状态和公网 `/health`。
+只有 Caddy 配置本身发生变化且明确授权时才更新 Caddy。回滚后重新核对 release marker、
+schema、资产 hash、HTTPS 和真实登录/邀请流程，并证明 Guest 容器、卷和首页 hash 未改变。
 
 ## 8. 数据备份
 
-当前版本尚未自动备份。人工备份时应先短暂停止 Relay，避免复制 WAL 中间状态：
+当前版本尚未自动备份，也没有仓库内可执行的恢复流程或恢复报告，因此不满足生产恢复要求。
+人工备份时应先短暂停止目标 Relay，避免复制 WAL 中间状态：
 
 ```bash
 cd /opt/codex-collab/current
@@ -172,7 +190,13 @@ docker compose \
   up -d
 ```
 
-备份文件应复制到服务器之外，并定期执行恢复演练。
+该示例只覆盖 primary，且任何中途失败都必须人工确认 Relay 已恢复运行。正式方案必须强制选择
+`primary|guest`，生成 SHA-256/manifest、加密并异地复制；恢复只能写入新卷和临时 Compose
+项目，随后执行 `PRAGMA integrity_check`、登录、房间和消息读取。定义 RPO/RTO，并至少每月
+自动恢复演练，不能把“有 tar 文件”当作备份闭环完成。
+
+完整优先级和运维验收条件见
+[ARCHITECTURE_AUDIT_2026-07-28.md](./ARCHITECTURE_AUDIT_2026-07-28.md)。
 
 ## 9. 插件连接公网 Relay
 

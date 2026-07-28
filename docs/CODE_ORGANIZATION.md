@@ -21,10 +21,10 @@ src/
   App.tsx               Application composition and cross-feature coordination
   app/                  App shell and orchestration-only state helpers
   features/
-    account/            Account and remembered-room UI/client
     activity/           Collaboration activity presentation
     collaboration/      Member identity, approvals, and peer collaboration
     composer/           Codex/peer input controls and attachment preparation
+    dialogs/            Pairing, invitation and permission dialogs
     session/            Session setup, invitation, and credential lifecycle
     timeline/           Imported history, execution steps, and scroll restoration
     workspace/          Shared-workspace permissions and state
@@ -34,7 +34,7 @@ src/
   styles/               Ordered feature styles; `styles.css` is import-only
 ```
 
-Import direction is:
+The intended import direction is:
 
 ```text
 shared -> protocol/external libraries
@@ -47,6 +47,12 @@ App -> all browser layers
 `shared/` must never import `features/`, `app/`, `ide/`, or `layout/`. Tests live beside the module
 they verify. Avoid barrel exports across large features because they hide dependency direction and
 increase accidental bundle coupling.
+
+The current checkout does not fully satisfy the broader graph: workspace controllers import
+app/composer/timeline modules, and timeline presentation imports IDE types/components. The existing
+architecture validator enforces only the `shared/` upward-import prohibition, so a passing check is
+not proof that every feature boundary is clean. Move cross-feature contracts and pure adapters to a
+lower shared/domain layer, then extend the validator before declaring this debt complete.
 
 ## File sizing and split rules
 
@@ -99,13 +105,16 @@ transformation, owns unrelated state machines, or requires unrelated fixtures.
 - Growth ceilings only move downward. A change that touches an oversized legacy file must leave it
   smaller or extract a cohesive responsibility.
 
-`npm run validate:architecture` enforces current growth ceilings for legacy oversized files. A
-guarded file must be reduced or have a cohesive module extracted before it can grow. The ceilings
-are intentionally transitional and should only move downward.
+`npm run validate:architecture` enforces current file-growth ceilings and selected import/style
+rules. A guarded file must be reduced or have a cohesive module extracted before it can grow. The
+ceilings are intentionally transitional and should only move downward. The current classifier does
+not recognize every `use*Controller.ts` outside a `hooks/` or `controllers/` directory and does not
+enforce the 100-line function limit; those guard gaps are tracked work, not permission to ignore the
+documented limits.
 
-## Relay target structure
+## Current Relay structure
 
-The Relay is being migrated toward:
+The Relay currently uses:
 
 ```text
 src/
@@ -117,20 +126,28 @@ src/
   storage/              SQLite schema, migrations, row mapping, transactions
 ```
 
-The first extracted Relay domain is `workspace/workspace-history-pagination.ts`. Next extractions
-should move database schema/migrations, account persistence, message persistence, and workspace file
-operations out of `session-store.ts`; routes should then move out of `server.ts`.
+These extractions are already implemented. `SessionStore` is now a small public facade, but the
+implementation is connected through a 14-level inheritance chain from `SqliteSessionStore` through
+account, collaboration, workspace and operation stores. The file split is therefore real while the
+dependency direction remains implicit.
 
 ## Remaining decomposition targets
 
-1. Extract `CodexTimeline`, `CodexComposer`, and dialogs from `App.tsx`.
-2. Move workspace refresh/history lifecycle into a task-scoped hook or reducer. `App.tsx` should
-   finish below 600 lines; 1,200 is only the retired legacy alarm threshold.
-3. Split `session-store.ts` by database domain and keep transactions explicit. Target each store
-   module below 500 lines.
-4. Split `server.ts` into route modules without weakening centralized auth and error handling.
-5. Split the plugin app-server parser from transport/process lifecycle. Keep file sandbox and CAS
-   boundaries independent.
+1. Define separate `WorkspaceDataKey` and `TaskUiKey`; move Codex draft/attachments, open tabs,
+   dirty drafts, Monaco models and task-specific panel state under the task owner.
+2. Replace `DashboardViewModel`'s hook `ReturnType` coupling with explicit feature slice contracts;
+   move cross-feature adapters down and enforce the real dependency graph.
+3. Keep the `SessionStore` facade, but migrate its internal inheritance chain toward composition
+   around one explicit `DbContext`/transaction runner and domain repositories. Start with workspace
+   operations; do not perform a big-bang rewrite.
+4. Give Codex commands a Relay-owned claim/lease/idempotency contract instead of deriving a command
+   queue from the latest 500 chat messages and a local forwarded-ID array.
+5. Split `App`, `server`, workspace history controller and plugin orchestrators only at a state,
+   protocol, I/O or transaction boundary. Add AST/import-cycle/React Hooks checks before tightening
+   their growth ceilings.
 
 Each extraction must preserve behavior, keep security checks at the boundary, add focused tests, and
 pass the repository gates before merge or deployment.
+
+See [ARCHITECTURE_AUDIT_2026-07-28.md](./ARCHITECTURE_AUDIT_2026-07-28.md) for evidence, priority and
+acceptance criteria.

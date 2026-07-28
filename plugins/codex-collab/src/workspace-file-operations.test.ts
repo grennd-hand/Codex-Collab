@@ -236,6 +236,36 @@ describe("workspace file operation host execution", () => {
     });
   });
 
+  it("rejects reads and writes below private workspace directories", async () => {
+    const root = await tempRoot();
+    const sandbox = await FileSandbox.create(root);
+
+    for (const path of [
+      ".aws/settings.json",
+      ".azure/profile.json",
+      ".gnupg/options.conf",
+      ".SSH/public.txt",
+      "node_modules/package/index.ts",
+    ]) {
+      for (const queued of [
+        operation({ kind: "read", path }),
+        operation({
+          kind: "write",
+          path,
+          requestContent: "private",
+          expectedSha256: "",
+        }),
+      ]) {
+        await expect(
+          executeWorkspaceFileOperation(queued, sandbox),
+        ).resolves.toMatchObject({
+          status: "failed",
+          errorCode: "workspace_file_not_shared",
+        });
+      }
+    }
+  });
+
   it("reads explicitly shared Codex configuration through its separate sandbox", async () => {
     const projectRoot = await tempRoot();
     const configRoot = await tempRoot();

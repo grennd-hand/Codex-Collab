@@ -44,9 +44,10 @@ Raw member tokens are never stored by the relay. SHA-256 hashes are stored in SQ
 Before opening a WebSocket, an authenticated browser or owner host requests a 30-second realtime
 ticket. The relay stores only the ticket hash in memory and deletes it before the upgrade is
 accepted, so it cannot be reused and the durable member bearer token is not placed in proxy access
-logs. Legacy `sessionId`/`token` upgrades remain available only during a rolling client upgrade and
-can be disabled with `CODEX_COLLAB_ALLOW_LEGACY_REALTIME_TOKENS=0` after every owner host has been
-updated.
+logs. Legacy `sessionId`/`token` upgrades still exist for compatibility and are currently enabled
+unless `CODEX_COLLAB_ALLOW_LEGACY_REALTIME_TOKENS=0` is set. This places a long-lived member token in
+the WebSocket URL and is tracked security debt; the next compatibility release must make tickets the
+default-only path and require an explicit, time-bounded opt-in for old Hosts.
 
 The dashboard-to-host handoff uses a separate ten-minute, one-time pairing capability. The relay
 stores only its hash and exchanges it for a separate owner-host token, so the browser owner's token
@@ -66,8 +67,8 @@ message delivery and runtime control:
    available or the rollout exceeds the 20 MB direct-read limit
 5. `thread-follower-start-turn` for the next queued command when the Desktop task is idle, and
    `thread-follower-interrupt-turn` for Stop; active tasks hold later commands in Relay order
-6. persistent forwarded-message IDs and relay delivery state so a restarted host does not replay
-   completed prompts
+6. local forwarded-message IDs and Relay delivery state reduce ordinary restart replay; the current
+   submit-then-record ordering still has a crash window and must not be described as exactly-once
 
 The status reconciler treats app-server terminal values observed while the newest turn is still
 active as provisional. This prevents a transient `interrupted` value from permanently overriding
@@ -77,7 +78,9 @@ Prompt submission is entirely background local IPC and is accepted only by the D
 currently owns the selected conversation. The pipe is not exposed over the network. Submission
 supports text, file/image attachments, plan mode, model, reasoning strength, service tier and
 permission profiles without opening or switching the Desktop window. Only the owner may remotely
-change approval/access settings; invited members inherit the selected task's current mode.
+change approval/access settings. The Host derives authorship from trusted Relay identity and forces
+every non-owner submission to `workspace` plus `on-request`; owner-authored submissions preserve
+their selected mode.
 
 Bounded UTF-8 text attachments are included directly in the app-server input. Images use
 `localImage`; other binary files are staged under the approved root's ignored `.codex-collab/`
@@ -92,15 +95,22 @@ produces a conflict instead of overwriting someone else's newer work.
 
 The web IDE is deliberately narrower than the MCP file sandbox. It receives a bounded catalog of
 allow-listed project text formats, then queues individual reads and authorized writes for the
-currently paired Host. Members start read-only; only the owner can grant project write access.
+currently paired Host. Owner approval intentionally grants an editor `workspace-write`; the owner
+can later switch that member to read-only or revoke them.
 Claims use a Host generation, a short lease and a second permission check immediately before disk
 access. An optional `codexConfigRoot` is resolved as a second explicit sandbox and contributes
 `.codex/`-prefixed non-credential configuration files, but that root is always read-only.
 
 Both roots exclude environment files, credential filenames, authentication/session databases,
-private-key material, high-confidence embedded tokens and symlinks. The same path, ignore and
-secret-content policy runs at the Relay boundary and again on the Host. Switching the selected
-Codex task clears the previous history and file catalog before the new import.
+private-key material, high-confidence embedded tokens and symlinks. Project-private directories
+such as `.aws`, `.azure`, `.ssh`, `.gnupg` and `node_modules` use the same protocol policy during
+Host scans, direct operations and Relay admission. `.codex` still needs structured field-level
+redaction instead of relying only on content heuristics.
+
+Relay stores bounded history independently for each catalogued Codex task. Selecting a task loads
+that task's cached history, while the Host backfills uncached tasks incrementally. The project file
+catalog is scoped to the paired workspace root and can be reused across task switches; the dashboard
+must still expose only the selected task's timeline and reject stale cross-task responses.
 
 On Windows, an existing-file save holds native file and directory handles that deny concurrent
 write/delete sharing, hashes the exact opened target, records and flushes a prepared journal, moves
@@ -116,47 +126,47 @@ intent while Git remains the merge and audit mechanism.
 
 ## Source module boundaries
 
-Source files are split by responsibility rather than by an arbitrary line count. The line budgets
-below are review triggers, not automatic failure conditions:
-
-- page and service orchestrators should normally stay below 1,200 lines;
-- state or protocol modules should normally stay below 600 lines;
-- presentational React components should normally stay below 350 lines;
-- a larger file must have one cohesive reason to change and a documented follow-up boundary.
-
-The dashboard follows this feature layout:
+The authoritative file/function budgets and import rules are in
+[CODE_ORGANIZATION.md](./CODE_ORGANIZATION.md); this document does not duplicate different numeric
+limits. The current repository is organized as a modular monolith:
 
 ```text
 apps/dashboard/src/
-├── App.tsx                    session orchestration and page composition
-├── app/
-│   ├── codex-controls.ts      pure Codex/composer state rules
-│   ├── ExecutionProcess.tsx   imported execution presentation
-│   ├── attachments.tsx        attachment preparation, transfer and preview
-│   ├── AccountRoomList.tsx    account room selection
-│   ├── connection.ts          realtime status presentation
-│   └── MemberSkeleton.tsx     member-list loading state
-└── ide/
-    ├── IdeWorkspace.tsx       IDE state coordinator
-    ├── IdeTitlebar.tsx        stable workspace actions
-    ├── IdeExplorer.tsx        searchable file tree
-    ├── IdeEditorPane.tsx      Monaco tabs, editor and conflict view
-    └── ide-tab-state.ts       editor tab state model
+├── App.tsx                 app composition and cross-feature coordination
+├── app/                    shell and orchestration views
+├── features/               collaboration, composer, dialogs, session, timeline, workspace
+├── ide/                    explorer, Monaco models/tabs, saves and conflicts
+├── layout/                 resizable panes and persisted geometry
+└── shared/                 low-level browser/API utilities
+
+apps/relay/src/
+├── server.ts              process bootstrap and shared HTTP/WS boundary
+├── routes/                authenticated HTTP resource handlers
+├── accounts/              account, Passkey and room-recovery persistence
+├── collaboration/         rooms, members, invites and messages
+├── workspace/             task history, catalogs and file-operation queue
+└── storage/               SQLite context, migrations, rows and shared invariants
+
+plugins/codex-collab/src/
+├── mcp-server.ts          MCP tool facade
+├── app-server/            JSON-RPC transport, parsing and submission mapping
+├── workspace-sync-*       Host lifecycle, task/history and command synchronization
+├── workspace-file-*       leased Relay operation execution
+└── file-sandbox/CAS files sandbox and Windows native publication boundary
 ```
 
-Refactoring continues in dependency order so behavior and security checks remain reviewable:
+The earlier dashboard extraction, Relay route split and plugin parser/transport split are already
+implemented. Current structural debt is different: task-scoped browser state is not consistently
+owned, Dashboard feature imports do not yet match the intended dependency graph, and Relay storage
+modules are connected by a 14-level inheritance chain. These are addressed incrementally; security
+checks and transactions stay at their real boundary throughout the change.
 
-1. move dashboard realtime/session state from `App.tsx` into focused hooks, then extract the people,
-   peer chat, Codex timeline and dialog surfaces;
-2. split Relay persistence from `session-store.ts` into account, membership, message, workspace and
-   file-operation repositories while keeping transactions inside the owning repository;
-3. split HTTP route registration from `server.ts` without moving authentication or rate-limit
-   checks away from each route;
-4. split the plugin app-server client into transport, protocol mapping and rollout import modules.
+The architecture is intentionally single-Relay/single-SQLite-writer today. Running a second writer
+against the same database is unsupported. PostgreSQL, Redis or service extraction is considered only
+after a measured need for multiple Relay replicas, multi-node HA or a violated latency/backup SLO.
 
-Security-sensitive refactors must preserve the existing public types and tests until the new module
-has direct unit coverage. A short file is not considered an improvement if it merely hides shared
-mutable state or separates a transaction across modules.
+The evidence, priorities, target shapes and acceptance checks are recorded in
+[ARCHITECTURE_AUDIT_2026-07-28.md](./ARCHITECTURE_AUDIT_2026-07-28.md).
 
 ## Next milestones
 

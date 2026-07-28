@@ -28,6 +28,8 @@ describe("Codex prompt forwarding", () => {
       threadId: "thread-1",
       projectRoot: "C:\\project",
       commandId: "prompt-1",
+      requesterMemberId: "owner-1",
+      ownerMemberId: "owner-1",
       peerDisplayName: "Owner",
       body: "Run the checks",
       attachments: [],
@@ -52,6 +54,37 @@ describe("Codex prompt forwarding", () => {
     );
     expect(submitPeerPrompt.mock.invocationCallOrder[0]).toBeLessThan(
       update.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("marks editor-authored prompts so the final Host boundary forces approval", async () => {
+    const editorPrompt = {
+      ...ownerPrompt,
+      senderMemberId: "editor-1",
+      senderDisplayName: "Editor",
+    };
+    const submitPeerPrompt = vi.fn().mockResolvedValue({
+      status: "submitted",
+      turnId: "turn-peer",
+    });
+
+    await forwardNextCodexPrompt(
+      profile,
+      "thread-1",
+      {
+        listMessages: vi.fn().mockResolvedValue([editorPrompt]),
+        readMessageAttachment: vi.fn(),
+        updateMessageDeliveryStatus: vi.fn().mockResolvedValue(editorPrompt),
+      },
+      { submitPeerPrompt, stopPeerPrompt: vi.fn() },
+      { update: vi.fn().mockResolvedValue(profile) },
+    );
+
+    expect(submitPeerPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requesterMemberId: "editor-1",
+        ownerMemberId: "owner-1",
+      }),
     );
   });
 
@@ -432,4 +465,3 @@ describe("Codex prompt forwarding", () => {
     expect(submitPeerPrompt).not.toHaveBeenCalled();
   });
 });
-

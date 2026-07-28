@@ -12,11 +12,13 @@ The first working slice includes:
 - real-time WebSocket updates;
 - a Codex plugin exposed through MCP tools;
 - one-time web-to-local host pairing and existing Codex task selection;
-- importing visible Codex conversation records into the room;
+- room-ID + one-time-displayed owner recovery key;
+- per-task bounded history, background backfill and paged visible Codex records;
 - a full-screen Monaco workspace with searchable file tree, tabs, dirty state, `Ctrl+S` and
   explicit diff-based conflict resolution;
-- approved-member browsing of safe text files, with project writes disabled by default and enabled
-  only through an owner-controlled per-member grant;
+- new UTF-8 files/directories and guarded same-parent rename;
+- approved-member browsing and queued editing of safe text files; owner approval grants project
+  write access, which the owner can later switch back to read-only;
 - forwarding approved members' queued prompts into the selected live Codex Desktop conversation
   through the same-user local IPC router without opening, focusing or switching the window;
 - remote composer support for file/image attachments, model/reasoning/speed, plan mode and stop;
@@ -30,11 +32,14 @@ testing; production-hardening work is tracked separately and is not represented 
 ## Repository
 
 ```text
-apps/relay/                 HTTP/WebSocket relay and collaboration dashboard
+apps/dashboard/             React/Fluent UI dashboard and Monaco workspace
+apps/relay/                 HTTP/WebSocket relay and SQLite collaboration state
 packages/protocol/          Shared protocol types and request validation
 plugins/codex-collab/       Codex plugin, MCP server and collaboration skill
 .agents/plugins/            Repo-local Codex marketplace
+deploy/                     Primary/guest Compose and Caddy configuration
 docs/                       Architecture and security notes
+scripts/                    Architecture checks and end-to-end probes
 ```
 
 ## Documentation
@@ -44,6 +49,7 @@ docs/                       Architecture and security notes
 - [Deployment and operations](docs/DEPLOYMENT.md)
 - [Testing guide](docs/TESTING.md)
 - [Task plan and roadmap](docs/TASK_PLAN.md)
+- [2026-07-28 architecture audit](docs/ARCHITECTURE_AUDIT_2026-07-28.md)
 - [Full v1 implementation plan](docs/V1_IMPLEMENTATION_PLAN.md)
 
 ## Local development
@@ -81,11 +87,12 @@ attachments until the owner reopens it.
 5. The local background sync worker imports visible user/assistant messages, app-server reasoning
    summaries, command output and a filtered text-file catalog. Relay WebSocket events wake it
    immediately for new web prompts, which it forwards through Codex Desktop's same-user local IPC
-   router so the currently open task receives the native message and continues in place. It
-   republishes when the selected task changes and never opens or focuses the Desktop window.
-6. Approved members can open shared files in the Monaco workspace. Members are read-only by
-   default; after an owner grants project write access, saves are queued to the current Host with an
-   expected SHA-256 and stale versions open an explicit diff instead of being overwritten.
+   router so the currently open task receives the native message and continues in place. Relay keeps
+   each task's history isolated, backfills uncached tasks and reuses the root-scoped file catalog;
+   the worker never opens or focuses the Desktop window.
+6. Owner approval grants an invited member project write access. Saves are queued to the current
+   Host with an expected SHA-256, and stale versions open an explicit diff instead of being
+   overwritten. The owner can later switch that member back to read-only.
 
 To share non-credential Codex configuration, pass `codexConfigRoot` as a second explicit absolute
 root when calling `collab_pair_host` or `collab_refresh_workspace`. It includes text configuration,
@@ -137,19 +144,20 @@ Start a new Codex thread after installation so the new skill and MCP tools are l
 An invited member cannot send messages or access files until the owner approves them. The plugin
 stores member bearer tokens only in the local profile file and the relay stores only token hashes.
 Realtime WebSockets use a short-lived, single-use ticket, keeping the durable member token out of
-the proxy request URL. Legacy URL-token upgrades can be disabled after rolling client upgrades with
-`CODEX_COLLAB_ALLOW_LEGACY_REALTIME_TOKENS=0`.
+the proxy request URL. A legacy URL-token path is still enabled by default for compatibility; this
+is tracked security debt. Set `CODEX_COLLAB_ALLOW_LEGACY_REALTIME_TOKENS=0` after every deployed Host
+supports tickets, then remove the fallback in a compatibility release.
 
-Browser users can create a passwordless Passkey account. The account cookie is `HttpOnly`,
-`SameSite=Strict`, and `Secure` on HTTPS; the Relay stores only its hash. Accounts remember room
-membership, while each room keeps its separate member role and approval status. Re-entering a room
-issues a new device-scoped member token and never bypasses owner approval.
+The current dashboard restores owner access with the room ID and one-time-displayed recovery key;
+the Relay stores only `owner_recovery_hash` and issues a new owner member token after recovery.
+Passkey/account APIs remain in Relay for future use but are not exposed by the current dashboard.
+Recovery does not yet rotate every previously issued owner token.
 
 The owner chooses one absolute shared root. Project access does not imply access to `~/.codex`;
 sharing Codex configuration requires the owner to explicitly bind that directory as a separate root.
 Web prompts from approved members are consumed automatically by the local owner host. Only the
-owner can change the access mode, and peer prompts preserve the selected task's existing approval
-policy.
+owner can change the access mode. Regardless of the requested or current Desktop mode, every
+non-owner prompt is forced to workspace + on-request at the final Host submission boundary.
 
 Project file operations are durable Relay jobs, but only the currently paired Host can claim them.
 Claims expire, permissions are checked again immediately before disk access, and operation contents
@@ -160,16 +168,22 @@ move that version into a bounded recovery area, then publish with no-replace sem
 writer creates a version during publication, the Host reports a conflict and preserves every
 version instead of rolling back over it. Unsupported Host platforms fail closed.
 
-The first IDE phase edits existing safe UTF-8 text files. File creation controls, rename/delete,
-terminal/debugger integration, extensions and multi-writer Git worktree merge queues remain later
-phases.
+Member approval intentionally grants project write access; it is the owner's explicit acceptance
+of that collaborator. The owner can subsequently revoke the member or switch project access back
+to read-only. Approval never grants access to the separate `.codex` root.
+
+The IDE edits existing safe UTF-8 text files and supports new files, directories and guarded
+same-parent rename. Delete, cross-directory move, terminal/debugger integration, extensions and
+multi-writer Git worktree merge queues remain later phases.
 
 ## Server deployment
 
 The relay is prepared for Docker deployment:
 
 ```bash
-docker compose up -d --build
+cp deploy/.env.example deploy/.env
+# Configure the required domains in deploy/.env first.
+docker compose -p codex-collab --env-file deploy/.env -f deploy/docker-compose.yml up -d --build
 ```
 
 Put it behind an HTTPS reverse proxy before using it across the public internet. Configure
@@ -187,10 +201,9 @@ Caddy-managed HTTPS/WebSocket proxy. It only publishes port 443, so it can coexi
 service already using port 80.
 
 ```bash
-cd deploy
-cp .env.example .env
-# Set CODEX_COLLAB_DOMAIN to a hostname that resolves to the VPS.
-docker compose up -d --build
+cp deploy/.env.example deploy/.env
+# Set the required domains to hostnames that resolve to the VPS.
+docker compose -p codex-collab --env-file deploy/.env -f deploy/docker-compose.yml up -d --build
 ```
 
 The Relay is reachable only through Caddy. SQLite data, Caddy certificates, and Caddy configuration

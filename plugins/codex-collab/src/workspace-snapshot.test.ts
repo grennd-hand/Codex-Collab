@@ -31,6 +31,15 @@ describe("workspace snapshot", () => {
     expect(
       isPublishableWorkspacePath(".codex-collab/attachments-1/prompt.txt"),
     ).toBe(false);
+    for (const path of [
+      ".aws/settings.json",
+      ".azure/profile.json",
+      ".gnupg/options.conf",
+      ".SSH/public.txt",
+      "node_modules/package/index.ts",
+    ]) {
+      expect(isPublishableWorkspacePath(path)).toBe(false);
+    }
     expect(isPublishableWorkspacePath("keys/server.pem")).toBe(false);
     expect(isPublishableCodexConfigPath("config.toml")).toBe(true);
     expect(isPublishableCodexConfigPath("rules/default.rules")).toBe(true);
@@ -76,6 +85,25 @@ describe("workspace snapshot", () => {
     const files = await buildWorkspaceSnapshot(sandbox);
     expect(files.map((file) => file.path)).toEqual(["README.md"]);
     expect(files[0]?.content).toBe("# Safe project\n");
+  });
+
+  it("does not enumerate files below private workspace directories", async () => {
+    const root = await mkdtemp(join(tmpdir(), "codex-collab-private-dirs-"));
+    temporaryRoots.push(root);
+    for (const [directory, file] of [
+      [".aws", "settings.json"],
+      [".azure", "profile.json"],
+      [".gnupg", "options.conf"],
+      [".ssh", "public.txt"],
+      ["node_modules/package", "index.ts"],
+    ] as const) {
+      await mkdir(join(root, directory), { recursive: true });
+      await writeFile(join(root, directory, file), "private", "utf8");
+    }
+    await writeFile(join(root, "README.md"), "# Shared\n", "utf8");
+
+    const files = await FileSandbox.create(root).then((sandbox) => sandbox.list());
+    expect(files.map((file) => file.path)).toEqual(["README.md"]);
   });
 
   it("preserves an UTF-8 BOM with byte-consistent snapshot metadata", async () => {

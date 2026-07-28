@@ -200,10 +200,13 @@ try {
     { headers: { authorization: `Bearer ${guest.memberToken}` } },
     403,
   );
-  await request(
+  const approval = await request(
     `/v1/sessions/${created.session.id}/members/${guest.member.id}/approve`,
     { method: "POST", headers: ownerHeaders, body: "{}" },
   );
+  if (approval.member.workspaceFileAccess !== "workspace-write") {
+    throw new Error("Owner approval must grant the member workspace write access");
+  }
   await request(`/v1/sessions/${created.session.id}/workspace/selection`, {
     method: "PUT",
     headers: ownerHeaders,
@@ -299,31 +302,6 @@ try {
   });
 
   const guestHeaders = { authorization: `Bearer ${guest.memberToken}` };
-  const readonlyWrite = await request(
-    `/v1/sessions/${created.session.id}/workspace/file-operations`,
-    {
-      method: "POST",
-      headers: guestHeaders,
-      body: JSON.stringify({
-        kind: "write",
-        path: "README.md",
-        content: "# denied\n",
-        expectedSha256: createHash("sha256").update("# initial\n").digest("hex"),
-      }),
-    },
-    403,
-  );
-  if (readonlyWrite.error?.code !== "workspace_read_only") {
-    throw new Error("Approved members must remain read-only until the owner grants access");
-  }
-  await request(
-    `/v1/sessions/${created.session.id}/members/${guest.member.id}/workspace-file-access`,
-    {
-      method: "PATCH",
-      headers: ownerHeaders,
-      body: JSON.stringify({ workspaceFileAccess: "workspace-write" }),
-    },
-  );
   const guestRealtimeTicket = await request(
     `/v1/sessions/${created.session.id}/realtime-tickets`,
     { method: "POST", headers: guestHeaders, body: "{}" },
@@ -482,8 +460,7 @@ try {
         "history import",
         "live history update without file replacement",
         "approved-member file read",
-        "default member read-only denial",
-        "owner write grant",
+        "approval grants workspace write",
         "durable queued operation",
         "content-free realtime file event",
         "host FileSandbox write completion",

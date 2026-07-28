@@ -81,15 +81,20 @@ function workspacePathName(path: string): string {
   return path.replaceAll("\\", "/").split("/").at(-1) ?? "";
 }
 
+function containsPrivateWorkspaceDirectory(path: string): boolean {
+  return path
+    .replaceAll("\\", "/")
+    .toLowerCase()
+    .split("/")
+    .filter(Boolean)
+    .some((segment) => PRIVATE_WORKSPACE_DIRECTORIES.has(segment));
+}
+
 export function isPublishableWorkspacePath(path: string): boolean {
   const normalized = path.replaceAll("\\", "/").toLowerCase();
-  const segments = normalized.split("/");
   const name = workspacePathName(normalized);
   if (
-    segments.includes(".codex") ||
-    segments.includes(".codex-collab") ||
-    segments.includes(".git") ||
-    segments.includes(".runtime-data") ||
+    containsPrivateWorkspaceDirectory(normalized) ||
     name === ".env" ||
     name.startsWith(".env.")
   ) {
@@ -114,12 +119,8 @@ export function isPublishableWorkspaceDirectoryPath(path: string): boolean {
   const segments = normalized.split("/").filter(Boolean);
   return (
     segments.length > 0 &&
-    !segments.some(
-      (segment) =>
-        segment === "." ||
-        segment === ".." ||
-        PRIVATE_WORKSPACE_DIRECTORIES.has(segment),
-    )
+    !segments.some((segment) => segment === "." || segment === "..") &&
+    !containsPrivateWorkspaceDirectory(normalized)
   );
 }
 

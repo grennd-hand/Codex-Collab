@@ -403,6 +403,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           threadId: profile.threadId,
           projectRoot: projectSandbox.getRoot(),
           commandId: message.id,
+          requesterMemberId: message.senderMemberId,
+          ownerMemberId: profile.memberId,
           peerDisplayName: message.senderDisplayName,
           body: message.body,
           attachments: await Promise.all(

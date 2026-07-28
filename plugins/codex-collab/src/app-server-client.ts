@@ -211,6 +211,8 @@ export class CodexAppServerClient extends EventEmitter {
     threadId: string;
     projectRoot: string;
     commandId: string;
+    requesterMemberId: string;
+    ownerMemberId: string;
     peerDisplayName: string;
     body: string;
     attachments: Array<{
@@ -290,6 +292,7 @@ export class CodexAppServerClient extends EventEmitter {
         currentReasoningEffort: resumed.reasoningEffort ?? null,
         peerDisplayName: input.peerDisplayName,
         commandId: input.commandId,
+        ownerAuthored: input.requesterMemberId === input.ownerMemberId,
       });
       let turnId: string | null = null;
       if (this.platform === "win32") {

@@ -132,6 +132,7 @@ export function buildCodexTurnStartParams(input: {
   currentReasoningEffort?: string | null;
   peerDisplayName: string;
   commandId?: string;
+  ownerAuthored?: boolean;
 }): Record<string, unknown> {
   const requestedModel = resolveModelId(input.options.model);
   const effectiveModel = requestedModel ?? input.currentModel ?? null;
@@ -220,6 +221,11 @@ export function buildCodexTurnStartParams(input: {
     parameters.approvalPolicy = customPermissions.approvalPolicy;
   }
 
+  if (input.ownerAuthored !== true) {
+    parameters.permissions = ":workspace";
+    parameters.approvalPolicy = "on-request";
+  }
+
   if (input.options.planMode || requestedModel || requestedEffort) {
     if (!effectiveModel) {
       throw new Error(
@@ -246,4 +252,3 @@ export function buildCodexTurnStartParams(input: {
   }
   return parameters;
 }
-

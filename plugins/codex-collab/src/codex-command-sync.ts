@@ -69,6 +69,8 @@ export async function forwardNextCodexPrompt(
           threadId,
           projectRoot: profile.projectRoot,
           commandId: pendingPrompt.id,
+          requesterMemberId: pendingPrompt.senderMemberId,
+          ownerMemberId: profile.memberId,
           peerDisplayName: pendingPrompt.senderDisplayName,
           body: pendingPrompt.body,
           attachments: await Promise.all(
@@ -196,4 +198,3 @@ export async function reconcileCodexCommandStatuses(
 
   return updated;
 }
-

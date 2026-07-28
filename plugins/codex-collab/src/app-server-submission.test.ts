@@ -52,6 +52,7 @@ describe("Codex app-server submission", () => {
         currentReasoningEffort: "medium",
         peerDisplayName: "Owner",
         commandId: "prompt-1",
+        ownerAuthored: true,
       }),
     ).toEqual({
       threadId: "thread-1",
@@ -111,6 +112,7 @@ describe("Codex app-server submission", () => {
           currentModel: "gpt-5.6-sol",
           currentReasoningEffort: "high",
           peerDisplayName: "Owner",
+          ownerAuthored: true,
         }),
       ).toMatchObject({ permissions, approvalPolicy: "on-request" });
     }
@@ -128,6 +130,7 @@ describe("Codex app-server submission", () => {
         },
         currentModel: "gpt-5.6-sol",
         peerDisplayName: "Owner",
+        ownerAuthored: true,
       }),
     ).toThrow(/missing/i);
   });
@@ -137,6 +140,7 @@ describe("Codex app-server submission", () => {
       threadId: "thread-capabilities",
       userInput: [{ type: "text" as const, text: "Run", text_elements: [] as [] }],
       peerDisplayName: "Owner",
+      ownerAuthored: true,
     };
     expect(() =>
       buildCodexTurnStartParams({
@@ -183,7 +187,7 @@ describe("Codex app-server submission", () => {
     ).toThrow(/image/i);
   });
 
-  it("omits sticky overrides when the composer follows the selected task", () => {
+  it("omits sticky overrides for owner-authored prompts that follow the selected task", () => {
     expect(
       buildCodexTurnStartParams({
         threadId: "thread-1",
@@ -198,16 +202,55 @@ describe("Codex app-server submission", () => {
         },
         currentModel: "gpt-5.6-sol",
         currentReasoningEffort: "high",
-        peerDisplayName: "Peer",
+        peerDisplayName: "Owner",
+        ownerAuthored: true,
       }),
     ).toEqual({
       threadId: "thread-1",
       input: [{ type: "text", text: "Continue", text_elements: [] }],
       responsesapiClientMetadata: {
         source: "codex-collab",
-        collab_member: "Peer",
+        collab_member: "Owner",
       },
     });
+  });
+
+  it("forces workspace access and on-request approval for every peer access mode", () => {
+    const modes = [
+      { accessMode: "follow-desktop", customPermissions: null },
+      { accessMode: "auto", customPermissions: null },
+      { accessMode: "full-access", customPermissions: null },
+      {
+        accessMode: "custom",
+        customPermissions: { fileAccess: "full-access", approvalPolicy: "never" },
+      },
+    ] as const;
+    for (const mode of modes) {
+      expect(
+        buildCodexTurnStartParams({
+          threadId: "thread-peer",
+          userInput: [{ type: "text", text: "Peer request", text_elements: [] }],
+          options: {
+            ...mode,
+            model: "gpt-5.6-sol",
+            reasoningEffort: "high",
+            speed: "fast",
+            planMode: true,
+          },
+          currentModel: "gpt-5.6-sol",
+          currentReasoningEffort: "medium",
+          peerDisplayName: "Editor",
+          ownerAuthored: false,
+        }),
+      ).toMatchObject({
+        model: "gpt-5.6-sol",
+        effort: "high",
+        serviceTier: "priority",
+        permissions: ":workspace",
+        approvalPolicy: "on-request",
+        collaborationMode: { mode: "plan" },
+      });
+    }
   });
 
   it("aligns the default collaboration mode with web model overrides", () => {
@@ -227,6 +270,7 @@ describe("Codex app-server submission", () => {
         currentReasoningEffort: "xhigh",
         peerDisplayName: "Owner",
         commandId: "prompt-luna",
+        ownerAuthored: true,
       }),
     ).toMatchObject({
       model: "gpt-5.6-luna",
@@ -280,6 +324,8 @@ describe("Codex app-server submission", () => {
         threadId: "thread-1",
         projectRoot: "E:\\Codex-Collab",
         commandId: "prompt-luna",
+        requesterMemberId: "owner-1",
+        ownerMemberId: "owner-1",
         peerDisplayName: "Owner",
         body: "Which model?",
         attachments: [],
@@ -349,6 +395,8 @@ describe("Codex app-server submission", () => {
         threadId: "thread-1",
         projectRoot: "E:\\Codex-Collab",
         commandId: "prompt-queued",
+        requesterMemberId: "owner-1",
+        ownerMemberId: "owner-1",
         peerDisplayName: "Owner",
         body: "Run next",
         attachments: [],

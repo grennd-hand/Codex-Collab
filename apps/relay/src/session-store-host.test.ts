@@ -418,6 +418,9 @@ describe("SessionStore migration and host boundaries", () => {
     for (const [path, content] of [
       [".env", "SAFE=value"],
       [".codex/auth.json", "{}"],
+      [".aws/settings.json", "{}"],
+      [".SSH/public.txt", "not-public-through-collab"],
+      ["node_modules/package/index.ts", "export {};"],
       ["src/config.ts", "ACCESS_TOKEN=custom-super-secret-token-123456"],
     ] as const) {
       expect(() =>

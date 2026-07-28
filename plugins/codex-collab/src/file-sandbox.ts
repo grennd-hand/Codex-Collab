@@ -10,6 +10,7 @@ import {
   unlink,
 } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { isPublishableWorkspaceDirectoryPath } from "@codex-collab/protocol";
 import {
   runWindowsFileCas,
   type WindowsFileCasDebugOptions,
@@ -18,10 +19,7 @@ import {
   createSafeWorkspaceDirectory,
   SKIPPED_WORKSPACE_DIRECTORIES,
 } from "./workspace-directory-sandbox.js";
-import {
-  renameSandboxEntry,
-  SandboxRenameConflictError,
-} from "./file-sandbox-rename.js";
+import { renameSandboxEntry, SandboxRenameConflictError } from "./file-sandbox-rename.js";
 
 export interface SharedFile {
   path: string;
@@ -121,7 +119,9 @@ export class FileSandbox {
           .split(sep)
           .join("/");
         if (
-          (entry.isDirectory() && SKIPPED_WORKSPACE_DIRECTORIES.has(entry.name)) ||
+          (entry.isDirectory() &&
+            (SKIPPED_WORKSPACE_DIRECTORIES.has(entry.name) ||
+              !isPublishableWorkspaceDirectoryPath(relativePath))) ||
           pathIsIgnored(relativePath, ignored)
         ) {
           continue;
