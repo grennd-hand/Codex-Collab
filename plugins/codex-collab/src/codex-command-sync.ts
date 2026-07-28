@@ -1,14 +1,16 @@
 import {
-  DEFAULT_CODEX_PROMPT_OPTIONS,
   type Member,
   type Message,
 } from "@codex-collab/protocol";
 import type { CodexAppServerClient } from "./app-server-client.js";
+import {
+  deliverCodexCommand,
+  recoverCommandReceipt,
+  type CommandAdmission,
+} from "./command-outbox.js";
 import type { LocalProfile, LocalProfileStore } from "./local-profile.js";
 import type { RelayClient } from "./relay-client.js";
 import { nextPendingCodexCommand } from "./workspace-sync.js";
-
-interface CommandAdmission { isAllowed(): boolean; }
 
 export async function rejectUnapprovedQueuedCommands(
   profile: LocalProfile,
@@ -64,12 +66,15 @@ export async function forwardNextCodexPrompt(
   codex: Pick<
     CodexAppServerClient,
     "submitPeerPrompt" | "stopPeerPrompt"
-  >,
-  profiles: Pick<LocalProfileStore, "update">,
+  > & Partial<Pick<CodexAppServerClient, "findPeerPromptTurnIds">>,
+  profiles: Pick<LocalProfileStore, "read" | "mutate">,
   threadBusy = false,
   prefetchedMessages?: Message[],
   admission?: CommandAdmission,
 ): Promise<string | null> {
+  if (admission && !admission.isAllowed()) return null;
+  const recovered = await recoverCommandReceipt(profile, relay, codex, profiles);
+  if (recovered) return recovered.messageId;
   const messages =
     prefetchedMessages ??
     (await relay.listMessages(profile.sessionId, profile.memberToken));
@@ -104,54 +109,16 @@ export async function forwardNextCodexPrompt(
       ? pendingStop ?? null
       : pendingCommand;
   if (!pendingPrompt) return null;
-
-  let submission: Awaited<ReturnType<CodexAppServerClient["submitPeerPrompt"]>>;
-  if (pendingPrompt.kind === "codex_stop") {
-    if (admission && !admission.isAllowed()) return null;
-    submission = await codex.stopPeerPrompt({ threadId });
-  } else {
-    const attachments = await Promise.all(
-      pendingPrompt.attachments.map(async (attachment) => ({
-        name: attachment.name,
-        mediaType: attachment.mediaType,
-        content: await relay.readMessageAttachment(
-          profile.sessionId,
-          profile.memberToken,
-          pendingPrompt.id,
-          attachment,
-        ),
-      })),
-    );
-    if (admission && !admission.isAllowed()) return null;
-    submission = await codex.submitPeerPrompt({
-          threadId,
-          projectRoot: profile.projectRoot,
-          commandId: pendingPrompt.id,
-          requesterMemberId: pendingPrompt.senderMemberId,
-          ownerMemberId: profile.memberId,
-          peerDisplayName: pendingPrompt.senderDisplayName,
-          body: pendingPrompt.body,
-          attachments,
-          codexOptions: pendingPrompt.codexOptions ?? DEFAULT_CODEX_PROMPT_OPTIONS,
-        });
-  }
-  if (submission.status !== "submitted") {
-    return null;
-  }
-  await profiles.update({
-    forwardedMessageIds: [
-      ...(profile.forwardedMessageIds ?? []),
-      pendingPrompt.id,
-    ],
-  });
-  await relay.updateMessageDeliveryStatus(
-    profile.sessionId,
-    profile.memberToken,
-    pendingPrompt.id,
-    "submitted",
-    submission.turnId ?? null,
+  const delivered = await deliverCodexCommand(
+    profile,
+    threadId,
+    pendingPrompt,
+    relay,
+    codex,
+    profiles,
+    admission,
   );
-  return pendingPrompt.id;
+  return delivered?.messageId ?? null;
 }
 
 export async function reconcileCodexCommandStatuses(

@@ -63,6 +63,7 @@ export async function readCodexThreadRevision(
 export interface CodexThreadItem {
   type: string;
   id?: string;
+  clientId?: string | null;
   status?: string;
   phase?: string;
   text?: string;
@@ -92,6 +93,30 @@ export type CodexTurnStatus =
   | "interrupted"
   | "failed"
   | "inProgress";
+
+function containsCollabCommandId(
+  value: unknown,
+  commandId: string,
+  depth = 0,
+): boolean {
+  if (depth > 8 || value === null || typeof value !== "object") return false;
+  if (Array.isArray(value)) {
+    return value.some((entry) => containsCollabCommandId(entry, commandId, depth + 1));
+  }
+  for (const [key, entry] of Object.entries(value)) {
+    if (key === "collab_command_id" && entry === commandId) return true;
+    if (containsCollabCommandId(entry, commandId, depth + 1)) return true;
+  }
+  return false;
+}
+
+export function turnMatchesPeerCommand(turn: CodexTurn, commandId: string): boolean {
+  return turn.items.some(
+    (item) =>
+      (item.type === "userMessage" && item.clientId === commandId) ||
+      containsCollabCommandId(item, commandId),
+  );
+}
 
 export interface CodexRolloutActivity {
   openTurnIds: string[];

@@ -13,6 +13,7 @@ import {
   type CodexRecordEntry,
 } from "@codex-collab/protocol";
 import { CodexDesktopIpcClient } from "./codex-desktop-ipc-client.js";
+import { findPeerPromptTurnIds } from "./app-server/command-correlation.js";
 import { JsonRpcTransport } from "./app-server/json-rpc-transport.js";
 import {
   buildCodexTurnStartParams,
@@ -20,6 +21,7 @@ import {
   delay,
   isEmptyRolloutError,
   isUnmaterializedThreadError,
+  isUnsupportedClientUserMessageIdError,
   nestedTurnId,
   type CodexUserInput,
 } from "./app-server/prompt-submission.js";
@@ -34,6 +36,7 @@ import {
 import { extractCodexRolloutEntries } from "./app-server/rollout-history-parser.js";
 import { RolloutHistorySource } from "./app-server/rollout-history-source.js";
 import { RolloutActivityReader } from "./app-server/rollout-activity-reader.js";
+import { readCodexTurns } from "./app-server/thread-turn-reader.js";
 
 export type {
   CodexThreadSummary,
@@ -154,20 +157,24 @@ export class CodexAppServerClient extends EventEmitter {
     await this.start();
     const rolloutHistory = await this.rolloutHistorySource.read(threadId, rolloutPath);
     if (rolloutHistory !== null) return rolloutHistory;
-    const turns: CodexTurn[] = [];
-    let cursor: string | null = null;
-    do {
-      const response = (await this.request("thread/turns/list", {
-        threadId,
-        cursor,
-        limit: 100,
-        sortDirection: "asc",
-        itemsView: "full",
-      })) as { data?: CodexTurn[]; nextCursor?: string | null };
-      turns.push(...(response.data ?? []));
-      cursor = response.nextCursor ?? null;
-    } while (cursor && turns.length < 1_000);
+    const turns = await readCodexTurns(
+      (method, params) => this.request(method, params),
+      threadId,
+      1_000,
+    );
     return extractCodexRecordEntries(turns, threadId);
+  }
+
+  async findPeerPromptTurnIds(
+    threadId: string,
+    commandId: string,
+  ): Promise<string[]> {
+    await this.start();
+    return findPeerPromptTurnIds(
+      (method, params) => this.request(method, params),
+      threadId,
+      commandId,
+    );
   }
 
   async isThreadBusyForPrompt(
@@ -295,23 +302,32 @@ export class CodexAppServerClient extends EventEmitter {
         ownerAuthored: input.requesterMemberId === input.ownerMemberId,
       });
       let turnId: string | null = null;
-      if (this.platform === "win32") {
-        const { threadId: _threadId, ...turnStartParams } = startParameters;
-        const response = await this.desktopIpc.startTurn({
-          conversationId: input.threadId,
-          turnStartParams: {
-            ...turnStartParams,
-            clientUserMessageId: input.commandId,
-            additionalContext: null,
-          },
-        });
-        turnId = nestedTurnId(response);
-      } else {
-        const response = (await this.request(
-          "turn/start",
-          startParameters,
-        )) as TurnStartResponse;
-        turnId = response.turn?.id ?? null;
+      try {
+        if (this.platform === "win32") {
+          const { threadId: _threadId, ...turnStartParams } = startParameters;
+          const response = await this.desktopIpc.startTurn({
+            conversationId: input.threadId,
+            turnStartParams: {
+              ...turnStartParams,
+              additionalContext: null,
+            },
+          });
+          turnId = nestedTurnId(response);
+        } else {
+          const response = (await this.request(
+            "turn/start",
+            startParameters,
+          )) as TurnStartResponse;
+          turnId = response.turn?.id ?? null;
+        }
+      } catch (error) {
+        if (isUnsupportedClientUserMessageIdError(error)) {
+          throw new Error(
+            "Codex does not support durable clientUserMessageId correlation; the prompt was not retried",
+            { cause: error },
+          );
+        }
+        throw error;
       }
       if (!turnId) {
         throw new Error("Codex Desktop did not return a started turn id");

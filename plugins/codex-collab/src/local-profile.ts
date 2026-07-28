@@ -1,12 +1,14 @@
 import {
   chmod,
   mkdir,
+  open,
   readFile,
   rename,
   rmdir,
   stat,
-  writeFile,
+  unlink,
 } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -22,8 +24,20 @@ export interface LocalProfile {
   threadId?: string;
   lastMessageAt?: string;
   forwardedMessageIds?: string[];
+  commandReceipt?: LocalCommandReceipt;
   observedThreadIds?: string[];
   threadCatalogVersion?: number;
+}
+
+export interface LocalCommandReceipt {
+  messageId: string;
+  threadId: string;
+  commandKind: "codex_prompt" | "codex_stop";
+  phase: "submitting" | "submitted" | "blocked";
+  turnId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  diagnostic?: string;
 }
 
 type LocalProfilePatch = Omit<Partial<LocalProfile>, "observedThreadIds"> & {
@@ -46,16 +60,18 @@ export function localProfilePath(): string {
 }
 
 export class LocalProfileStore {
-  async read(): Promise<LocalProfile | null> {
+  private async readTarget(target: string): Promise<LocalProfile | null> {
     try {
-      const data = await readFile(localProfilePath(), "utf8");
+      const data = await readFile(target, "utf8");
       return JSON.parse(data) as LocalProfile;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return null;
-      }
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
       throw error;
     }
+  }
+
+  async read(): Promise<LocalProfile | null> {
+    return this.readTarget(localProfilePath());
   }
 
   private async withWriteLock<T>(operation: (target: string) => Promise<T>): Promise<T> {
@@ -95,25 +111,40 @@ export class LocalProfileStore {
   }
 
   private async writeUnlocked(target: string, profile: LocalProfile): Promise<void> {
-    const temporary = `${target}.${process.pid}.tmp`;
-    await writeFile(temporary, `${JSON.stringify(profile, null, 2)}\n`, {
-      encoding: "utf8",
-      mode: 0o600,
-    });
-    await rename(temporary, target);
-    await chmod(target, 0o600).catch(() => undefined);
+    const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
+    try {
+      const handle = await open(temporary, "wx", 0o600);
+      try {
+        await handle.writeFile(`${JSON.stringify(profile, null, 2)}\n`, "utf8");
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      await rename(temporary, target);
+      await chmod(target, 0o600).catch(() => undefined);
+    } finally {
+      await unlink(temporary).catch(() => undefined);
+    }
   }
 
   async write(profile: LocalProfile): Promise<void> {
     await this.withWriteLock((target) => this.writeUnlocked(target, profile));
   }
 
-  async update(patch: LocalProfilePatch): Promise<LocalProfile> {
+  async mutate(operation: (current: LocalProfile) => LocalProfile): Promise<LocalProfile> {
     return this.withWriteLock(async (target) => {
-      const current = await this.read();
+      const current = await this.readTarget(target);
       if (!current) {
         throw new Error("No active Codex Collab profile. Create or join a session first.");
       }
+      const updated = operation(current);
+      await this.writeUnlocked(target, updated);
+      return updated;
+    });
+  }
+
+  async update(patch: LocalProfilePatch): Promise<LocalProfile> {
+    return this.mutate((current) => {
       const { observedThreadIds, ...profilePatch } = patch;
       const merged = { ...current, ...profilePatch };
       let updated: LocalProfile;
@@ -125,7 +156,6 @@ export class LocalProfileStore {
       } else {
         updated = merged;
       }
-      await this.writeUnlocked(target, updated);
       return updated;
     });
   }

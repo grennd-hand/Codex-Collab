@@ -1,12 +1,16 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RelayClient } from "./relay-client.js";
 import { WorkspaceSyncService } from "./workspace-sync-service.js";
 import { profile, syncState } from "./workspace-sync-test-fixtures.js";
 
 describe("workspace live history sync", () => {
+  beforeEach(() => {
+    vi.spyOn(RelayClient.prototype, "listMembers").mockResolvedValue([]);
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
   });

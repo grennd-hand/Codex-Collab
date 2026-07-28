@@ -1,7 +1,10 @@
 import { hostname } from "node:os";
 import { basename } from "node:path";
-import { DEFAULT_CODEX_PROMPT_OPTIONS } from "@codex-collab/protocol";
 import type { CodexAppServerClient } from "../app-server-client.js";
+import {
+  deliverCodexCommand,
+  recoverCommandReceipt,
+} from "../command-outbox.js";
 import type { LocalProfile } from "../local-profile.js";
 import { RelayClient } from "../relay-client.js";
 import type { WorkspaceSyncService } from "../workspace-sync-service.js";
@@ -157,7 +160,18 @@ export class HostWorkspaceService {
     if (profile.role !== "owner") throw new Error("Only the owner host can forward prompts");
     if (!profile.threadId) throw new Error("Bind a Codex thread first");
     const messageId = stringArgument(args, "messageId")!;
-    if (profile.forwardedMessageIds?.includes(messageId)) {
+    const recovered = await recoverCommandReceipt(
+      profile,
+      relay,
+      this.codex,
+      this.context.profiles,
+    );
+    if (recovered && recovered.messageId !== messageId) {
+      throw new Error(
+        `Recovered pending command ${recovered.messageId}; retry command ${messageId} separately`,
+      );
+    }
+    if (!recovered && profile.forwardedMessageIds?.includes(messageId)) {
       throw new Error("This collaboration message was already forwarded");
     }
     const messages = await relay.listMessages(profile.sessionId, profile.memberToken);
@@ -166,6 +180,13 @@ export class HostWorkspaceService {
     if (!message) throw new Error("Message was not found in the approved session");
     if (message.kind !== "codex_prompt") {
       throw new Error("Only codex_prompt messages can be forwarded");
+    }
+    if (recovered) {
+      return {
+        forwarded: message,
+        appServerSubmission: recovered.submission,
+        recovered: true,
+      };
     }
     const members = await relay.listMembers(profile.sessionId, profile.memberToken);
     this.assertAdmitted(admission);
@@ -193,46 +214,27 @@ export class HostWorkspaceService {
     if (!selectedThread) {
       throw new Error("Bound Codex task no longer belongs to the explicitly shared root");
     }
-    const attachments = await Promise.all(
-      message.attachments.map(async (attachment) => ({
-        name: attachment.name,
-        mediaType: attachment.mediaType,
-        content: await relay.readMessageAttachment(
-          profile.sessionId,
-          profile.memberToken,
-          message.id,
-          attachment,
-        ),
-      })),
-    );
     this.assertAdmitted(admission);
-    const result = await this.codex.submitPeerPrompt({
-      threadId: profile.threadId,
-      projectRoot: projectSandbox.getRoot(),
-      commandId: message.id,
-      requesterMemberId: message.senderMemberId,
-      ownerMemberId: profile.memberId,
-      peerDisplayName: message.senderDisplayName,
-      body: message.body,
-      attachments,
-      codexOptions: message.codexOptions ?? DEFAULT_CODEX_PROMPT_OPTIONS,
-    });
-    if (result.status !== "submitted") {
+    const delivered = await deliverCodexCommand(
+      { ...profile, projectRoot: projectSandbox.getRoot() },
+      profile.threadId,
+      message,
+      relay,
+      this.codex,
+      this.context.profiles,
+      admission,
+    );
+    if (!delivered) {
+      this.assertAdmitted(admission);
       throw new Error(
-        `Codex app-server did not submit the prompt (${result.reason ?? "not-ready"}). The prompt remains queued.`,
+        "Codex app-server did not submit the prompt. The prompt remains queued.",
       );
     }
-    await this.context.profiles.update({
-      forwardedMessageIds: [...(profile.forwardedMessageIds ?? []), message.id],
-    });
-    await relay.updateMessageDeliveryStatus(
-      profile.sessionId,
-      profile.memberToken,
-      message.id,
-      "submitted",
-      result.turnId ?? null,
-    );
-    return { forwarded: message, appServerSubmission: result };
+    return {
+      forwarded: message,
+      appServerSubmission: delivered.submission,
+      recovered: delivered.recovered,
+    };
   }
 
   private async listFiles(admission?: HostWorkAdmission): Promise<unknown> {

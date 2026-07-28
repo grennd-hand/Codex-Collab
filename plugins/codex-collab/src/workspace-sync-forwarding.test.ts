@@ -6,6 +6,18 @@ import {
 } from "./workspace-sync-service.js";
 import { ownerPrompt, profile } from "./workspace-sync-test-fixtures.js";
 
+function memoryProfiles(initial = profile) {
+  let current = structuredClone(initial);
+  return {
+    read: vi.fn(async () => current),
+    mutate: vi.fn(async (operation: (value: typeof current) => typeof current) => {
+      current = operation(current);
+      return current;
+    }),
+    snapshot: () => current,
+  };
+}
+
 describe("Codex prompt forwarding", () => {
   it("fails queued commands whose sender is no longer approved", async () => {
     const revokedPrompt = {
@@ -54,7 +66,7 @@ describe("Codex prompt forwarding", () => {
       turnId: "turn-1",
     });
     const stopPeerPrompt = vi.fn();
-    const update = vi.fn().mockResolvedValue(profile);
+    const profiles = memoryProfiles();
 
     await expect(
       forwardNextCodexPrompt(
@@ -62,7 +74,7 @@ describe("Codex prompt forwarding", () => {
         "thread-1",
         { listMessages, readMessageAttachment, updateMessageDeliveryStatus },
         { submitPeerPrompt, stopPeerPrompt },
-        { update },
+        profiles,
       ),
     ).resolves.toBe("prompt-1");
 
@@ -84,9 +96,10 @@ describe("Codex prompt forwarding", () => {
         planMode: false,
       },
     });
-    expect(update).toHaveBeenCalledWith({
+    expect(profiles.snapshot()).toMatchObject({
       forwardedMessageIds: ["prompt-1"],
     });
+    expect(profiles.snapshot().commandReceipt).toBeUndefined();
     expect(updateMessageDeliveryStatus).toHaveBeenCalledWith(
       "session-1",
       "member-token",
@@ -94,9 +107,41 @@ describe("Codex prompt forwarding", () => {
       "submitted",
       "turn-1",
     );
-    expect(submitPeerPrompt.mock.invocationCallOrder[0]).toBeLessThan(
-      update.mock.invocationCallOrder[0]!,
+    expect(profiles.mutate.mock.invocationCallOrder[0]).toBeLessThan(
+      submitPeerPrompt.mock.invocationCallOrder[0]!,
     );
+  });
+
+  it("recovers automatic forwarding after Relay ack fails without resubmitting", async () => {
+    const profiles = memoryProfiles();
+    const updateMessageDeliveryStatus = vi.fn()
+      .mockRejectedValueOnce(new Error("relay unavailable"))
+      .mockResolvedValueOnce(ownerPrompt);
+    const relay = {
+      listMessages: vi.fn().mockResolvedValue([ownerPrompt]),
+      readMessageAttachment: vi.fn(),
+      updateMessageDeliveryStatus,
+    };
+    const submitPeerPrompt = vi.fn().mockResolvedValue({
+      status: "submitted",
+      turnId: "turn-crash",
+    });
+    const codex = { submitPeerPrompt, stopPeerPrompt: vi.fn() };
+
+    await expect(
+      forwardNextCodexPrompt(profile, "thread-1", relay, codex, profiles),
+    ).rejects.toThrow("relay unavailable");
+    expect(profiles.snapshot().commandReceipt).toMatchObject({
+      phase: "submitted",
+      turnId: "turn-crash",
+    });
+
+    await expect(
+      forwardNextCodexPrompt(profile, "thread-1", relay, codex, profiles),
+    ).resolves.toBe("prompt-1");
+    expect(submitPeerPrompt).toHaveBeenCalledTimes(1);
+    expect(updateMessageDeliveryStatus).toHaveBeenCalledTimes(2);
+    expect(profiles.snapshot().commandReceipt).toBeUndefined();
   });
 
   it("marks editor-authored prompts so the final Host boundary forces approval", async () => {
@@ -119,7 +164,7 @@ describe("Codex prompt forwarding", () => {
         updateMessageDeliveryStatus: vi.fn().mockResolvedValue(editorPrompt),
       },
       { submitPeerPrompt, stopPeerPrompt: vi.fn() },
-      { update: vi.fn().mockResolvedValue(profile) },
+      memoryProfiles(),
     );
 
     expect(submitPeerPrompt).toHaveBeenCalledWith(
@@ -136,7 +181,7 @@ describe("Codex prompt forwarding", () => {
     const updateMessageDeliveryStatus = vi.fn();
     const submitPeerPrompt = vi.fn().mockRejectedValue(new Error("app-server failed"));
     const stopPeerPrompt = vi.fn();
-    const update = vi.fn();
+    const profiles = memoryProfiles();
 
     await expect(
       forwardNextCodexPrompt(
@@ -144,11 +189,14 @@ describe("Codex prompt forwarding", () => {
         "thread-1",
         { listMessages, readMessageAttachment, updateMessageDeliveryStatus },
         { submitPeerPrompt, stopPeerPrompt },
-        { update },
+        profiles,
       ),
     ).rejects.toThrow("app-server failed");
 
-    expect(update).not.toHaveBeenCalled();
+    expect(profiles.snapshot().commandReceipt).toMatchObject({
+      messageId: "prompt-1",
+      phase: "submitting",
+    });
   });
 
   it("keeps the prompt queued when the app-server cannot accept it", async () => {
@@ -159,7 +207,7 @@ describe("Codex prompt forwarding", () => {
       status: "deferred",
       reason: "composer-not-empty",
     });
-    const update = vi.fn();
+    const profiles = memoryProfiles();
     const stopPeerPrompt = vi.fn();
 
     await expect(
@@ -168,11 +216,11 @@ describe("Codex prompt forwarding", () => {
         "thread-1",
         { listMessages, readMessageAttachment, updateMessageDeliveryStatus },
         { submitPeerPrompt, stopPeerPrompt },
-        { update },
+        profiles,
       ),
     ).resolves.toBeNull();
 
-    expect(update).not.toHaveBeenCalled();
+    expect(profiles.snapshot().commandReceipt).toBeUndefined();
   });
 
   it("records a newly started Desktop turn", async () => {
@@ -185,7 +233,7 @@ describe("Codex prompt forwarding", () => {
       turnId: "turn-1",
     });
     const stopPeerPrompt = vi.fn();
-    const update = vi.fn().mockResolvedValue(profile);
+    const profiles = memoryProfiles();
 
     await expect(
       forwardNextCodexPrompt(
@@ -193,12 +241,12 @@ describe("Codex prompt forwarding", () => {
         "thread-1",
         { listMessages, readMessageAttachment, updateMessageDeliveryStatus },
         { submitPeerPrompt, stopPeerPrompt },
-        { update },
+        profiles,
       ),
     ).resolves.toBe("prompt-1");
 
     expect(submitPeerPrompt).toHaveBeenCalledOnce();
-    expect(update).toHaveBeenCalledWith({
+    expect(profiles.snapshot()).toMatchObject({
       forwardedMessageIds: ["prompt-1"],
     });
   });
@@ -223,7 +271,7 @@ describe("Codex prompt forwarding", () => {
     const updateMessageDeliveryStatus = vi.fn();
     const submitPeerPrompt = vi.fn();
     const stopPeerPrompt = vi.fn();
-    const update = vi.fn();
+    const profiles = memoryProfiles();
 
     await expect(
       forwardNextCodexPrompt(
@@ -231,13 +279,13 @@ describe("Codex prompt forwarding", () => {
         "thread-1",
         { listMessages, readMessageAttachment, updateMessageDeliveryStatus },
         { submitPeerPrompt, stopPeerPrompt },
-        { update },
+        profiles,
       ),
     ).resolves.toBeNull();
 
     expect(submitPeerPrompt).not.toHaveBeenCalled();
     expect(updateMessageDeliveryStatus).not.toHaveBeenCalled();
-    expect(update).not.toHaveBeenCalled();
+    expect(profiles.mutate).not.toHaveBeenCalled();
   });
 
   it("promotes the next queued prompt after the previous command completes", async () => {
@@ -264,7 +312,7 @@ describe("Codex prompt forwarding", () => {
       turnId: "turn-2",
     });
     const stopPeerPrompt = vi.fn();
-    const update = vi.fn().mockResolvedValue(profile);
+    const profiles = memoryProfiles();
 
     await expect(
       forwardNextCodexPrompt(
@@ -272,7 +320,7 @@ describe("Codex prompt forwarding", () => {
         "thread-1",
         { listMessages, readMessageAttachment, updateMessageDeliveryStatus },
         { submitPeerPrompt, stopPeerPrompt },
-        { update },
+        profiles,
       ),
     ).resolves.toBe("prompt-2");
 
@@ -294,7 +342,7 @@ describe("Codex prompt forwarding", () => {
     const updateMessageDeliveryStatus = vi.fn();
     const submitPeerPrompt = vi.fn();
     const stopPeerPrompt = vi.fn();
-    const update = vi.fn();
+    const profiles = memoryProfiles();
 
     await expect(
       forwardNextCodexPrompt(
@@ -302,7 +350,7 @@ describe("Codex prompt forwarding", () => {
         "thread-1",
         { listMessages, readMessageAttachment, updateMessageDeliveryStatus },
         { submitPeerPrompt, stopPeerPrompt },
-        { update },
+        profiles,
         true,
       ),
     ).resolves.toBeNull();
@@ -335,7 +383,7 @@ describe("Codex prompt forwarding", () => {
       status: "submitted",
       turnId: "turn-1",
     });
-    const update = vi.fn().mockResolvedValue(profile);
+    const profiles = memoryProfiles();
 
     await expect(
       forwardNextCodexPrompt(
@@ -343,7 +391,7 @@ describe("Codex prompt forwarding", () => {
         "thread-1",
         { listMessages, readMessageAttachment, updateMessageDeliveryStatus },
         { submitPeerPrompt, stopPeerPrompt },
-        { update },
+        profiles,
         true,
       ),
     ).resolves.toBe("stop-1");
@@ -390,7 +438,7 @@ describe("Codex prompt forwarding", () => {
       status: "submitted",
       turnId: "turn-1",
     });
-    const update = vi.fn().mockResolvedValue(profile);
+    const profiles = memoryProfiles();
 
     await expect(
       forwardNextCodexPrompt(
@@ -402,7 +450,7 @@ describe("Codex prompt forwarding", () => {
           updateMessageDeliveryStatus,
         },
         { submitPeerPrompt: vi.fn(), stopPeerPrompt },
-        { update },
+        profiles,
         true,
       ),
     ).resolves.toBe("stop-editor");
@@ -445,14 +493,14 @@ describe("Codex prompt forwarding", () => {
       turnId: "turn-attachment",
     });
     const stopPeerPrompt = vi.fn();
-    const update = vi.fn().mockResolvedValue(profile);
+    const profiles = memoryProfiles();
 
     await forwardNextCodexPrompt(
       profile,
       "thread-1",
       { listMessages, readMessageAttachment, updateMessageDeliveryStatus },
       { submitPeerPrompt, stopPeerPrompt },
-      { update },
+      profiles,
     );
 
     expect(readMessageAttachment).toHaveBeenCalledWith(
@@ -500,7 +548,7 @@ describe("Codex prompt forwarding", () => {
         updateMessageDeliveryStatus: vi.fn(),
       },
       { submitPeerPrompt, stopPeerPrompt: vi.fn() },
-      { update: vi.fn() },
+      memoryProfiles(),
       false,
       undefined,
       { isAllowed: () => allowed },
@@ -527,7 +575,7 @@ describe("Codex prompt forwarding", () => {
       "thread-1",
       { listMessages, readMessageAttachment: vi.fn(), updateMessageDeliveryStatus: vi.fn() },
       { submitPeerPrompt: vi.fn(), stopPeerPrompt },
-      { update: vi.fn() },
+      memoryProfiles(),
       false,
       undefined,
       { isAllowed: () => allowed },
@@ -552,7 +600,7 @@ describe("Codex prompt forwarding", () => {
     const updateMessageDeliveryStatus = vi.fn().mockResolvedValue(stopMessage);
     const submitPeerPrompt = vi.fn();
     const stopPeerPrompt = vi.fn().mockResolvedValue({ status: "submitted" });
-    const update = vi.fn().mockResolvedValue(profile);
+    const profiles = memoryProfiles();
 
     await expect(
       forwardNextCodexPrompt(
@@ -560,7 +608,7 @@ describe("Codex prompt forwarding", () => {
         "thread-1",
         { listMessages, readMessageAttachment, updateMessageDeliveryStatus },
         { submitPeerPrompt, stopPeerPrompt },
-        { update },
+        profiles,
       ),
     ).resolves.toBe("stop-1");
 

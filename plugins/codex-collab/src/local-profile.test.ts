@@ -51,4 +51,46 @@ describe("LocalProfileStore", () => {
       observedThreadIds: ["thread-1"],
     });
   });
+
+  it("rereads under the lock before concurrent receipt mutations", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codex-collab-receipt-"));
+    temporaryDirectories.push(directory);
+    process.env.CODEX_COLLAB_STATE_FILE = join(directory, "state.json");
+    const initial: LocalProfile = {
+      relayUrl: "https://relay.example",
+      sessionId: "session-1",
+      memberId: "member-1",
+      displayName: "Owner",
+      role: "owner",
+      memberToken: "member-token",
+      projectRoot: "C:\\project",
+    };
+    const firstStore = new LocalProfileStore();
+    const secondStore = new LocalProfileStore();
+    await firstStore.write(initial);
+
+    await Promise.all([
+      firstStore.mutate((current) => ({
+        ...current,
+        commandReceipt: {
+          messageId: "message-1",
+          threadId: "thread-1",
+          commandKind: "codex_prompt",
+          phase: "submitting",
+          turnId: null,
+          createdAt: "2026-07-29T00:00:00.000Z",
+          updatedAt: "2026-07-29T00:00:00.000Z",
+        },
+      })),
+      secondStore.update({ lastMessageAt: "2026-07-29T00:00:01.000Z" }),
+    ]);
+
+    await expect(firstStore.read()).resolves.toMatchObject({
+      lastMessageAt: "2026-07-29T00:00:01.000Z",
+      commandReceipt: {
+        messageId: "message-1",
+        phase: "submitting",
+      },
+    });
+  });
 });

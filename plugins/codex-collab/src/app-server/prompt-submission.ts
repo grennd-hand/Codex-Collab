@@ -90,6 +90,12 @@ export function isEmptyRolloutError(error: unknown): boolean {
     error.message.includes("is empty");
 }
 
+export function isUnsupportedClientUserMessageIdError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return /clientUserMessageId/i.test(error.message) &&
+    /unknown|unsupported|unexpected|invalid params?/i.test(error.message);
+}
+
 export function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
@@ -174,6 +180,7 @@ export function buildCodexTurnStartParams(input: {
   const parameters: Record<string, unknown> = {
     threadId: input.threadId,
     input: input.userInput,
+    ...(input.commandId ? { clientUserMessageId: input.commandId } : {}),
     responsesapiClientMetadata: {
       source: "codex-collab",
       collab_member: input.peerDisplayName,

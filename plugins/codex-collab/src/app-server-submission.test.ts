@@ -87,6 +87,7 @@ describe("Codex app-server submission", () => {
         collab_member: "Owner",
         collab_command_id: "prompt-1",
       },
+      clientUserMessageId: "prompt-1",
     });
   });
 
@@ -367,6 +368,53 @@ describe("Codex app-server submission", () => {
         additionalContext: null,
       },
     });
+  });
+
+  it("does not retry when an app-server rejects clientUserMessageId", async () => {
+    const request = vi.fn(async (method: string, params: unknown) => {
+      if (method === "thread/resume") return { thread: {} };
+      if (method === "turn/start") {
+        expect(params).toMatchObject({ clientUserMessageId: "prompt-unsupported" });
+        throw new Error("Invalid params: unknown field clientUserMessageId");
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    const client = new CodexAppServerClient({
+      platform: "linux",
+      desktopIpc: {
+        startTurn: vi.fn(),
+        steerTurn: vi.fn(),
+        interruptTurn: vi.fn(),
+        close: vi.fn(),
+      },
+    });
+    Object.defineProperty(client, "start", { value: async () => undefined });
+    Object.defineProperty(client, "getActiveTurnId", { value: async () => null });
+    Object.defineProperty(client, "request", { value: request });
+
+    await expect(
+      client.submitPeerPrompt({
+        threadId: "thread-1",
+        projectRoot: "E:\\Codex-Collab",
+        commandId: "prompt-unsupported",
+        requesterMemberId: "owner-1",
+        ownerMemberId: "owner-1",
+        peerDisplayName: "Owner",
+        body: "Run checks",
+        attachments: [],
+        codexOptions: {
+          accessMode: "follow-desktop",
+          customPermissions: null,
+          model: null,
+          reasoningEffort: "follow-desktop",
+          speed: "follow-desktop",
+          planMode: false,
+        },
+      }),
+    ).rejects.toThrow(
+      "Codex does not support durable clientUserMessageId correlation; the prompt was not retried",
+    );
+    expect(request.mock.calls.filter(([method]) => method === "turn/start")).toHaveLength(1);
   });
 
   it("keeps configured prompts queued while another turn is active", async () => {
