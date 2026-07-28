@@ -7,6 +7,7 @@ const repositoryRoot = path.resolve(
   "..",
 );
 const dashboardRoot = path.join(repositoryRoot, "apps", "dashboard", "src");
+const desktopRoot = path.join(repositoryRoot, "apps", "desktop", "src");
 const failures = [];
 
 const sourceExtensions = new Set([".ts", ".tsx", ".js", ".mjs", ".css"]);
@@ -28,6 +29,13 @@ const guardedFiles = new Map([
   ["apps/dashboard/src/features/collaboration/CollaborationPanel.tsx", 350],
   ["apps/dashboard/src/features/collaboration/MembersPanel.tsx", 200],
   ["apps/relay/src/workspace/workspace-history-pagination.ts", 200],
+  ["plugins/codex-collab/src/host/host-runtime.ts", 350],
+  ["plugins/codex-collab/src/host/host-runtime-lock.ts", 100],
+  ["plugins/codex-collab/src/host/host-application.ts", 100],
+  ["plugins/codex-collab/src/host/host-session-service.ts", 300],
+  ["plugins/codex-collab/src/host/host-workspace-service.ts", 350],
+  ["plugins/codex-collab/src/mcp-server.ts", 100],
+  ["plugins/codex-collab/src/workspace-sync-worker.ts", 80],
 ]);
 
 const styleModules = [
@@ -186,11 +194,90 @@ function checkSharedImports() {
   }
 }
 
+function checkDesktopBoundaries() {
+  for (const absolutePath of walk(dashboardRoot)) {
+    if (!/\.(?:ts|tsx)$/.test(absolutePath)) continue;
+    const source = fs.readFileSync(absolutePath, "utf8");
+    const relativePath = normalizedRelativePath(absolutePath);
+    if (/from\s+["']electron["']|require\s*\(\s*["']electron["']/.test(source)) {
+      failures.push(`${relativePath} cannot import Electron into the Dashboard renderer.`);
+    }
+    if (/apps[\\/]desktop|\.\.[\\/].*desktop/.test(source)) {
+      failures.push(`${relativePath} cannot import the Desktop application layer.`);
+    }
+    if (
+      relativePath !== "apps/dashboard/src/shared/runtime/browser-runtime.ts" &&
+      (/\bfetch\s*\(/.test(source) || /new\s+WebSocket\s*\(/.test(source))
+    ) {
+      failures.push(
+        `${relativePath} performs renderer network I/O outside browser-runtime.ts.`,
+      );
+    }
+  }
+
+  const preloadPath = path.join(desktopRoot, "preload.cts");
+  const preload = fs.readFileSync(preloadPath, "utf8");
+  const preloadImports = [...preload.matchAll(/(?:from\s+|require\s*\(\s*)["']([^"']+)/g)];
+  for (const match of preloadImports) {
+    if (match[1] !== "electron" && match[1] !== "./ipc-contract.js") {
+      failures.push(`apps/desktop/src/preload.cts imports disallowed module ${match[1]}.`);
+    }
+  }
+  if (!/import\s+type\s*\{[\s\S]*?\}\s*from\s*["']\.\/ipc-contract\.js["']/.test(preload)) {
+    failures.push("apps/desktop/src/preload.cts must consume its local contract as a type-only import.");
+  }
+
+  for (const absolutePath of walk(desktopRoot)) {
+    if (!/\.(?:ts|cts)$/.test(absolutePath)) continue;
+    const source = fs.readFileSync(absolutePath, "utf8");
+    const relativePath = normalizedRelativePath(absolutePath);
+    const imports = [...source.matchAll(/from\s+["']([^"']+)["']/g)].map(
+      (match) => match[1].replaceAll("\\", "/").toLowerCase(),
+    );
+    for (const specifier of imports) {
+      if (
+        specifier.includes("apps/relay") ||
+        specifier.includes("/relay/src/") ||
+        specifier.includes("session-store") ||
+        specifier.includes("sqlite-session") ||
+        specifier.includes("docker-compose") ||
+        specifier.includes("caddyfile") ||
+        specifier.includes("/deploy/")
+      ) {
+        failures.push(
+          `${relativePath} imports Relay storage/server or deployment implementation ${specifier}.`,
+        );
+      }
+    }
+  }
+}
+
+function checkMcpFacade() {
+  const relativePath = "plugins/codex-collab/src/mcp-server.ts";
+  const source = fs.readFileSync(path.join(repositoryRoot, relativePath), "utf8");
+  const forbiddenImports = [
+    "app-server-client",
+    "local-profile",
+    "relay-client",
+    "workspace-roots",
+    "workspace-sync-service",
+  ];
+  for (const moduleName of forbiddenImports) {
+    if (source.includes(moduleName)) {
+      failures.push(
+        `${relativePath} must remain a protocol facade and cannot import privileged Host module ${moduleName}.`,
+      );
+    }
+  }
+}
+
 checkDashboardRoot();
 checkGuardedFiles();
 checkSourceSizes();
 checkStyles();
 checkSharedImports();
+checkMcpFacade();
+checkDesktopBoundaries();
 
 if (failures.length > 0) {
   console.error("Architecture validation failed:");

@@ -1,0 +1,35 @@
+{
+  "name": "@codex-collab/desktop",
+  "version": "0.1.0-beta.1",
+  "private": true,
+  "type": "module",
+  "main": "dist/main/main.js",
+  "scripts": {
+    "build:main": "tsc -p tsconfig.json",
+    "build:host": "npm run build --workspace codex-collab",
+    "build:native-host": "cargo build --release --manifest-path ../../native/host-ipc/Cargo.toml",
+    "build:renderer": "vite build --config vite.config.ts",
+    "build": "npm run build:main && npm run build:renderer",
+    "dev": "npm run build && electron .",
+    "test": "vitest run --config vitest.config.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.contract.json",
+    "package:dir": "node scripts/package-windows.mjs --dir",
+    "package:win": "node scripts/package-windows.mjs --win"
+  },
+  "devDependencies": {
+    "@electron/fuses": "2.1.3",
+    "@codex-collab/protocol": "0.1.0",
+    "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "^6.0.4",
+    "codex-collab": "0.1.0",
+    "electron": "43.2.0",
+    "electron-builder": "26.15.3",
+    "typescript": "^5.9.0",
+    "vite": "^8.1.5",
+    "vitest": "^3.2.0",
+    "ws": "^8.18.3"
+  },
+  "build": {
+    "extends": null
+  }
+}

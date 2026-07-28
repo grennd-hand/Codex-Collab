@@ -1,0 +1,45 @@
+appId: io.codexcollab.owner
+productName: Codex Collab
+asar: true
+compression: maximum
+npmRebuild: false
+electronDist: ../../node_modules/electron/dist
+afterPack: scripts/after-pack.mjs
+directories:
+  output: release
+files:
+  - dist/main/**
+  - dist/renderer/**
+  - package.json
+  - from: ../../node_modules/ws
+    to: node_modules/ws
+    filter:
+      - "**/*"
+extraResources:
+  - from: ../../plugins/codex-collab/dist
+    to: host/dist
+    filter:
+      - "**/*"
+      - "!**/*.test.js"
+      - "!**/*.test.d.ts"
+      - "!**/*.test.js.map"
+  - from: ../../plugins/codex-collab/package.json
+    to: host/package.json
+  - from: ../../packages/protocol/dist
+    to: host/node_modules/@codex-collab/protocol/dist
+  - from: ../../packages/protocol/package.json
+    to: host/node_modules/@codex-collab/protocol/package.json
+  - from: ../../native/host-ipc/target/release/codex-collab-host-ipc.exe
+    to: native/codex-collab-host-ipc.exe
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+artifactName: Codex-Collab-${version}-win-${arch}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+publish: null

@@ -8,3 +8,4 @@ coverage/
 .env
 .codex-collab/
 .runtime-data/
+apps/desktop/release/

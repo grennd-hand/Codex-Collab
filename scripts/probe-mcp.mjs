@@ -1,12 +1,29 @@
 import { spawn } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const serverPath = join(projectRoot, "plugins", "codex-collab", "dist", "mcp-server.js");
+const brokerPath = join(
+  projectRoot,
+  "native",
+  "host-ipc",
+  "target",
+  "release",
+  "codex-collab-host-ipc.exe",
+);
+const stateDirectory = await mkdtemp(join(tmpdir(), "codex-collab-mcp-probe-"));
 const child = spawn(process.execPath, [serverPath], {
   cwd: join(projectRoot, "plugins", "codex-collab"),
+  env: {
+    ...process.env,
+    CODEX_COLLAB_HOST_STATE_DIR: stateDirectory,
+    CODEX_COLLAB_HOST_IPC_BROKER: brokerPath,
+    CODEX_COLLAB_STATE_FILE: join(stateDirectory, "profile.json"),
+  },
   stdio: ["pipe", "pipe", "pipe"],
 });
 
@@ -31,7 +48,7 @@ function request(id, method, params = {}) {
     const timeout = setTimeout(() => {
       pending.delete(id);
       reject(new Error(`Timed out waiting for ${method}. stderr: ${stderr}`));
-    }, 10_000);
+    }, 20_000);
     pending.set(id, (message) => {
       clearTimeout(timeout);
       if (message.error) {
@@ -42,6 +59,8 @@ function request(id, method, params = {}) {
     });
   });
 }
+
+let hostStopped = false;
 
 try {
   const initialize = await request(1, "initialize", {
@@ -81,18 +100,38 @@ try {
       2,
     )}\n`,
   );
-  if (process.env.CODEX_COLLAB_PROBE_STOP_HOST === "1") {
-    const { connectOrStartHostIpc } = await import(
-      "../plugins/codex-collab/dist/workspace-sync-worker-control.js"
-    );
-    const desktopClient = await connectOrStartHostIpc({
-      clientKind: "desktop",
-      stateDirectory: process.env.CODEX_COLLAB_HOST_STATE_DIR,
-      brokerPath: process.env.CODEX_COLLAB_HOST_IPC_BROKER,
-    });
-    await desktopClient.gracefulStop();
-    desktopClient.close();
-  }
+  await stopTemporaryHost();
 } finally {
   child.kill();
+  await stopTemporaryHost().catch(() => undefined);
+  await rm(stateDirectory, { recursive: true, force: true });
+}
+
+async function stopTemporaryHost() {
+  if (hostStopped) return;
+  const { readHostIpcEndpoint } = await import(
+    "../plugins/codex-collab/dist/host/ipc/endpoint.js"
+  );
+  if (!(await readHostIpcEndpoint("desktop", stateDirectory))) return;
+
+  const { connectOrStartHostIpc } = await import(
+    "../plugins/codex-collab/dist/workspace-sync-worker-control.js"
+  );
+  const desktopClient = await connectOrStartHostIpc({
+    clientKind: "desktop",
+    stateDirectory,
+    brokerPath,
+  });
+  try {
+    await desktopClient.gracefulStop();
+  } finally {
+    desktopClient.close();
+  }
+
+  const deadline = Date.now() + 15_000;
+  while (await readHostIpcEndpoint("desktop", stateDirectory)) {
+    if (Date.now() >= deadline) throw new Error("Temporary Host did not stop cleanly");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  hostStopped = true;
 }

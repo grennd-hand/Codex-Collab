@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "rootDir": "src",
+    "outDir": "dist/main",
+    "declaration": false,
+    "declarationMap": false,
+    "noEmit": false,
+    "types": ["node", "electron", "ws"]
+  },
+  "include": ["src/**/*.ts", "src/**/*.cts"],
+  "exclude": ["src/**/*.test.ts"]
+}
