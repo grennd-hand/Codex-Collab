@@ -5,11 +5,13 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { WebSocket } from "ws";
 import { FileSandbox } from "../plugins/codex-collab/dist/file-sandbox.js";
+import { LocalProfileStore } from "../plugins/codex-collab/dist/local-profile.js";
 import { RelayClient } from "../plugins/codex-collab/dist/relay-client.js";
 import { processNextWorkspaceFileOperation } from "../plugins/codex-collab/dist/workspace-file-operations.js";
 
 const dataDir = await mkdtemp(join(tmpdir(), "codex-collab-flow-"));
 const projectRoot = join(dataDir, "project");
+process.env.CODEX_COLLAB_STATE_FILE = join(dataDir, "host-profile.json");
 await mkdir(projectRoot, { recursive: true });
 await writeFile(join(projectRoot, "README.md"), "# initial\n", "utf8");
 const port = 43_000 + Math.floor(Math.random() * 1_000);
@@ -168,6 +170,17 @@ try {
       rootLabel: "Codex-Collab",
     }),
   });
+  const hostProfile = {
+    relayUrl: origin,
+    sessionId: created.session.id,
+    memberId: claimed.owner.id,
+    displayName: claimed.owner.displayName,
+    role: "owner",
+    memberToken: claimed.memberToken,
+    projectRoot,
+  };
+  const profiles = new LocalProfileStore();
+  await profiles.write(hostProfile);
   const hostHeaders = { authorization: `Bearer ${claimed.memberToken}` };
   await request(`/v1/sessions/${created.session.id}/workspace/catalog`, {
     method: "PUT",
@@ -349,8 +362,8 @@ try {
       envelope.payload?.status === "completed",
   );
   const completedWrite = await processNextWorkspaceFileOperation(
-    created.session.id,
-    claimed.memberToken,
+    hostProfile,
+    profiles,
     relayClient,
     sandbox,
   );
@@ -393,8 +406,8 @@ try {
       envelope.payload?.status === "failed",
   );
   const conflict = await processNextWorkspaceFileOperation(
-    created.session.id,
-    claimed.memberToken,
+    hostProfile,
+    profiles,
     relayClient,
     sandbox,
   );
