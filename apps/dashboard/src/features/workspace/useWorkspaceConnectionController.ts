@@ -15,7 +15,6 @@ type WorkspaceConnectionControllerOptions = {
     threadId: string,
   ) => void;
   authHeaders: (includeJson?: boolean) => HeadersInit;
-  clearFileCache: () => void;
   member: Member | null;
   onError: (caught: unknown) => void;
   prepareThreadSelection: () => void;
@@ -34,7 +33,6 @@ type WorkspaceConnectionControllerOptions = {
 export function useWorkspaceConnectionController({
   applyThreadSelection,
   authHeaders,
-  clearFileCache,
   member,
   onError,
   prepareThreadSelection,
@@ -47,6 +45,7 @@ export function useWorkspaceConnectionController({
 }: WorkspaceConnectionControllerOptions) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [filesLoading, setFilesLoading] = useState(false);
   const [pairingToken, setPairingToken] = useState("");
   const [pairingExpiresAt, setPairingExpiresAt] = useState("");
   const [pairingCopied, setPairingCopied] = useState(false);
@@ -62,11 +61,13 @@ export function useWorkspaceConnectionController({
 
   const reload = async () => {
     setLoading(true);
+    setFilesLoading(true);
     try {
       await refreshWorkspace();
     } catch (caught) {
       onError(caught);
     } finally {
+      setFilesLoading(false);
       setLoading(false);
     }
   };
@@ -128,9 +129,8 @@ export function useWorkspaceConnectionController({
           body: JSON.stringify({ threadId }),
         },
       );
-      clearFileCache();
       applyThreadSelection(result.workspace, session.id, threadId);
-      pushActivity("已选择 Codex 任务", "等待本机插件导入记录与文件", "success");
+      pushActivity("已选择 Codex 任务", "等待本机插件导入该任务记录", "success");
       void refreshWorkspace(true).catch(onError);
     } catch (caught) {
       setConversationLoading(false);
@@ -143,6 +143,7 @@ export function useWorkspaceConnectionController({
   return {
     copyPairing,
     createPairing,
+    filesLoading,
     loading,
     open,
     openDialog,

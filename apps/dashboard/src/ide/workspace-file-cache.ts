@@ -63,11 +63,18 @@ export class WorkspaceFileCache {
   }
 }
 
-export function workspaceFileCacheKey(
+export function workspaceRootScope(
   sessionId: string,
-  threadId: string | null,
+  hostDeviceLabel: string | null | undefined,
+  rootLabel: string | null | undefined,
+): string {
+  return JSON.stringify([sessionId, hostDeviceLabel ?? null, rootLabel ?? null]);
+}
+
+export function workspaceFileCacheKey(
+  workspaceScope: string,
   path: string,
   sha256: string,
 ): string {
-  return JSON.stringify([sessionId, threadId, path, sha256]);
+  return JSON.stringify([workspaceScope, path, sha256]);
 }

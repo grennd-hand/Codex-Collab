@@ -171,6 +171,9 @@ describe("workspace live history sync", () => {
     };
     vi.spyOn(RelayClient.prototype, "getWorkspaceSyncState").mockResolvedValue(syncState(workspace));
     vi.spyOn(RelayClient.prototype, "listMessages").mockResolvedValue([]);
+    const publishHistory = vi
+      .spyOn(RelayClient.prototype, "publishWorkspaceHistory")
+      .mockResolvedValue(syncState(workspace));
     const publishSnapshot = vi
       .spyOn(RelayClient.prototype, "publishWorkspaceSnapshot")
       .mockResolvedValue(syncState(workspace));
@@ -198,8 +201,9 @@ describe("workspace live history sync", () => {
       await rm(join(directory, "README.md"));
       await service.sync();
 
-      expect(publishSnapshot).toHaveBeenCalledTimes(2);
-      expect(publishSnapshot.mock.calls[1]?.[2]).toMatchObject({ files: [] });
+      expect(publishHistory).toHaveBeenCalledOnce();
+      expect(publishSnapshot).toHaveBeenCalledOnce();
+      expect(publishSnapshot.mock.calls[0]?.[2]).toMatchObject({ files: [] });
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -353,7 +357,14 @@ describe("workspace live history sync", () => {
       selectedThreadId: oldThread.id,
       selectedThread: catalog[1]!,
       history: [],
-      files: [],
+      files: [
+        {
+          path: "README.md",
+          size: 7,
+          modifiedAt: "2026-07-27T00:00:00.000Z",
+          sha256: "a".repeat(64),
+        },
+      ],
       codexRuntimeStatus: "idle" as const,
       syncedAt: null,
     };
@@ -380,11 +391,17 @@ describe("workspace live history sync", () => {
     vi.spyOn(RelayClient.prototype, "publishCodexRuntimeStatus").mockResolvedValue(
       syncState(selectedWorkspace),
     );
-    vi.spyOn(RelayClient.prototype, "publishWorkspaceSnapshot").mockResolvedValue(syncState({
-      ...selectedWorkspace,
-      history,
-      syncedAt: "2026-07-27T00:00:00.000Z",
-    }));
+    const publishHistory = vi
+      .spyOn(RelayClient.prototype, "publishWorkspaceHistory")
+      .mockResolvedValue(syncState({
+        ...selectedWorkspace,
+        history,
+        syncedAt: "2026-07-27T00:00:00.000Z",
+      }));
+    const publishSnapshot = vi.spyOn(
+      RelayClient.prototype,
+      "publishWorkspaceSnapshot",
+    );
     const update = vi.fn().mockResolvedValue(profile);
     const profiles = {
       read: vi.fn().mockResolvedValue({
@@ -419,6 +436,12 @@ describe("workspace live history sync", () => {
         observedThreadIds: [newestThread.id, oldThread.id],
         threadCatalogVersion: 1,
       });
+      expect(publishHistory).toHaveBeenCalledWith(
+        "session-1",
+        "member-token",
+        expect.objectContaining({ threadId: newestThread.id, history }),
+      );
+      expect(publishSnapshot).not.toHaveBeenCalled();
       expect(update).toHaveBeenCalledWith({ threadId: newestThread.id });
     } finally {
       await rm(directory, { recursive: true, force: true });

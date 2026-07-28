@@ -326,7 +326,7 @@ describe("SessionStore workspace history", () => {
     ).toThrowError(/cursor/i);
   });
 
-  it("clears stale imports when the owner selects another Codex task", () => {
+  it("clears stale task history but preserves root-scoped files when selecting another task", () => {
     const store = createStore();
     const created = store.createSession("Switch room", "Owner");
     const pairing = store.createHostPairing(created.session.id, created.memberToken, 10);
@@ -345,7 +345,18 @@ describe("SessionStore workspace history", () => {
       history: [
         { id: "old", role: "assistant", text: "Old task", createdAt: null },
       ],
-      files: [],
+      files: [
+        {
+          path: "src/shared.ts",
+          content: "export const shared = true;",
+          size: 27,
+          modifiedAt: "2026-07-28T00:00:00.000Z",
+          sha256: createHash("sha256")
+            .update("export const shared = true;")
+            .digest("hex"),
+        },
+      ],
+      directories: ["src", "src/empty"],
     });
 
     const switched = store.selectWorkspaceThread(
@@ -354,7 +365,10 @@ describe("SessionStore workspace history", () => {
       "two",
     );
     expect(switched.history).toEqual([]);
-    expect(switched.files).toEqual([]);
+    expect(switched.files).toEqual([
+      expect.objectContaining({ path: "src/shared.ts" }),
+    ]);
+    expect(switched.directories).toEqual(["src", "src/empty"]);
     expect(switched.syncedAt).toBeNull();
   });
 

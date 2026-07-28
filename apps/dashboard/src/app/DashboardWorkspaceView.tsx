@@ -2,6 +2,7 @@ import { Button, Skeleton, SkeletonItem } from "@fluentui/react-components";
 import { ArrowSyncRegular } from "@fluentui/react-icons";
 import { lazy, Suspense } from "react";
 import type { DashboardViewModel } from "./dashboard-view-model.js";
+import { workspaceRootScope } from "../ide/workspace-file-cache.js";
 import { AppHeader } from "./shell/AppHeader.js";
 import { ErrorBanner } from "./shell/ErrorBanner.js";
 import { ActivityPanel } from "../features/activity/ActivityPanel.js";
@@ -70,9 +71,11 @@ export function DashboardWorkspaceView({
     workspaceReadOnly,
   } = model;
   const workspaceSummary = workspaceHistory.summary;
-  const panelStorageScope = `${session?.id ?? "anonymous"}:${
-    workspaceSummary?.selectedThreadId ?? "unselected"
-  }`;
+  const panelStorageScope = workspaceRootScope(
+    session?.id ?? "anonymous",
+    workspaceSummary?.hostDeviceLabel,
+    workspaceSummary?.rootLabel,
+  );
   const panelVisibility = useWorkspacePanelVisibility({
     editorExpanded: workspaceFiles.editorExpanded,
     scope: panelStorageScope,
@@ -143,11 +146,7 @@ export function DashboardWorkspaceView({
               }
             >
               <IdeWorkspace
-                key={[
-                  session?.id ?? "session",
-                  workspaceSummary.selectedThreadId ?? "thread",
-                  workspaceSummary.rootLabel ?? "root",
-                ].join(":")}
+                key={panelStorageScope}
                 files={workspaceSummary.files}
                 directories={workspaceSummary.directories ?? []}
                 fileChanges={workspaceFileChanges}
@@ -166,7 +165,7 @@ export function DashboardWorkspaceView({
                     ? "房主尚未为你开放项目文件写入权限。"
                     : undefined
                 }
-                loading={workspaceConnection.loading}
+                loading={workspaceConnection.filesLoading}
                 embedded
                 editorExpanded={workspaceFiles.editorExpanded}
                 onEditorExpandedChange={workspaceFiles.setEditorExpanded}
@@ -177,9 +176,7 @@ export function DashboardWorkspaceView({
                 onRenameEntry={workspaceFiles.renameEntry}
                 onRefresh={workspaceConnection.reload}
                 openFileRequest={workspaceFiles.openFileRequest}
-                storageScope={`${session?.id ?? "session"}:${
-                  workspaceSummary.selectedThreadId ?? "thread"
-                }`}
+                storageScope={panelStorageScope}
               />
             </Suspense>
           </section>

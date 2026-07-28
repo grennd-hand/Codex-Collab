@@ -5,6 +5,8 @@ import {
   MAX_MESSAGE_ATTACHMENT_COUNT,
   MAX_MESSAGE_ATTACHMENT_SIZE,
   MAX_MESSAGE_ATTACHMENT_TOTAL_SIZE,
+  MAX_WORKSPACE_HISTORY_ENTRIES,
+  MAX_WORKSPACE_HISTORY_TEXT_LENGTH,
   type CodexFileChange,
   type CodexRecordEntry,
   type CodexThreadCatalogEntry,
@@ -112,8 +114,12 @@ export function parseCodexFileChanges(
 }
 
 export function parseHistory(value: unknown): CodexRecordEntry[] {
-  if (!Array.isArray(value) || value.length > 500) {
-    throw new ProtocolError(400, "invalid_request", "history must contain at most 500 entries");
+  if (!Array.isArray(value) || value.length > MAX_WORKSPACE_HISTORY_ENTRIES) {
+    throw new ProtocolError(
+      400,
+      "invalid_request",
+      `history must contain at most ${MAX_WORKSPACE_HISTORY_ENTRIES} entries`,
+    );
   }
   let totalLength = 0;
   return value.map((item, index) => {
@@ -141,7 +147,7 @@ export function parseHistory(value: unknown): CodexRecordEntry[] {
         : null;
     const fileChanges = parseCodexFileChanges(record.fileChanges, index);
     totalLength += text.length + JSON.stringify(fileChanges ?? []).length;
-    if (totalLength > 2_000_000) {
+    if (totalLength > MAX_WORKSPACE_HISTORY_TEXT_LENGTH) {
       throw new ProtocolError(413, "history_too_large", "Imported Codex history is too large");
     }
     return {

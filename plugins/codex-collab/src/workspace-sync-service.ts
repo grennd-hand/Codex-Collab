@@ -257,8 +257,6 @@ export class WorkspaceSyncService {
           selectedLocalThread = newestDiscoveredThread;
           selectedRuntimeBusy = undefined;
           this.marker = null;
-          this.workspaceDigest = null;
-          this.filesDirty = false;
         }
       }
 
@@ -374,7 +372,12 @@ export class WorkspaceSyncService {
         };
       }
 
-      if (runtimeRunning && workspace.syncedAt && !force) {
+      const canReuseWorkspaceFiles =
+        !force && !shouldFinalizeFiles && workspace.fileCount > 0;
+      if (
+        (runtimeRunning && workspace.syncedAt && !force) ||
+        canReuseWorkspaceFiles
+      ) {
         const imported = await relay.publishWorkspaceHistory(
           profile.sessionId,
           profile.memberToken,
@@ -389,7 +392,7 @@ export class WorkspaceSyncService {
           revision,
           historyDigest,
         };
-        this.filesDirty = true;
+        this.filesDirty = runtimeRunning;
         await this.profiles.update({ threadId: workspace.selectedThreadId });
         return {
           selectedThreadId: imported.selectedThreadId,

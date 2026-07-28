@@ -1,0 +1,1 @@
+import{a as e,o as t}from"./IdeWorkspace-D8sOgQlv.js";export{e as conf,t as language};

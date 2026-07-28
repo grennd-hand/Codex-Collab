@@ -35,7 +35,11 @@ export class WorkspaceHistoryStore extends WorkspaceDirectoryStore {
   ): WorkspaceSummary {
     const host = this.requireCurrentHost(sessionId, memberToken);
     const current = this.workspaceState(sessionId);
+    const sameWorkspaceRoot =
+      current?.host_device_label === input.deviceLabel &&
+      current.root_label === input.rootLabel;
     const selectedStillExists =
+      sameWorkspaceRoot &&
       current?.selected_thread_id &&
       input.threads.some((thread) => thread.id === current.selected_thread_id);
     const selectedThreadId = selectedStillExists ? current.selected_thread_id : null;
@@ -80,7 +84,7 @@ export class WorkspaceHistoryStore extends WorkspaceDirectoryStore {
           codexRuntimeStatus,
           syncedAt,
         );
-      if (!selectedStillExists) {
+      if (!sameWorkspaceRoot) {
         this.db.prepare("DELETE FROM workspace_files WHERE session_id = ?").run(sessionId);
         this.clearWorkspaceDirectories(sessionId);
       }
@@ -133,8 +137,6 @@ export class WorkspaceHistoryStore extends WorkspaceDirectoryStore {
           WHERE session_id = ?
         `)
         .run(threadId, sessionId);
-      this.db.prepare("DELETE FROM workspace_files WHERE session_id = ?").run(sessionId);
-      this.clearWorkspaceDirectories(sessionId);
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");

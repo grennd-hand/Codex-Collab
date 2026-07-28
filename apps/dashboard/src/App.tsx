@@ -250,7 +250,6 @@ export function App() {
   const workspaceConnection = useWorkspaceConnectionController({
     applyThreadSelection: workspaceHistory.applyThreadSelection,
     authHeaders,
-    clearFileCache: workspaceFiles.clearCache,
     member,
     onError: showError,
     prepareThreadSelection: workspaceHistory.prepareThreadSelection,

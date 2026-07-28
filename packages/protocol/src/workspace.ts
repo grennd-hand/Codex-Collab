@@ -1,6 +1,9 @@
 import type { CodexRuntimeStatus } from "./codex.js";
 import type { Member, Session, WorkspaceFileAccess } from "./collaboration.js";
 
+export const MAX_WORKSPACE_HISTORY_ENTRIES = 1_000;
+export const MAX_WORKSPACE_HISTORY_TEXT_LENGTH = 2_000_000;
+
 export interface CodexThreadCatalogEntry {
   id: string;
   name: string | null;

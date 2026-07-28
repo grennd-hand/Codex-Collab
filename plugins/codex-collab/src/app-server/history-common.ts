@@ -1,6 +1,8 @@
-import type {
-  CodexFileChange,
-  CodexRecordEntry,
+import {
+  MAX_WORKSPACE_HISTORY_ENTRIES,
+  MAX_WORKSPACE_HISTORY_TEXT_LENGTH,
+  type CodexFileChange,
+  type CodexRecordEntry,
 } from "@codex-collab/protocol";
 
 export function redactSensitiveText(value: string): string {
@@ -19,8 +21,8 @@ export function redactSensitiveText(value: string): string {
     );
 }
 
-export const MAX_PUBLISHED_RECORD_ENTRIES = 1_000;
-export const MAX_PUBLISHED_RECORD_TEXT_LENGTH = 2_000_000;
+export const MAX_PUBLISHED_RECORD_ENTRIES = MAX_WORKSPACE_HISTORY_ENTRIES;
+export const MAX_PUBLISHED_RECORD_TEXT_LENGTH = MAX_WORKSPACE_HISTORY_TEXT_LENGTH;
 
 function isConversationEntry(entry: CodexRecordEntry): boolean {
   return entry.role === "user" || entry.role === "assistant";
@@ -150,4 +152,3 @@ export function rolloutCommandText(
     .filter(Boolean)
     .join("\n");
 }
-

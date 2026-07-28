@@ -11,6 +11,7 @@ import { resolveWorkspaceFilePath } from "../../ide/file-tree.js";
 import {
   WorkspaceFileCache,
   workspaceFileCacheKey,
+  workspaceRootScope,
 } from "../../ide/workspace-file-cache.js";
 import {
   createWorkspaceDirectoryOperation,
@@ -98,9 +99,13 @@ export function useWorkspaceFileController({
     async (path: string): Promise<IdeFileDocument> => {
       if (!session) throw new Error("当前没有可用的协作会话。");
       const metadata = summary?.files.find((file) => file.path === path);
-      const key = workspaceFileCacheKey(
+      const workspaceScope = workspaceRootScope(
         session.id,
-        summary?.selectedThreadId ?? null,
+        summary?.hostDeviceLabel,
+        summary?.rootLabel,
+      );
+      const key = workspaceFileCacheKey(
+        workspaceScope,
         path,
         metadata?.sha256 ?? "latest",
       );
@@ -116,8 +121,7 @@ export function useWorkspaceFileController({
       )
         .then((file) => {
           const authoritativeKey = workspaceFileCacheKey(
-            session.id,
-            summary?.selectedThreadId ?? null,
+            workspaceScope,
             path,
             file.sha256,
           );

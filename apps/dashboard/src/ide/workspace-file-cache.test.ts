@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   WorkspaceFileCache,
   workspaceFileCacheKey,
+  workspaceRootScope,
 } from "./workspace-file-cache.js";
 
 function file(path: string, content: string) {
@@ -15,6 +16,12 @@ function file(path: string, content: string) {
 }
 
 describe("WorkspaceFileCache", () => {
+  it("scopes project state to the paired root instead of the selected task", () => {
+    expect(workspaceRootScope("session", "Owner PC", "Project")).not.toBe(
+      workspaceRootScope("session", "Owner PC", "Other Project"),
+    );
+  });
+
   it("evicts the least recently used entry at the configured bound", () => {
     const cache = new WorkspaceFileCache(2, 1024);
     cache.set("a", file("a", "a"));
@@ -33,9 +40,9 @@ describe("WorkspaceFileCache", () => {
     expect(cache.get("large")).toBeNull();
   });
 
-  it("scopes keys by session, selected task, path, and optimistic hash", () => {
-    expect(workspaceFileCacheKey("s", "t", "src/App.tsx", "sha")).not.toBe(
-      workspaceFileCacheKey("s", "other", "src/App.tsx", "sha"),
+  it("scopes keys by paired root, path, and optimistic hash", () => {
+    expect(workspaceFileCacheKey("root", "src/App.tsx", "sha")).not.toBe(
+      workspaceFileCacheKey("other-root", "src/App.tsx", "sha"),
     );
   });
 });
