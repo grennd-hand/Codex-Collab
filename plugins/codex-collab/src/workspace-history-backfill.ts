@@ -5,6 +5,7 @@ import type {
 } from "./app-server-client.js";
 import type { LocalProfile } from "./local-profile.js";
 import type { RelayClient } from "./relay-client.js";
+import { limitRecordEntries } from "./app-server/history-common.js";
 
 export async function cacheNextWorkspaceThreadHistory(
   profile: LocalProfile,
@@ -21,7 +22,9 @@ export async function cacheNextWorkspaceThreadHistory(
   );
   if (!next) return workspace;
 
-  const history = await codex.readThreadHistory(next.id, next.path);
+  const history = limitRecordEntries(
+    await codex.readThreadHistory(next.id, next.path),
+  );
   return relay.publishWorkspaceHistory(
     profile.sessionId,
     profile.memberToken,

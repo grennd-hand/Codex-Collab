@@ -47,4 +47,31 @@ describe("history record publication limits", () => {
       MAX_PUBLISHED_RECORD_TEXT_LENGTH,
     );
   });
+
+  it("includes structured file changes in the relay request budget", () => {
+    const entries = Array.from({ length: 300 }, (_, index) => ({
+      ...entry(`command-${index}`, "command"),
+      fileChanges: [
+        {
+          operationId: `operation-${index}`,
+          path: `src/file-${index}.ts`,
+          kind: "modified" as const,
+          lifecycle: "completed" as const,
+          additions: 1,
+          deletions: 1,
+          diff: "x".repeat(10_000),
+        },
+      ],
+    }));
+
+    const limited = limitRecordEntries(entries);
+    const payloadLength = limited.reduce(
+      (sum, item) =>
+        sum + item.text.length + JSON.stringify(item.fileChanges ?? []).length,
+      0,
+    );
+
+    expect(limited.length).toBeLessThan(entries.length);
+    expect(payloadLength).toBeLessThanOrEqual(MAX_PUBLISHED_RECORD_TEXT_LENGTH);
+  });
 });

@@ -28,6 +28,10 @@ function isConversationEntry(entry: CodexRecordEntry): boolean {
   return entry.role === "user" || entry.role === "assistant";
 }
 
+function publishedEntryLength(entry: CodexRecordEntry): number {
+  return entry.text.length + JSON.stringify(entry.fileChanges ?? []).length;
+}
+
 export function limitRecordEntries(entries: CodexRecordEntry[]): CodexRecordEntry[] {
   const selectedIndexes = new Set<number>();
   let totalLength = 0;
@@ -37,11 +41,12 @@ export function limitRecordEntries(entries: CodexRecordEntry[]): CodexRecordEntr
       if (selectedIndexes.size >= MAX_PUBLISHED_RECORD_ENTRIES) return;
       const entry = entries[index];
       if (!entry || selectedIndexes.has(index) || !matches(entry)) continue;
-      if (totalLength + entry.text.length > MAX_PUBLISHED_RECORD_TEXT_LENGTH) {
+      const entryLength = publishedEntryLength(entry);
+      if (totalLength + entryLength > MAX_PUBLISHED_RECORD_TEXT_LENGTH) {
         continue;
       }
       selectedIndexes.add(index);
-      totalLength += entry.text.length;
+      totalLength += entryLength;
     }
   };
 
