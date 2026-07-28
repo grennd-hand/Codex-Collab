@@ -67,8 +67,10 @@ message delivery and runtime control:
    available or the rollout exceeds the 20 MB direct-read limit
 5. `thread-follower-start-turn` for the next queued command when the Desktop task is idle, and
    `thread-follower-interrupt-turn` for Stop; active tasks hold later commands in Relay order
-6. local forwarded-message IDs and Relay delivery state reduce ordinary restart replay; the current
-   submit-then-record ordering still has a crash window and must not be described as exactly-once
+6. a durable local outbox is written before submission, then the accepted `turnId` receipt is persisted
+   before Relay acknowledgement; restart recovery requires one unique `clientUserMessageId`/metadata
+   match and fails closed on zero or multiple matches, so this prevents automatic duplicate submission
+   without claiming universal end-to-end exactly-once
 
 The status reconciler treats app-server terminal values observed while the newest turn is still
 active as provisional. This prevents a transient `interrupted` value from permanently overriding

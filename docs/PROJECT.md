@@ -38,7 +38,8 @@ Codex Collab 是一套 local-first 协作层，让小型可信团队通过同一
 主人桌面端已经形成可安装的 Windows 内部 Beta 候选：Dashboard browser/desktop Runtime、
 task-scoped Codex 草稿/附件与 IDE 状态、Relay 对 `expectedWorkspaceThreadId` 的原子校验、结构化
 file activity、Host `active/draining/suspended/catching-up` 状态机、唯一 Host Service、受限 Windows
-Named Pipe IPC，以及 Electron main/preload、安全协议、安全窗口和 `safeStorage` 凭据边界均已实现。
+Named Pipe IPC、Codex/文件 durable receipt，以及 Electron main/preload、安全协议、安全窗口和
+`safeStorage` 凭据边界均已实现。
 自动化门禁、18 工具 MCP probe、未签名 NSIS/unpacked build、SHA-256、SBOM 和内容扫描已经通过；
 干净 VM、两个真实浏览器 context 和完整 Electron/Monaco 交互旅程仍需人工放行，不能由进程级 E2E
 代替。
@@ -104,9 +105,10 @@ Named Pipe IPC，以及 Electron main/preload、安全协议、安全窗口和 `
    `thread-follower-start-turn` 提交，任务运行中时后续指令保持“排队中”，前一条完成后
    自动提交下一条。
 5. 附件、模型、推理强度、速度、计划模式和权限通过 Desktop 本机 IPC 参数提交。
-6. 当前任务的 Desktop 所有者接收后，消息更新为“执行中”并持久记录消息 ID；完成后
-   更新为“执行完成”。普通重启去重已经实现，但 Codex 接受后、Host/Relay 落账前仍有
-   崩溃窗口，因此当前不能承诺 crash-safe exactly-once。
+6. Host 在提交前持久化 outbox intent；Codex 接受后持久化 `turnId` receipt，再由 Relay 幂等
+   确认后清除。恢复通过稳定 `clientUserMessageId`/metadata 查找唯一 turn；零个或多个匹配时
+   fail-closed，不自动重复提交。因此当前保证是不自动制造重复副作用，而不是对任意外部故障
+   宣称通用 end-to-end exactly-once。
    同步器不会在任务仍运行时把 Desktop 的短暂 `interrupted` 状态提前写成失败。
 7. 网页停止按钮调用 `thread-follower-interrupt-turn`；整个过程不会打开、聚焦或切换
    Desktop 窗口。
@@ -141,10 +143,13 @@ Named Pipe IPC，以及 Electron main/preload、安全协议、安全窗口和 `
 5. 哈希变化时返回冲突，不静默覆盖。
 6. 文件操作先进入 Relay 持久队列，只有当前 Host token 与 Host generation 可以认领；
    30 秒租约到期、成员撤销或写权限撤销都会在磁盘访问前失败关闭。
-7. Windows Host 通过原生句柄锁定并校验实际打开的版本，先将旧版本移入有界恢复区，
+7. Host 在本机持久化 `intent -> executing -> result` receipt。尚未执行的 intent 必须经 Relay
+   精确释放租约后才能清除；result 只重放 Relay 落账。若在 `executing` 后、result 落盘前崩溃，
+   因无法证明磁盘副作用，恢复会阻断并要求人工核对，不自动再次执行。
+8. Windows Host 通过原生句柄锁定并校验实际打开的版本，先将旧版本移入有界恢复区，
    再以 no-replace 语义发布候选文件；发布窗口出现并发版本时保留目标、旧版和候选版，
    绝不通过回滚覆盖并发版本。中断事务可按 journal 人工恢复。非 Windows Host 第一阶段只读。
-8. `.codex-collabignore`、扩展名允许列表、私有目录、敏感文件名和高置信凭据内容在 Relay
+9. `.codex-collabignore`、扩展名允许列表、私有目录、敏感文件名和高置信凭据内容在 Relay
    与 Host 两端重复检查；Windows 上忽略规则按文件系统的大小写语义执行。
 
 ## 5. 仓库结构
@@ -197,6 +202,9 @@ scripts/                    MCP 与 app-server 验证脚本
   隐藏面板和根目录释放后的完整恢复仍需桌面 E2E 最终验证；
 - Dashboard Runtime、Relay task 原子校验、结构化 file activity、Host 休眠状态机、Host IPC、
   Electron 安全壳与未签名 NSIS 已通过自动验证；干净 VM、双用户 Pipe、真实 UI E2E 仍待人工验证；
+- 指令 outbox 和文件 receipt 已自动覆盖恢复与 fail-closed 路径；真实进程强杀矩阵仍待人工验证，
+  `executing` 文件窗口不会自动重试，需要主人核对；
+- Realtime 断开会触发权威全量 catch-up，但显式 sequence/gap 缺口游标和精确回放尚未实现；
 - 当前桌面构建仅限未签名内部 Beta，无自动更新，安装时可能出现 SmartScreen 警告；
 - 当前公网使用 `sslip.io` 测试域名，正式发布建议换成自有域名；
 - IDE 已支持现有文件读写、新建 UTF-8 文件/目录和同父目录重命名；尚未提供删除、跨目录

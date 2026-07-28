@@ -22,10 +22,12 @@ Codex 与同步生命周期所有者，再让 Electron 通过窄 IPC 使用它�
 - [x] Electron main/preload、窄 IPC、`safeStorage`、本地安全协议、安全窗口策略与 focused tests 已落地。
 - [x] Host IPC 已由单一后台 Host 接管；MCP 与 Desktop Main 共用受限 Named Pipe client，真实
   `initialize -> tools/list` 已验证 18 个工具。
+- [x] Codex 指令与 workspace 文件操作已加入本机 durable outbox/receipt；恢复和 reopen 必须先
+  对账 receipt，无法证明唯一结果时进入 `failed`，不自动重放副作用。
 - [x] 未签名 NSIS、unpacked build、SHA-256、SBOM 与 build/protocol manifest 已生成并通过自动检查。
 - [ ] 打包后 Electron 的完整交互旅程、两个真实浏览器 context 和干净 Windows 11 x64 VM
   安装/升级/卸载仍是人工放行项。
-- [ ] 当前只按未签名内部 Beta 管理；没有自动更新，安装时应明确提示可能出现 SmartScreen 警告。
+- [x] 当前只按未签名内部 Beta 管理；没有自动更新，并已明确安装时可能出现 SmartScreen 警告。
 
 ## 2. 为什么首版选择 Electron
 
@@ -129,9 +131,10 @@ open + active
 发布。保留一条低成本控制连接，用来接收房间重新开启事件；如果把网络也完全断掉，就无法做到
 “开启后自动同步”。控制连接断开时采用低频、带抖动的重连，不恢复重型同步。
 
-恢复必须先 `catching-up`，不能直接消费旧队列：先确认当前 Host generation、所选 task、权限、
-撤销状态和 sequence gap，再处理待办。关房间不强杀主人自己的 Codex Desktop，也不丢弃历史、
-dirty draft 或已完成但尚未落账的结果。
+恢复必须先 `catching-up`，不能直接消费旧队列：先对账本机 durable receipt，再确认当前 Host
+generation、所选 task、权限、撤销状态、历史与 workspace 快照，然后处理待办。当前每次控制
+连接断开都会执行一次权威全量 catch-up；显式 sequence/gap 游标与缺口回放仍是后续工作。关房间
+不强杀主人自己的 Codex Desktop，也不丢弃历史、dirty draft 或已完成但尚未落账的结果。
 
 桌面窗口关闭和房间关闭是两件事：窗口可最小化到托盘而 Host 按房间状态运行；“退出并停止
 Host”必须是单独的显式动作。
@@ -156,7 +159,9 @@ Host”必须是单独的显式动作。
 - [x] Host 实现 open/closed 驱动的 drain、suspend、resume reconciliation 状态机和失败重试。
 - [x] 通过安全本地 IPC 让后台 Host 成为跨进程唯一资源 owner，移除 MCP 的兼容进程内实例。
 - [x] endpoint readiness、旧 worker 识别和 client 断线重连已实现。
-- [ ] 加入持久崩溃游标、outbox/receipt 和长期进程健康监督。
+- [x] 加入 Codex 指令 outbox 及 workspace 文件 intent/executing/result receipt；恢复时先对账，
+  不确定的已执行窗口永久阻断自动重试。
+- [ ] 加入长期进程健康监督、持久 Realtime sequence/gap 游标和安全 profile 迁移。
 
 验证：插件 focused tests、typecheck、全仓门禁、真实 MCP `initialize` + `tools/list`。
 
@@ -206,8 +211,11 @@ Host”必须是单独的显式动作。
 - [x] closed 状态等待当前工作、执行取消边界并停止重型周期，只保留控制通道。
 - [x] reopen 先调用显式 reconciliation hook，成功后才回到 active；失败进入 failed 并可重试。
 - [x] resume reconciliation 不领取文件操作、不转发新提示；完成状态/历史/快照对账后才允许新工作。
+- [x] catch-up 先对账 Codex outbox 与文件 receipt；文件 pre-execution intent 会精确释放 Relay
+  租约，result 只重放落账，`executing` 崩溃窗口因无法证明磁盘副作用而 fail-closed。
 - [x] focused tests 覆盖关闭时 drain、catch-up 中再次关闭、取消超时、resume 失败和重复状态事件。
-- [ ] sequence/gap、全量 reconciliation 内容和真实 Relay/Host 端到端旅程待最终验证。
+- [x] 控制连接每次断开后先执行权威全量 reconciliation，再恢复 heavy work。
+- [ ] 显式 sequence/gap 缺口回放、30 分钟休眠观测和真实 Relay/Host UI 旅程待最终验证。
 
 验证：关房间后观察不到 claim、Codex poll、scan、history/snapshot publish；重开后自动追平且不重放
 已完成副作用。
@@ -254,7 +262,7 @@ npm run validate:plugin
 MCP/Host 调用边界变化还必须真实执行 JSON-RPC `initialize` 后 `tools/list`。以下专项脚本已经
 落地并在最终代码上执行：
 
-- `test:host-lifecycle`：关闭、drain、休眠、重连、追平、强杀恢复；
+- `test:host-lifecycle`：关闭、drain、休眠、重连、追平和 durable receipt 的崩溃边界；
 - `test:desktop`：协议、CSP、IPC、导航、凭据与窗口生命周期；
 - `test:e2e`：主人桌面 + 两个浏览器协作者 + 本地临时 Relay；
 - `package:desktop` / `verify:desktop-artifact`：未签名 NSIS、unpacked build、哈希、SBOM 与内容扫描。
@@ -263,6 +271,11 @@ MCP/Host 调用边界变化还必须真实执行 JSON-RPC `initialize` 后 `tool
 Desktop 安全测试、本地临时 Relay/SQLite workspace flow 和进程级 E2E。`test:e2e` 是本机进程级
 闭环，不冒充真实 Electron + 两个浏览器 context 的 UI 验收。干净 VM、双 Windows 用户 Pipe
 拒绝、30 分钟休眠观测、安装/升级/卸载和完整交互旅程仍须单独人工记录。
+
+当前自动化保证是“无法证明安全时不重复执行”：Codex 接受后的恢复依赖稳定
+`clientUserMessageId`/metadata 唯一匹配；零个或多个匹配都会阻断。workspace 文件在本机副作用前
+持久化 `executing`，若进程在结果落盘前崩溃，恢复会永久阻断并要求人工核对，而不是猜测并重放。
+因此这不是对所有崩溃点宣称通用 end-to-end exactly-once；进程强杀矩阵仍属于人工放行证据。
 
 安全威胁模型不承诺抵御已经控制当前 Windows 用户会话的恶意程序；Named Pipe ACL、capability
 和 DPAPI/safeStorage 主要隔离远程客户端、其他用户与意外的未授权进程边界。

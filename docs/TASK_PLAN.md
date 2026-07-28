@@ -58,7 +58,8 @@
 - [x] 网页 Composer 通过 app-server 后台直送、附件、执行设置和停止状态
 - [x] 运行中保持 Relay 队列、逐条提交、不唤起 Desktop 与投递状态
 - [x] 桌面安全通知；非 owner 指令继续按 `workspace + on-request` 转发并保留 Codex 审批
-- [ ] 登录/重启自动拉起、健康监督、崩溃游标恢复和端到端幂等转发
+- [x] Codex durable outbox/receipt 与文件 intent/executing/result journal；恢复歧义时 fail-closed
+- [ ] 登录/重启自动拉起、长期健康监督、安全 profile 迁移与持久 Realtime sequence/gap 游标
 
 验收：主人不需要手动轮询；非 owner 指令在 Host 边界强制使用 workspace + on-request；
 在 Codex 接受前后强杀 Host 都不会重复执行同一指令。
@@ -77,6 +78,7 @@
 - [x] Electron main/preload、白名单 IPC、`safeStorage`、安全 custom protocol 与安全窗口策略
 - [x] Host IPC 的跨进程唯一 owner、Windows pipe ACL/SID、HMAC/replay、帧限制、ready probe、
   断线重连和 graceful stop
+- [x] Relay/Host 的指令幂等落账、文件 durable receipt、未执行租约释放及 catch-up 前全局恢复门禁
 - [ ] 打包后的 Electron/Monaco 真实启动与主人桌面完整协作/IDE 旅程
 - [x] 未签名 per-user NSIS、unpacked build、SHA-256、SBOM、manifest 和 ASAR/资源凭据扫描
 - [x] 全仓五项门禁、18 工具 MCP probe、Host/Desktop 专项和本地临时 Relay/SQLite 进程级 E2E
@@ -142,11 +144,11 @@ Diff，不静默覆盖。非 Windows Host 写入失败关闭，`.codex` 不能�
 | --- | --- | --- |
 | P0 | `.codex` 配置安全 | 配置按结构化字段白名单发布，解析失败拒绝，凭据语料测试通过 |
 | P0 | Task 状态最终验证 | 真实 Electron 中验证 task/root 切换、断线、隐藏面板与 stale/deleted 恢复不泄漏或丢草稿 |
-| P0 | 指令/文件幂等 | Relay claim + Host outbox/receipt；各故障点强杀只产生一次副作用 |
+| P0 | 指令/文件强杀验证 | 自动 outbox/receipt 与 fail-closed 已完成；逐故障点进程强杀，确认无自动重复副作用并记录人工解阻流程 |
 | P0 | 数据生命周期 | 房间累计配额、高水位、保留/归档策略和磁盘告警生效 |
 | P0 | 自动备份 | 主/Guest 定时一致性备份、异地保留、恢复到新卷并完成真实演练 |
 | P0 | CI 与浏览器闭环 | portable plugin validator、Windows 门禁、双用户 Playwright 真实旅程 |
-| P0 | 桌面 Host 恢复 | 完成安全 profile 迁移、崩溃游标/outbox receipt、健康监督与强杀 exactly-once 验证 |
+| P0 | 桌面 Host 恢复 | 完成安全 profile 迁移、持久 Realtime 游标、健康监督与强杀/人工解阻验证 |
 | P0 | 桌面人工放行 | 干净 VM、双 Windows 用户 Pipe、主人+双浏览器真实 UI E2E、升级/卸载；内部 Beta 保持未签名且无自动更新 |
 | P1 | 撤销与轮换 | 可撤销成员/邀请并轮换主人 token，旧 token 立即失效 |
 | P1 | Realtime 恢复 | sequence/gap 检测、重连 resync、ticket 在 upgrade 时重新验证权限 |
