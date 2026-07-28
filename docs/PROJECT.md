@@ -35,6 +35,18 @@ Codex Collab 是一套 local-first 协作层，让小型可信团队通过同一
 - Docker Compose、SQLite 持久卷、Caddy HTTPS 与 WebSocket 代理；
 - 公网控制台：<https://codex-collab.217.194.133.194.sslip.io/>。
 
+主人桌面端已经形成可安装的 Windows 内部 Beta 候选：Dashboard browser/desktop Runtime、
+task-scoped Codex 草稿/附件与 IDE 状态、Relay 对 `expectedWorkspaceThreadId` 的原子校验、结构化
+file activity、Host `active/draining/suspended/catching-up` 状态机、唯一 Host Service、受限 Windows
+Named Pipe IPC，以及 Electron main/preload、安全协议、安全窗口和 `safeStorage` 凭据边界均已实现。
+自动化门禁、18 工具 MCP probe、未签名 NSIS/unpacked build、SHA-256、SBOM 和内容扫描已经通过；
+干净 VM、两个真实浏览器 context 和完整 Electron/Monaco 交互旅程仍需人工放行，不能由进程级 E2E
+代替。
+
+当前桌面发布口径是“未签名内部 Beta”：没有自动更新，未宣称通过 SmartScreen；测试者安装时
+应预期 Windows 可能显示 SmartScreen 警告。本批只改本地仓库，Guest 完全未触碰，也未作为
+桌面端验证环境。详细状态见 [主人桌面端实施计划](./DESKTOP_IMPLEMENTATION_PLAN.md)。
+
 这代表“可邀请真实测试者验证 MVP”，不代表已经完成商业生产的全部加固。未完成项在
 [TASK_PLAN.md](./TASK_PLAN.md) 中持续跟踪。
 
@@ -139,9 +151,12 @@ Codex Collab 是一套 local-first 协作层，让小型可信团队通过同一
 
 ```text
 apps/dashboard/             React + Fluent UI 控制台
+apps/desktop/               Electron 主人端安全壳与 Dashboard desktop Runtime 容器
 apps/relay/                 HTTP、WebSocket、SQLite Relay
 packages/protocol/          共享协议类型与输入验证
 plugins/codex-collab/       Codex 插件、MCP Server、协作技能
+plugins/codex-collab/src/host/  本机 Host Runtime 基础（桌面 Host Service 前身）
+native/host-ipc/             Windows named-pipe ACL/SID/HMAC broker
 .agents/plugins/            仓库内 Codex marketplace
 deploy/                     VPS Compose 与 Caddy 配置
 docs/                       架构、项目、部署、测试、任务计划
@@ -178,14 +193,19 @@ scripts/                    MCP 与 app-server 验证脚本
 - 尚未进行正式并发压测和故障注入；
 - 批准 editor 会按产品语义授予 `workspace-write`；若只需查看，主人应随后切回只读；
 - `.codex` 配置仍需结构化字段白名单，不能长期只依赖内容启发式检测；
-- task 切换、Host 断线或隐藏文件面板时，Codex 草稿、附件和 dirty IDE 状态尚未完整隔离/保活；
+- Codex 草稿、附件、tabs、dirty Monaco state 已按 room/task 隔离；Host 断线、远端删除、
+  隐藏面板和根目录释放后的完整恢复仍需桌面 E2E 最终验证；
+- Dashboard Runtime、Relay task 原子校验、结构化 file activity、Host 休眠状态机、Host IPC、
+  Electron 安全壳与未签名 NSIS 已通过自动验证；干净 VM、双用户 Pipe、真实 UI E2E 仍待人工验证；
+- 当前桌面构建仅限未签名内部 Beta，无自动更新，安装时可能出现 SmartScreen 警告；
 - 当前公网使用 `sslip.io` 测试域名，正式发布建议换成自有域名；
 - IDE 已支持现有文件读写、新建 UTF-8 文件/目录和同父目录重命名；尚未提供删除、跨目录
   移动、终端、调试器、扩展系统和 Git worktree 合并队列；
 - 项目写入第一阶段仅支持 Windows Host；其他平台明确失败关闭并保持只读；
 - Codex 记录同步可见消息、推理摘要与命令输出，不同步原始隐藏思维链；
 - `.codex` 仅同步单独显式授权的非凭据文本配置，不同步认证、其他任务历史或内部数据库；
-- 本机后台 worker 会在插件启动后持续同步；Windows 重启后需要再次启动 Codex 来恢复 worker。
+- 唯一后台 Host 会在 MCP 或桌面端 connect-first 流程中启动；登录自启默认关闭，Windows 重启后
+  需要再次启动 Codex 或主人桌面端来恢复 Host。
 
 ## 8. 文档导航
 
@@ -195,4 +215,5 @@ scripts/                    MCP 与 app-server 验证脚本
 - [测试手册](./TESTING.md)
 - [任务规划书](./TASK_PLAN.md)
 - [2026-07-28 全项目架构审计](./ARCHITECTURE_AUDIT_2026-07-28.md)
+- [主人桌面端实施计划](./DESKTOP_IMPLEMENTATION_PLAN.md)
 - [完整 v1 实施计划（规划，不代表已完成）](./V1_IMPLEMENTATION_PLAN.md)

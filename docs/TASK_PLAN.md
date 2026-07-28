@@ -54,15 +54,42 @@
 - [x] 已批准成员查看安全文本文件快照
 - [x] 通过第二个显式根目录查看 `.codex` 非凭据文本配置
 - [x] 单例后台 Host、WebSocket 唤醒、指数退避重连与普通重启去重
+- [x] 后台 worker 状态与单例锁提取为可测试的 Host Runtime 基础
 - [x] 网页 Composer 通过 app-server 后台直送、附件、执行设置和停止状态
 - [x] 运行中保持 Relay 队列、逐条提交、不唤起 Desktop 与投递状态
-- [ ] 桌面通知与逐条“批准并转发”队列
+- [x] 桌面安全通知；非 owner 指令继续按 `workspace + on-request` 转发并保留 Codex 审批
 - [ ] 登录/重启自动拉起、健康监督、崩溃游标恢复和端到端幂等转发
 
 验收：主人不需要手动轮询；非 owner 指令在 Host 边界强制使用 workspace + on-request；
 在 Codex 接受前后强杀 Host 都不会重复执行同一指令。
 
-### M2.5：网页 IDE 第一阶段 — 基础能力已完成，任务隔离待加固
+### M2.6：主人桌面应用 — 可安装内部 Beta 候选，人工放行待完成
+
+- [x] 确定 Electron UI + 独立 TypeScript/Node Host + 现有协作者 Web/Relay
+- [x] 明确信任边界、凭据归属、Guest 冻结规则与阶段验收条件
+- [x] Host Runtime/单例锁第一切片与 focused regression tests
+- [x] 18 个工具进入分域 HostApplication，MCP 变为受架构门禁保护的协议 facade
+- [x] Host Runtime 只依赖 Application，并在停止时等待当前后台周期
+- [x] Dashboard browser/desktop Runtime 与 task-scoped Codex 草稿、附件、IDE tabs/dirty state
+- [x] Relay 使用 `expectedWorkspaceThreadId` 在消息落库前原子拒绝 task 切换竞态
+- [x] 结构化 file activity 贯通协议、Host 导入、Relay 校验、timeline 和 IDE
+- [x] Host `active/draining/suspended/catching-up` 状态机及 focused tests
+- [x] Electron main/preload、白名单 IPC、`safeStorage`、安全 custom protocol 与安全窗口策略
+- [x] Host IPC 的跨进程唯一 owner、Windows pipe ACL/SID、HMAC/replay、帧限制、ready probe、
+  断线重连和 graceful stop
+- [ ] 打包后的 Electron/Monaco 真实启动与主人桌面完整协作/IDE 旅程
+- [x] 未签名 per-user NSIS、unpacked build、SHA-256、SBOM、manifest 和 ASAR/资源凭据扫描
+- [x] 全仓五项门禁、18 工具 MCP probe、Host/Desktop 专项和本地临时 Relay/SQLite 进程级 E2E
+- [ ] 干净 Windows VM、双用户 Pipe、N-1 -> N 升级/卸载和真实双浏览器 UI E2E
+
+详细实施顺序、当前/计划边界见
+[DESKTOP_IMPLEMENTATION_PLAN.md](./DESKTOP_IMPLEMENTATION_PLAN.md)。
+
+验收：Renderer 不持有 Host token 或任意本机能力；关闭房间后只保留低成本控制连接，重开后
+自动追平且不重复副作用；桌面发布不要求修改或重启 Guest。当前只允许未签名内部 Beta，
+无自动更新并明确提示可能出现 SmartScreen；本批 Guest 完全未触碰。
+
+### M2.5：网页 IDE 第一阶段 — 基础能力与 task-scoped 状态已完成
 
 - [x] 全屏 Monaco 编辑器、可搜索嵌套文件树和多标签页
 - [x] 未保存标记、`Ctrl+S`、保存状态与显式冲突 Diff
@@ -73,9 +100,10 @@
 - [x] 忽略规则、敏感内容、容量、速率、结果保留和实时事件隐私边界
 - [x] Codex 指令按所选任务归属，旧的无归属记录不再冒充当前任务消息
 - [x] 新建安全 UTF-8 文件、目录和同父目录重命名
-- [ ] Codex 草稿、附件、tabs、dirty draft、Monaco model 和面板状态按 task 隔离
-- [ ] Host 断线/隐藏面板/切 root 时保留 dirty draft，并处理 stale/deleted remotely
-- [ ] Explorer/tabs 标准键盘模型、range 跳转和受权限保护的 inline diff preview
+- [x] Codex 草稿、附件、tabs、dirty draft 与 Monaco state 按 room/task 隔离
+- [x] Host 断线/隐藏面板/切 task 时保留 dirty draft，并处理 stale/deleted remotely
+- [x] Explorer/tabs 键盘模型、range 跳转和受权限保护的 inline diff preview 已实现并自动测试
+- [ ] 在打包后的 Electron 中完成人工键盘、Monaco undo/view state 和 stale/conflict 旅程
 
 验收：获批成员能打开、保存、新建、重命名安全文本文件；被切回只读后不能保存；并发版本进入
 Diff，不静默覆盖。非 Windows Host 写入失败关闭，`.codex` 不能写；切 task、断线和隐藏面板
@@ -113,11 +141,13 @@ Diff，不静默覆盖。非 Windows Host 写入失败关闭，`.codex` 不能�
 | 优先级 | 任务 | 完成定义 |
 | --- | --- | --- |
 | P0 | `.codex` 配置安全 | 配置按结构化字段白名单发布，解析失败拒绝，凭据语料测试通过 |
-| P0 | Task 状态隔离 | 草稿、附件、dirty tabs、Monaco model 和面板状态不跨 task/root 泄漏 |
+| P0 | Task 状态最终验证 | 真实 Electron 中验证 task/root 切换、断线、隐藏面板与 stale/deleted 恢复不泄漏或丢草稿 |
 | P0 | 指令/文件幂等 | Relay claim + Host outbox/receipt；各故障点强杀只产生一次副作用 |
 | P0 | 数据生命周期 | 房间累计配额、高水位、保留/归档策略和磁盘告警生效 |
 | P0 | 自动备份 | 主/Guest 定时一致性备份、异地保留、恢复到新卷并完成真实演练 |
 | P0 | CI 与浏览器闭环 | portable plugin validator、Windows 门禁、双用户 Playwright 真实旅程 |
+| P0 | 桌面 Host 恢复 | 完成安全 profile 迁移、崩溃游标/outbox receipt、健康监督与强杀 exactly-once 验证 |
+| P0 | 桌面人工放行 | 干净 VM、双 Windows 用户 Pipe、主人+双浏览器真实 UI E2E、升级/卸载；内部 Beta 保持未签名且无自动更新 |
 | P1 | 撤销与轮换 | 可撤销成员/邀请并轮换主人 token，旧 token 立即失效 |
 | P1 | Realtime 恢复 | sequence/gap 检测、重连 resync、ticket 在 upgrade 时重新验证权限 |
 | P1 | Host 生命周期 | 登录/重启自动启动、健康监督、冷启动完整 workspace 对账 |
