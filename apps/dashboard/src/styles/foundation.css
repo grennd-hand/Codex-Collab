@@ -270,6 +270,10 @@ textarea {
   height: 100%;
 }
 
+.workspace > [data-workspace-panel] {
+  height: 100%;
+}
+
 .workspace-file-dock {
   min-width: 0;
   min-height: 0;
