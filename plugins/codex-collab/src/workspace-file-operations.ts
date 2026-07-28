@@ -12,7 +12,17 @@ import {
   isWorkspacePathIgnored,
 } from "@codex-collab/protocol";
 import { FileConflictError, FileSandbox } from "./file-sandbox.js";
+import type {
+  LocalFileOperationResult,
+  LocalProfile,
+  LocalProfileStore,
+} from "./local-profile.js";
 import type { RelayClient } from "./relay-client.js";
+import { WorkspaceFileOperationJournal } from "./workspace-file-operation-receipts.js";
+import {
+  workspaceWorkAllowed,
+  type WorkspaceSyncAdmission,
+} from "./workspace-sync-admission.js";
 import { readCollabIgnore } from "./workspace-snapshot.js";
 
 type FileOperationRelay = Pick<
@@ -83,15 +93,7 @@ export async function executeWorkspaceFileOperation(
   operation: WorkspaceFileOperationConfirmation,
   projectSandbox: FileSandbox,
   codexConfigSandbox: FileSandbox | null = null,
-): Promise<
-  | { status: "completed"; file?: WorkspaceFileContent }
-  | {
-      status: "failed";
-      errorCode: string;
-      errorMessage: string;
-      file?: WorkspaceFileContent | null;
-    }
-> {
+): Promise<LocalFileOperationResult> {
   const configRelativePath = codexConfigRelativePath(operation.path);
   if (configRelativePath) {
     if (
@@ -260,29 +262,40 @@ export async function executeWorkspaceFileOperation(
 }
 
 export async function processNextWorkspaceFileOperation(
-  sessionId: string,
-  memberToken: string,
+  profile: LocalProfile,
+  profiles: LocalProfileStore,
   relay: FileOperationRelay,
   projectSandbox: FileSandbox,
   codexConfigSandbox: FileSandbox | null = null,
+  admission?: WorkspaceSyncAdmission,
 ): Promise<WorkspaceFileOperation | null> {
-  const operation = await relay.claimNextWorkspaceFileOperation(sessionId, memberToken);
-  if (!operation) return null;
+  if (!workspaceWorkAllowed(admission)) return null;
+  const journal = new WorkspaceFileOperationJournal(profiles, profile);
+  const replayed = await journal.reconcileBeforeClaim(relay);
+  if (replayed) return replayed;
+  if (!workspaceWorkAllowed(admission)) return null;
+  const operation = await relay.claimNextWorkspaceFileOperation(
+    profile.sessionId,
+    profile.memberToken,
+  );
+  if (!operation || !workspaceWorkAllowed(admission)) return null;
   const confirmed = await relay.confirmWorkspaceFileOperationLease(
-    sessionId,
-    memberToken,
+    profile.sessionId,
+    profile.memberToken,
     operation.id,
     operation.leaseId,
   );
+  const intent = await journal.recordIntent(operation, confirmed);
+  if (!workspaceWorkAllowed(admission)) {
+    await journal.clearIntent(intent, confirmed);
+    return null;
+  }
+  const executing = await journal.markExecuting(intent, confirmed);
   const result = await executeWorkspaceFileOperation(
     confirmed,
     projectSandbox,
     codexConfigSandbox,
   );
-  return relay.completeWorkspaceFileOperation(
-    sessionId,
-    memberToken,
-    confirmed.id,
-    { ...result, leaseId: confirmed.leaseId },
-  );
+  await journal.recordResult(executing, confirmed, result);
+  return journal.reconcileBeforeClaim(relay);
 }

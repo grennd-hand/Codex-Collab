@@ -175,11 +175,12 @@ export class WorkspaceSyncService {
       );
       return runAdmittedBatch(20, options.admission, async () => {
         const operation = await processNextWorkspaceFileOperation(
-          profile.sessionId,
-          profile.memberToken,
+          profile,
+          this.profiles,
           relay,
           projectSandbox,
           codexConfigSandbox,
+          options.admission,
         );
         if (!operation) return null;
         if (operation.kind !== "read" && operation.status === "completed") {

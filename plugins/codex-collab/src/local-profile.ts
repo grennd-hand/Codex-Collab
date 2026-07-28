@@ -11,6 +11,10 @@ import {
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import type {
+  WorkspaceFileContent,
+  WorkspaceFileOperationKind,
+} from "@codex-collab/protocol";
 
 export interface LocalProfile {
   relayUrl: string;
@@ -25,6 +29,7 @@ export interface LocalProfile {
   lastMessageAt?: string;
   forwardedMessageIds?: string[];
   commandReceipt?: LocalCommandReceipt;
+  fileOperationReceipt?: LocalFileOperationReceipt;
   observedThreadIds?: string[];
   threadCatalogVersion?: number;
 }
@@ -38,6 +43,38 @@ export interface LocalCommandReceipt {
   createdAt: string;
   updatedAt: string;
   diagnostic?: string;
+}
+
+export type LocalFileOperationResult =
+  | { status: "completed"; file?: WorkspaceFileContent }
+  | {
+      status: "failed";
+      errorCode: string;
+      errorMessage: string;
+      file?: WorkspaceFileContent | null;
+    };
+
+export interface LocalFileOperationReceipt {
+  version: 1;
+  phase: "intent" | "executing" | "result" | "blocked";
+  relayUrl: string;
+  sessionId: string;
+  memberId: string;
+  projectRoot: string;
+  codexConfigRoot: string | null;
+  operationId: string;
+  requestedByMemberId: string;
+  leaseId: string;
+  hostGeneration: string;
+  kind: WorkspaceFileOperationKind;
+  path: string;
+  destinationPath: string | null;
+  expectedSha256: string | null;
+  requestContentSha256: string | null;
+  result?: LocalFileOperationResult;
+  diagnostic?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 type LocalProfilePatch = Omit<Partial<LocalProfile>, "observedThreadIds"> & {

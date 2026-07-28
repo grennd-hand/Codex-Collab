@@ -8,6 +8,7 @@ import {
   type WorkspaceFileOperationConfirmation,
 } from "@codex-collab/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { LocalProfileStore, type LocalProfile } from "./local-profile.js";
 import { FileSandbox } from "./file-sandbox.js";
 import {
   executeWorkspaceFileOperation,
@@ -434,6 +435,18 @@ describe("workspace file operation host execution", () => {
     const path = join(root, "guarded.ts");
     await writeFile(path, "original", "utf8");
     const sandbox = await FileSandbox.create(root);
+    process.env.CODEX_COLLAB_STATE_FILE = join(root, "profile.json");
+    const profile: LocalProfile = {
+      relayUrl: "https://relay.example",
+      sessionId: "session-1",
+      memberId: "owner-1",
+      displayName: "Owner",
+      role: "owner",
+      memberToken: "host-token",
+      projectRoot: root,
+    };
+    const profiles = new LocalProfileStore();
+    await profiles.write(profile);
     const relay = {
       claimNextWorkspaceFileOperation: vi.fn().mockResolvedValue(
         claim({
@@ -449,8 +462,8 @@ describe("workspace file operation host execution", () => {
 
     await expect(
       processNextWorkspaceFileOperation(
-        "session-1",
-        "host-token",
+        profile,
+        profiles,
         relay as never,
         sandbox,
       ),
