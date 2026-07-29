@@ -46,7 +46,10 @@ Host 才启动的顺序已在实机成立，关闭/恢复/右键退出的最终�
   Relay/SQLite workspace-flow 已通过。
 - [x] 当前源码已把相邻的执行过程、最终回复和结构化文件变更收拢为一个完成任务单元：成功任务
   默认只收起过程、始终显示最终总结和耗时，文件汇总默认展示前三项并可继续展开；不会跨越中间
-  时间线项目合并。focused tests 与全仓 604 项测试已通过。
+  时间线项目合并。focused tests 与当前全仓 606 项测试已通过。
+- [x] 当前源码已修复 Explorer-only 状态仍沿用 `440px` IDE 最小宽度、导致项目目录只能拉大不能
+  缩小的问题：目录单独显示时范围改为 `260px` 起、`360px` 复位；Monaco 展开时自动切换到
+  `520px` 安全下限，并覆盖“先拉大再缩小”的 focused regression。
 - [ ] 上述实时反馈修复尚未重新安装桌面候选，也未部署 Primary/Guest；本批继续保持服务器不变。
 - [ ] 在已安装 `v0.1.0-beta.4` 上手工点击关闭、托盘恢复和托盘退出，完成最后的 Windows Shell 验收。
 - [ ] 在桌面产品壳完成并通过真实安装验收前，不再宣称“整个桌面端已经完成”。
@@ -286,6 +289,8 @@ Status bar: root / task / room / Relay / Host / sync / dirty and permission stat
   显示无业务丢失的 full-bleed shell，Browser 输出必须保持不变。
 - [x] **D3.5-B Workbench frame**：实现 system title bar 下的 command bar、Activity rail、三主 pane、
   status bar、splitter 和 layout persistence。
+- [x] **D3.5-B Split sizing**：主 workspace splitter 按 Explorer-only / Explorer+Monaco 状态采用不同
+  下限，允许目录双向缩放，同时防止编辑器展开后被压缩为不可用宽度。
 - [x] **D3.5-C Feature migration**：按 Explorer/Editor、Codex timeline、Collaboration、room/member
   dialogs 顺序迁移，复用 controller/view-model，不复制网络或凭据逻辑。
 - [x] **D3.5-C Timeline completion**：成功任务按“已处理 + 耗时 / 最终总结 / 文件变更汇总”显示，

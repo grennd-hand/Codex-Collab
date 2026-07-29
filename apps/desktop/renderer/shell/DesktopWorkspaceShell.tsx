@@ -17,6 +17,7 @@ import { DesktopCodexPane } from "../panes/DesktopCodexPane.js";
 import { DesktopCollaborationPane } from "../panes/DesktopCollaborationPane.js";
 import { DesktopCommandBar } from "./DesktopCommandBar.js";
 import { DesktopFilesPane } from "../panes/DesktopFilesPane.js";
+import { desktopMainSplitSizing } from "./desktop-workspace-sizing.js";
 
 function statusTime(value: string | null | undefined): string {
   if (!value) return "尚未同步";
@@ -51,6 +52,9 @@ export function DesktopWorkspaceShell({ model }: { model: DashboardViewModel }) 
     workspaceConnected: model.workspaceConnected,
   });
   const filesVisible = model.workspaceConnected && panels.filesVisible;
+  const mainSplitSizing = desktopMainSplitSizing(
+    model.workspaceFiles.editorExpanded,
+  );
   const visibleSidebar =
     activeSidebar === "collaboration" && !panels.collaborationVisible
       ? null
@@ -89,10 +93,7 @@ export function DesktopWorkspaceShell({ model }: { model: DashboardViewModel }) 
         />
       }
       secondary={codexPane}
-      defaultPrimarySize={760}
-      minPrimarySize={440}
-      maxPrimarySize={1_120}
-      minSecondarySize={360}
+      {...mainSplitSizing}
       separatorSize={12}
       separatorLabel="调整项目 IDE 和 Codex 任务宽度"
       primaryLabel="项目 IDE"
