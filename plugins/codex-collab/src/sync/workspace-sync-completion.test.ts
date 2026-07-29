@@ -53,6 +53,36 @@ describe("Codex prompt completion", () => {
     expect(updateMessageDeliveryStatus).not.toHaveBeenCalled();
   });
 
+  it("completes a stale inProgress turn after the thread as a whole becomes idle", async () => {
+    const submittedPrompt = {
+      ...ownerPrompt,
+      deliveryStatus: "submitted" as const,
+      codexTurnId: "turn-stale",
+    };
+    const updateMessageDeliveryStatus = vi.fn().mockResolvedValue(submittedPrompt);
+
+    await expect(
+      reconcileCodexCommandStatuses(
+        profile,
+        "thread-1",
+        {
+          listMessages: vi.fn().mockResolvedValue([submittedPrompt]),
+          updateMessageDeliveryStatus,
+        },
+        { getTurnStatus: vi.fn().mockResolvedValue("inProgress") },
+        false,
+      ),
+    ).resolves.toBe(1);
+
+    expect(updateMessageDeliveryStatus).toHaveBeenCalledWith(
+      "session-1",
+      "member-token",
+      "prompt-1",
+      "completed",
+      "turn-stale",
+    );
+  });
+
   it("ignores a transient interrupted status for the active submitted command", async () => {
     const listMessages = vi.fn().mockResolvedValue([
       {

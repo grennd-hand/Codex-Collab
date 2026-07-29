@@ -25,6 +25,8 @@ Codex Collab 是一套 local-first 协作层，让小型可信团队通过同一
 - 网页生成的一次性本机配对码、Codex 任务目录与房主选择；
 - 房间 ID + 一次性显示的主人恢复密钥，Relay 只保存恢复密钥哈希；
 - 导入用户/助手消息、app-server 可见推理摘要与命令输出；
+- 当前源码保证协作者时间线的末次增量不会被实时刷新限流丢弃，并在任务终态或 Realtime 重连后
+  对账指令状态，避免已完成任务继续显示运行中；
 - 每个 task 的有界历史缓存、后台回填与向上分页；
 - 全屏 Monaco IDE，支持文件树搜索、标签页、未保存状态、`Ctrl+S` 和冲突 Diff；
 - 新建 UTF-8 文件/目录与同父目录安全重命名；
@@ -54,7 +56,8 @@ command/status bar 和桌面导航的 `v0.1.0-beta.2`；真实检查发现的项
 
 当前桌面发布口径是“未签名内部 Beta”：没有自动更新，未宣称通过 SmartScreen；测试者安装时
 应预期 Windows 可能显示 SmartScreen 警告。本批只改本地仓库，Guest 完全未触碰，也未作为
-桌面端验证环境。详细状态见 [主人桌面端实施计划](../plans/DESKTOP_IMPLEMENTATION_PLAN.md)。
+桌面端验证环境；最新协作者实时反馈修复尚未部署到 Primary 或重新安装桌面候选。详细状态见
+[主人桌面端实施计划](../plans/DESKTOP_IMPLEMENTATION_PLAN.md)。
 
 这代表“可邀请真实测试者验证 MVP”，不代表已经完成商业生产的全部加固。未完成项在
 [TASK_PLAN.md](../plans/TASK_PLAN.md) 中持续跟踪。

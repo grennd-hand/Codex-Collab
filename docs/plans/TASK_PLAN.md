@@ -61,6 +61,8 @@
 - [x] 后台 worker 状态与单例锁提取为可测试的 Host Runtime 基础
 - [x] 网页 Composer 通过 app-server 后台直送、附件、执行设置和停止状态
 - [x] 运行中保持 Relay 队列、逐条提交、不唤起 Desktop 与投递状态
+- [x] 协作者 Codex 输出使用前沿加尾随的实时历史刷新；终态与 Realtime 重连执行消息状态对账，
+  线程整体空闲时可收敛 app-server 遗留的 `inProgress` 状态
 - [x] 桌面安全通知；非 owner 指令继续按 `workspace + on-request` 转发并保留 Codex 审批
 - [x] Codex durable outbox/receipt 与文件 intent/executing/result journal；恢复歧义时 fail-closed
 - [ ] 登录/重启自动拉起、长期健康监督、安全 profile 迁移与持久 Realtime sequence/gap 游标

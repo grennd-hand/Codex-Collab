@@ -14,7 +14,10 @@ import {
 import type { ActivityItem } from "../../activity/ActivityPanel.js";
 import type { ConnectionState } from "../connection.js";
 import type { SavedCredential } from "../session-storage.js";
-import { shouldRefreshRealtimeHistory } from "./realtime-history-refresh.js";
+import {
+  realtimeHistoryRefreshDelay,
+  shouldRefreshRealtimeHistory,
+} from "./realtime-history-refresh.js";
 import { realtimeNotification } from "./realtime-notifications.js";
 
 interface RealtimeConnectionOptions {
@@ -67,8 +70,37 @@ export function useRealtimeConnection({
     let stopped = false;
     let realtime: { close(): Promise<void> } | null = null;
     let reconnectTimer: number | undefined;
+    let historyRefreshTimer: number | undefined;
     let reconnectAttempt = 0;
     let connecting = false;
+
+    const clearHistoryRefreshTimer = () => {
+      if (historyRefreshTimer === undefined) return;
+      window.clearTimeout(historyRefreshTimer);
+      historyRefreshTimer = undefined;
+    };
+
+    const requestWorkspaceHistory = () => {
+      historyRefreshTimer = undefined;
+      workspaceHistoryRequestedAtRef.current = Date.now();
+      void refreshWorkspace(true).catch(showError);
+    };
+
+    const scheduleWorkspaceHistory = (): boolean => {
+      const now = Date.now();
+      if (shouldRefreshRealtimeHistory(workspaceHistoryRequestedAtRef.current, now)) {
+        clearHistoryRefreshTimer();
+        requestWorkspaceHistory();
+        return true;
+      }
+      if (historyRefreshTimer === undefined) {
+        historyRefreshTimer = window.setTimeout(
+          requestWorkspaceHistory,
+          realtimeHistoryRefreshDelay(workspaceHistoryRequestedAtRef.current, now),
+        );
+      }
+      return false;
+    };
 
     const scheduleReconnect = () => {
       if (stopped || reconnectTimer !== undefined) return;
@@ -109,6 +141,10 @@ export function useRealtimeConnection({
             return;
           }
           const envelope = event.envelope;
+          if (envelope.type === "ready") {
+            void refresh().catch(showError);
+            return;
+          }
           const notification = realtimeNotification(envelope, member);
           if (notification) {
             void getDashboardRuntime().shell.notify(notification).catch(() => undefined);
@@ -168,6 +204,7 @@ export function useRealtimeConnection({
                   : current,
               );
               if (payload.codexRuntimeStatus === "running") {
+                clearHistoryRefreshTimer();
                 workspaceHistoryRequestedAtRef.current = 0;
                 return;
               }
@@ -180,15 +217,19 @@ export function useRealtimeConnection({
               scopes.includes("runtime") &&
               payload.codexRuntimeStatus !== undefined &&
               payload.codexRuntimeStatus !== "running";
-            const includeHistory =
-              terminalRuntime ||
-              (historyChanged &&
-                shouldRefreshRealtimeHistory(
-                  workspaceHistoryRequestedAtRef.current,
-                  Date.now(),
-                ));
-            if (includeHistory) workspaceHistoryRequestedAtRef.current = Date.now();
-            void refreshWorkspace(includeHistory).catch(showError);
+            if (terminalRuntime) {
+              clearHistoryRefreshTimer();
+              workspaceHistoryRequestedAtRef.current = Date.now();
+              void refresh().catch(showError);
+              return;
+            }
+            if (historyChanged) {
+              if (!scheduleWorkspaceHistory()) {
+                void refreshWorkspace(false).catch(showError);
+              }
+              return;
+            }
+            void refreshWorkspace(false).catch(showError);
           }
           if (envelope.type === "file.operation.updated") {
             void refreshWorkspace(false).catch(showError);
@@ -222,6 +263,7 @@ export function useRealtimeConnection({
       if (reconnectTimer !== undefined) {
         window.clearTimeout(reconnectTimer);
       }
+      clearHistoryRefreshTimer();
       void realtime?.close();
     };
   }, [

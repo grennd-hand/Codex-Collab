@@ -168,7 +168,7 @@ export async function reconcileCodexCommandStatuses(
       statuses.set(turnId, status);
     }
     let deliveryStatus: "completed" | "failed" | null = null;
-    if (status === "completed") {
+    if (status === "completed" || (status === "inProgress" && !threadBusy)) {
       deliveryStatus = "completed";
     } else if (message.kind === "codex_stop") {
       if (status === "interrupted") {
