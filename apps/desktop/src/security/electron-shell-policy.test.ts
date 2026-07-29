@@ -23,6 +23,11 @@ describe("Electron shell hardening", () => {
     expect(main).toContain("requestSingleInstanceLock()");
     expect(main).toContain('app.on("second-instance", showMainWindow)');
     expect(main).toContain("event.preventDefault();\n      window.hide();");
+    expect(main).toContain("showTrayHint();");
+    expect(main).toContain("createFromDataURL(DESKTOP_TRAY_ICON_DATA_URL)");
+    expect(main).toContain('nextTray.on("click", showMainWindow)');
+    expect(main).toContain('nextTray.on("double-click", showMainWindow)');
+    expect(main).toContain("打开主人工作台");
     expect(main).toContain("退出并停止 Host");
   });
 

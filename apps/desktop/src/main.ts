@@ -15,6 +15,7 @@ import {
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DesktopQuitCoordinator } from "./app/app-lifecycle.js";
+import { DESKTOP_TRAY_ICON_DATA_URL } from "./app/desktop-tray-icon.js";
 import {
   EncryptedCredentialStore,
   type CredentialEncryption,
@@ -51,17 +52,35 @@ protocol.registerSchemesAsPrivileged([
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
 const rendererRoot = join(currentDirectory, "..", "renderer");
 const preloadPath = join(currentDirectory, "preload.cjs");
-const TRAY_PNG =
-  "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAJElEQVR42mNk+M9Qz0AEYBxVSFUBCjYwMDAwGkY1jGoY1TAKANsxAx3DgIsAAAAASUVORK5CYII=";
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
+let closeHintShown = false;
 
 function showMainWindow(): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
+}
+
+function showTrayHint(): void {
+  if (
+    closeHintShown ||
+    process.platform !== "win32" ||
+    !tray ||
+    tray.isDestroyed()
+  ) {
+    return;
+  }
+  closeHintShown = true;
+  tray.displayBalloon({
+    iconType: "info",
+    title: "Codex Collab 仍在后台运行",
+    content: "单击托盘图标可恢复，右键可退出并停止 Host。",
+    noSound: true,
+    respectQuietTime: true,
+  });
 }
 
 function createMainWindow(quit: DesktopQuitCoordinator): BrowserWindow {
@@ -93,6 +112,7 @@ function createMainWindow(quit: DesktopQuitCoordinator): BrowserWindow {
     if (!quit.isQuitting) {
       event.preventDefault();
       window.hide();
+      showTrayHint();
     }
   });
   window.once("ready-to-show", () => window.show());
@@ -106,13 +126,18 @@ function createMainWindow(quit: DesktopQuitCoordinator): BrowserWindow {
   return window;
 }
 
-function createTray(quit: DesktopQuitCoordinator): Tray {
-  const icon = nativeImage.createFromBuffer(Buffer.from(TRAY_PNG, "base64"));
-  const nextTray = new Tray(icon.resize({ width: 16, height: 16 }));
-  nextTray.setToolTip("Codex Collab");
+async function createTray(quit: DesktopQuitCoordinator): Promise<Tray> {
+  const embeddedIcon = nativeImage.createFromDataURL(DESKTOP_TRAY_ICON_DATA_URL);
+  const icon = embeddedIcon.isEmpty()
+    ? await app.getFileIcon(process.execPath, { size: "small" })
+    : embeddedIcon.resize({ width: 16, height: 16, quality: "best" });
+  if (icon.isEmpty()) throw new Error("desktop_tray_icon_unavailable");
+
+  const nextTray = new Tray(icon);
+  nextTray.setToolTip("Codex Collab 主人端");
   nextTray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: "显示 Codex Collab", click: showMainWindow },
+      { label: "打开主人工作台", click: showMainWindow },
       { type: "separator" },
       {
         label: "退出并停止 Host",
@@ -121,6 +146,8 @@ function createTray(quit: DesktopQuitCoordinator): Tray {
     ]),
   );
   nextTray.on("click", showMainWindow);
+  nextTray.on("double-click", showMainWindow);
+  nextTray.on("balloon-click", showMainWindow);
   return nextTray;
 }
 
@@ -210,7 +237,7 @@ if (!app.requestSingleInstanceLock()) {
       },
     });
     mainWindow = createMainWindow(quit);
-    tray = createTray(quit);
+    tray = await createTray(quit);
     void host.start().catch(() => {
       console.error("Desktop Host failed to become ready.");
     });
@@ -222,5 +249,8 @@ if (!app.requestSingleInstanceLock()) {
         void quit.requestQuit();
       }
     });
+  }).catch(() => {
+    console.error("Desktop bootstrap failed.");
+    app.exit(1);
   });
 }
