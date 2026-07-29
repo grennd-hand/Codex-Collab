@@ -9,9 +9,9 @@ Electron，但不从空 UI 壳开始：先把当前插件内的 Host 整理成�
 Codex 与同步生命周期所有者，再让 Electron 通过窄 IPC 使用它。
 
 状态纠正：`v0.1.0-beta.1` 已完成安全桌面运行架构和可安装成品，但该已发布版本的 Vite root
-仍直接指向 `apps/dashboard`。当前本地源码已经分离 Desktop renderer，并实现全窗口工作台；
-`v0.1.0-beta.2` 本地候选安装包已经生成并通过静态成品校验，但尚未完成升级安装和真实主人旅程。
-因此 `v0.1.0-beta.1` 仍是“桌面安全壳 Beta”，`v0.1.0-beta.2` 也暂不能描述为“桌面专属产品
+仍直接指向 `apps/dashboard`。`v0.1.0-beta.2` 已在本机升级安装并进入真实视觉检查；检查发现项目
+IDE/Codex 分隔条不易发现、底部状态信息挤在单一行。当前源码已修复这两项，并生成、静态验证
+`v0.1.0-beta.3` 本地候选，但尚未安装完成交互复验。因此任何版本暂不能描述为“桌面专属产品
 界面完成版”，更不能把本地构建成功视为视觉验收完成。
 
 这比把 Dashboard 直接套进 Electron 更稳妥。当前 Dashboard 假定页面 origin 就是 Relay、
@@ -33,8 +33,10 @@ Codex 与同步生命周期所有者，再让 Electron 通过窄 IPC 使用它�
 - [x] 未签名 NSIS、unpacked build、SHA-256、SBOM 与 build/protocol manifest 已生成并通过自动检查。
 - [x] `v0.1.0-beta.1` 已安装并确认 Electron 主窗口可运行；其视觉仍是复用的网页 Dashboard。
 - [x] 新建桌面专属 Renderer entry 与 `DesktopWorkspaceShell`，移除网页背景、居中卡片和页面级滚动。
-- [x] `v0.1.0-beta.2` 本地候选已生成独立 NSIS/unpacked、SHA-256、SBOM 和 manifest，未覆盖
-  `v0.1.0-beta.1` 成品；安装升级和实机视觉验收仍待执行。
+- [x] `v0.1.0-beta.2` 已完成本机升级安装并进入实机检查；由该检查发现的分隔条与状态栏问题
+  已在 `v0.1.0-beta.3` 修复。
+- [x] `v0.1.0-beta.3` 本地候选已生成独立 NSIS/unpacked、SHA-256、SBOM 和 manifest，未覆盖
+  旧候选；安装和交互复验仍待执行。
 - [ ] 在桌面产品壳完成并通过真实安装验收前，不再宣称“整个桌面端已经完成”。
 - [ ] 打包后 Electron 的完整交互旅程、两个真实浏览器 context 和干净 Windows 11 x64 VM
   安装/升级/卸载仍是人工放行项。
@@ -332,9 +334,10 @@ Status bar: root / task / room / Relay / Host / sync / dirty and permission stat
 - [x] 桌面发布与 Relay 发布解耦；构建、测试和安装包生成不部署或重启服务器。
 - [x] 本批明确不签名、不自动更新；代码签名与自动更新属于公开发行阶段，不计为内部 Beta 缺口。
 - [ ] 干净 VM 的普通用户安装、N-1 -> N 升级、托盘恢复、卸载保留数据和显式清除会话待人工验证。
-- [x] 桌面专属产品壳已重新生成 `v0.1.0-beta.2` 本地候选；发布说明区分 runtime/security 完成与
-  desktop product UI 完成，不沿用 `v0.1.0-beta.1` 的视觉成品口径。
-- [ ] `v0.1.0-beta.2` 的本机升级安装、真实视觉几何和主人完整旅程待人工放行。
+- [x] 桌面专属产品壳已生成并安装 `v0.1.0-beta.2`，真实检查发现的分隔条可发现性和状态栏
+  碰撞问题已修复并重新生成 `v0.1.0-beta.3` 本地候选。
+- [ ] 安装 `v0.1.0-beta.3` 后复验鼠标/键盘调整、双击复位、尺寸持久化、状态栏窄宽度表现，
+  并继续主人完整旅程的人工放行。
 
 当前发布边界是未签名内部 Beta：不提供自动更新，不宣称通过 SmartScreen；测试者安装时必须
 看到“可能出现 Windows SmartScreen 警告”的提示。签名、自动更新和公开分发属于后续发布门槛。

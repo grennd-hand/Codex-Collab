@@ -93,6 +93,7 @@ export function DesktopWorkspaceShell({ model }: { model: DashboardViewModel }) 
       minPrimarySize={440}
       maxPrimarySize={1_120}
       minSecondarySize={360}
+      separatorSize={12}
       separatorLabel="调整项目 IDE 和 Codex 任务宽度"
       primaryLabel="项目 IDE"
       secondaryLabel="Codex 任务"
@@ -110,6 +111,7 @@ export function DesktopWorkspaceShell({ model }: { model: DashboardViewModel }) 
       minPrimarySize={248}
       maxPrimarySize={420}
       minSecondarySize={760}
+      separatorSize={12}
       separatorLabel="调整协作侧栏和工作区宽度"
       primaryLabel={visibleSidebar === "activity" ? "最近活动" : "协作聊天"}
       secondaryLabel="项目 IDE 与 Codex 任务"
@@ -147,14 +149,21 @@ export function DesktopWorkspaceShell({ model }: { model: DashboardViewModel }) 
         </section>
       </div>
       <footer className="desktop-statusbar" aria-label="工作台状态">
-        <span>{model.roomOpen ? "房间开启" : "房间休眠"}</span>
-        <span>Relay {model.connectionStatus.label}</span>
-        <span>Host {model.hostStatus?.phase ?? "unpaired"}</span>
-        <span>{summary?.rootLabel ?? "未连接项目"}</span>
-        <span>{summary?.selectedThreadId ? "任务已选择" : "未选择任务"}</span>
-        <span className="desktop-statusbar-spacer" />
-        <span>{model.workspaceReadOnly ? "只读" : "可写"}</span>
-        <span>同步 {statusTime(summary?.syncedAt)}</span>
+        <div className="desktop-statusbar-live">
+          <span>{model.roomOpen ? "房间开启" : "房间休眠"}</span>
+          <span>Relay {model.connectionStatus.label}</span>
+          <span>Host {model.hostStatus?.phase ?? "unpaired"}</span>
+        </div>
+        <div className="desktop-statusbar-context">
+          <span title={summary?.rootLabel ?? "未连接项目"}>
+            {summary?.rootLabel ?? "未连接项目"}
+          </span>
+          <span>{summary?.selectedThreadId ? "任务已选择" : "未选择任务"}</span>
+        </div>
+        <div className="desktop-statusbar-trailing">
+          <span>{model.workspaceReadOnly ? "只读" : "可写"}</span>
+          <span>同步 {statusTime(summary?.syncedAt)}</span>
+        </div>
       </footer>
     </div>
   );

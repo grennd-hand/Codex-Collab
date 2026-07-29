@@ -68,7 +68,7 @@
 验收：主人不需要手动轮询；非 owner 指令在 Host 边界强制使用 workspace + on-request；
 在 Codex 接受前后强杀 Host 都不会重复执行同一指令。
 
-### M2.6：主人桌面应用 — Runtime Beta 已安装，桌面专属产品界面未完成
+### M2.6：主人桌面应用 — Runtime Beta 已安装，桌面专属产品界面迭代中
 
 - [x] 确定 Electron UI + 独立 TypeScript/Node Host + 现有协作者 Web/Relay
 - [x] 明确信任边界、凭据归属、Guest 冻结规则与阶段验收条件
@@ -88,10 +88,13 @@
 - [x] 当前源码已实现 full-bleed command bar、Activity rail、Explorer/Monaco/Task 三主 pane 和 status bar
 - [x] 当前源码已移除桌面页的网页网格背景、居中圆角外壳、页面级滚动和横向网页导航
 - [x] 当前源码已复用业务 `DashboardController`、feature 和 view-model，未复制网络、凭据或状态机
-- [x] `v0.1.0-beta.2` 本地候选已生成独立 NSIS/unpacked、SHA-256、SBOM 和 manifest，旧
-  `v0.1.0-beta.1` 成品未覆盖
+- [x] `v0.1.0-beta.2` 已完成本机升级安装并开始真实桌面视觉检查
+- [x] 项目 IDE/Codex 分隔条已扩大为明确的 12px 命中区，增加拖拽柄、键盘调整、双击复位
+  和尺寸持久化回归约束
+- [x] 底部状态栏已按连接、上下文、权限/同步三组布局；窄宽度优先收起上下文，避免状态重叠
+- [x] `v0.1.0-beta.3` 本地候选已生成独立 NSIS/unpacked、SHA-256、SBOM 和 manifest，旧候选未覆盖
 - [ ] 补齐桌面 onboarding、Host restart-required、tray、offline/catching-up、room/member dialogs
-- [ ] 安装 `v0.1.0-beta.2` 后完成 Electron/Monaco 主人完整协作/IDE 旅程与桌面视觉几何验收
+- [ ] 安装 `v0.1.0-beta.3` 后复验分隔条、状态栏并完成 Electron/Monaco 主人完整协作/IDE 旅程
 - [x] 未签名 per-user NSIS、unpacked build、SHA-256、SBOM、manifest 和 ASAR/资源凭据扫描
 - [x] 全仓五项门禁、18 工具 MCP probe、Host/Desktop 专项和本地临时 Relay/SQLite 进程级 E2E
 - [ ] 干净 Windows VM、双用户 Pipe、N-1 -> N 升级/卸载和真实双浏览器 UI E2E

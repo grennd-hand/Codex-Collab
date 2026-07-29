@@ -15,6 +15,51 @@
   background: var(--colorNeutralBackground2);
 }
 
+.desktop-sidebar-split > .resizable-split-pane__separator,
+.desktop-main-split > .resizable-split-pane__separator {
+  z-index: 4;
+  background: var(--colorNeutralBackground2);
+  transition: background-color 120ms ease;
+}
+
+.desktop-sidebar-split > .resizable-split-pane__separator::after,
+.desktop-main-split > .resizable-split-pane__separator::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 3px;
+  height: 36px;
+  border-radius: 2px;
+  content: "";
+  background: var(--colorNeutralStroke1);
+  opacity: 0.7;
+  transform: translate(-50%, -50%);
+  transition:
+    background-color 120ms ease,
+    opacity 120ms ease;
+}
+
+.desktop-sidebar-split > .resizable-split-pane__separator:hover,
+.desktop-sidebar-split > .resizable-split-pane__separator:focus-visible,
+.desktop-sidebar-split > .resizable-split-pane__separator[data-resizing="true"],
+.desktop-main-split > .resizable-split-pane__separator:hover,
+.desktop-main-split > .resizable-split-pane__separator:focus-visible,
+.desktop-main-split > .resizable-split-pane__separator[data-resizing="true"] {
+  background: var(--colorBrandBackground2);
+}
+
+.desktop-sidebar-split > .resizable-split-pane__separator:hover::after,
+.desktop-sidebar-split > .resizable-split-pane__separator:focus-visible::after,
+.desktop-sidebar-split
+  > .resizable-split-pane__separator[data-resizing="true"]::after,
+.desktop-main-split > .resizable-split-pane__separator:hover::after,
+.desktop-main-split > .resizable-split-pane__separator:focus-visible::after,
+.desktop-main-split
+  > .resizable-split-pane__separator[data-resizing="true"]::after {
+  background: var(--colorBrandStroke1);
+  opacity: 1;
+}
+
 .desktop-sidebar-split .people-panel,
 .desktop-sidebar-split .activity-panel {
   width: 100%;
@@ -81,6 +126,15 @@
 
 .desktop-codex-pane .composer {
   padding: 10px 12px 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .desktop-sidebar-split > .resizable-split-pane__separator,
+  .desktop-sidebar-split > .resizable-split-pane__separator::after,
+  .desktop-main-split > .resizable-split-pane__separator,
+  .desktop-main-split > .resizable-split-pane__separator::after {
+    transition: none;
+  }
 }
 
 @media (max-width: 1260px) {

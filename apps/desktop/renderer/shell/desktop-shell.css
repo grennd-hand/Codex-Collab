@@ -175,9 +175,11 @@
 .desktop-statusbar {
   min-width: 0;
   padding: 0 8px;
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
+  overflow: hidden;
   border-top: 1px solid var(--colorNeutralStroke2);
   color: var(--colorNeutralForeground3);
   background: var(--colorNeutralBackground2);
@@ -186,14 +188,47 @@
   white-space: nowrap;
 }
 
+.desktop-statusbar-live,
+.desktop-statusbar-context,
+.desktop-statusbar-trailing {
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+}
+
+.desktop-statusbar-live,
+.desktop-statusbar-trailing {
+  flex: none;
+}
+
+.desktop-statusbar-context {
+  justify-content: center;
+}
+
+.desktop-statusbar-trailing {
+  justify-content: flex-end;
+}
+
 .desktop-statusbar span {
+  min-width: 0;
   max-width: 260px;
+  padding-inline: 8px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.desktop-statusbar-spacer {
-  flex: 1;
+.desktop-statusbar div > span + span {
+  border-left: 1px solid var(--colorNeutralStroke2);
+}
+
+.desktop-statusbar div > span:first-child {
+  padding-left: 0;
+}
+
+.desktop-statusbar div > span:last-child {
+  padding-right: 0;
 }
 
 @media (max-width: 1260px) {
@@ -217,6 +252,16 @@
 
   .desktop-connection-badge,
   .desktop-commandbar-actions .fui-Button > span:not([aria-hidden="true"]) {
+    display: none;
+  }
+}
+
+@media (max-width: 1120px) {
+  .desktop-statusbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .desktop-statusbar-context {
     display: none;
   }
 }

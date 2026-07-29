@@ -39,4 +39,23 @@ describe("desktop renderer entry boundary", () => {
     expect(css).toContain("height: 100dvh");
     expect(css).not.toContain(".app-frame");
   });
+
+  it("keeps Desktop splitters discoverable and status groups collision-free", () => {
+    const shell = source("renderer/shell/DesktopWorkspaceShell.tsx");
+    const shellCss = source("renderer/shell/desktop-shell.css");
+    const paneCss = source("renderer/panes/desktop-panes.css");
+
+    expect(shell.match(/separatorSize=\{12\}/g)).toHaveLength(2);
+    expect(shell).toContain('className="desktop-statusbar-live"');
+    expect(shell).toContain('className="desktop-statusbar-context"');
+    expect(shell).toContain('className="desktop-statusbar-trailing"');
+    expect(shell).not.toContain("desktop-statusbar-spacer");
+    expect(shellCss).toContain(
+      "grid-template-columns: auto minmax(0, 1fr) auto;",
+    );
+    expect(shellCss).toContain(".desktop-statusbar-context");
+    expect(paneCss).toContain(
+      ".desktop-main-split > .resizable-split-pane__separator::after",
+    );
+  });
 });
