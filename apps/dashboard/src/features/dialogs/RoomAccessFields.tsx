@@ -8,7 +8,7 @@ import {
   TabList,
 } from "@fluentui/react-components";
 import { KeyRegular } from "@fluentui/react-icons";
-import type { SetupSubmissionMode } from "../session/invite-session.js";
+import type { SetupSubmissionMode } from "../session/invite/invite-session.js";
 
 interface RoomAccessFieldsProps {
   initialInviteToken: string | null;

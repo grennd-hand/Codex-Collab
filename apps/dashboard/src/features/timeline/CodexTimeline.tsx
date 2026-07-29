@@ -7,18 +7,18 @@ import {
 } from "@fluentui/react-icons";
 import type { Member } from "@codex-collab/protocol";
 import { useLayoutEffect, useRef, type RefObject } from "react";
-import type { WorkspaceHistoryWindow } from "../../app/workspace-history-window.js";
-import type { IdeNavigationTarget } from "../../ide/types.js";
+import type { WorkspaceHistoryWindow } from "../workspace/history/workspace-history-window.js";
+import type { IdeNavigationTarget } from "../../ide/state/types.js";
 import type { MemberIdentity } from "../collaboration/member-identity.js";
 import type { CodexExecutionPhase } from "../composer/codex-controls.js";
-import type { UnifiedTimelineItem } from "./imported-timeline.js";
+import type { UnifiedTimelineItem } from "./history/imported-timeline.js";
 import { shouldShowExecutionStatus } from "../composer/codex-controls.js";
 import { TimelineItemList } from "./TimelineItemList.js";
 import {
   historyScrollIntent,
   historyTopLoadDecision,
   shouldInitializeHistoryAtLatest,
-} from "./history-scroll.js";
+} from "./history/history-scroll.js";
 
 interface CodexTimelineProps {
   streamRef: RefObject<HTMLElement | null>;

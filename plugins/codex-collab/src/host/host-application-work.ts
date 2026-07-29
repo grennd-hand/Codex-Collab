@@ -1,5 +1,5 @@
-import type { DurableRecoveryBlockedError } from "../durable-recovery.js";
-import type { WorkspaceSyncService } from "../workspace-sync-service.js";
+import type { DurableRecoveryBlockedError } from "../persistence/durable-recovery.js";
+import type { WorkspaceSyncService } from "../sync/workspace-sync-service.js";
 import { HostDurableWorkGate } from "./host-durable-work-gate.js";
 import { hostWorkAllowed, type HostWorkAdmission } from "./host-runtime-admission.js";
 

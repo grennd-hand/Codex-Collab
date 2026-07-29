@@ -33,24 +33,29 @@ testing; production-hardening work is tracked separately and is not represented 
 
 ```text
 apps/dashboard/             React/Fluent UI dashboard and Monaco workspace
+apps/desktop/               Electron owner shell, secure preload and packaged Host runtime
 apps/relay/                 HTTP/WebSocket relay and SQLite collaboration state
 packages/protocol/          Shared protocol types and request validation
 plugins/codex-collab/       Codex plugin, MCP server and collaboration skill
+native/host-ipc/            Windows named-pipe ACL/SID/HMAC broker
 .agents/plugins/            Repo-local Codex marketplace
+.agents/skills/             Repo-local engineering skills
+.github/                    Copilot and path-scoped contributor instructions
 deploy/                     Primary/guest Compose and Caddy configuration
-docs/                       Architecture and security notes
-scripts/                    Architecture checks and end-to-end probes
+docs/                       Reference, operations, plans and dated audits
+scripts/                    Architecture, Desktop, plugin and probe tooling
 ```
 
 ## Documentation
 
-- [Complete project guide](docs/PROJECT.md)
-- [Architecture and trust model](docs/architecture.md)
-- [Deployment and operations](docs/DEPLOYMENT.md)
-- [Testing guide](docs/TESTING.md)
-- [Task plan and roadmap](docs/TASK_PLAN.md)
-- [2026-07-28 architecture audit](docs/ARCHITECTURE_AUDIT_2026-07-28.md)
-- [Full v1 implementation plan](docs/V1_IMPLEMENTATION_PLAN.md)
+- [Documentation index](docs/README.md)
+- [Complete project guide](docs/reference/PROJECT.md)
+- [Architecture and trust model](docs/reference/architecture.md)
+- [Deployment and operations](docs/operations/DEPLOYMENT.md)
+- [Testing guide](docs/operations/TESTING.md)
+- [Task plan and roadmap](docs/plans/TASK_PLAN.md)
+- [2026-07-28 architecture audit](docs/audits/ARCHITECTURE_AUDIT_2026-07-28.md)
+- [Full v1 implementation plan](docs/plans/V1_IMPLEMENTATION_PLAN.md)
 
 ## Local development
 

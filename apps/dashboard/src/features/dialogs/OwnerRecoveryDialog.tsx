@@ -17,7 +17,7 @@ import {
   CopyRegular,
 } from "@fluentui/react-icons";
 import type { RefObject } from "react";
-import { recoveryBundleText } from "../session/room-recovery.js";
+import { recoveryBundleText } from "../session/recovery/room-recovery.js";
 
 interface OwnerRecoveryDialogProps {
   sessionId: string;

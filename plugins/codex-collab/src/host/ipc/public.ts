@@ -5,7 +5,7 @@ export {
   type ConnectHostIpcOptions,
   type HostWorkerLaunchSpec,
   type SpawnHostWorker,
-} from "../../workspace-sync-worker-control.js";
+} from "../workspace-sync-worker-control.js";
 export type {
   DesktopHostIpcClient,
   McpHostIpcClient,

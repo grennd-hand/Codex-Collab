@@ -14,25 +14,25 @@ import {
 } from "electron";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DesktopQuitCoordinator } from "./app-lifecycle.js";
+import { DesktopQuitCoordinator } from "./app/app-lifecycle.js";
 import {
   EncryptedCredentialStore,
   type CredentialEncryption,
-} from "./credential-store.js";
-import { createDesktopProtocolHandler } from "./custom-protocol.js";
-import { resolveDesktopConfig } from "./desktop-config.js";
-import { resolveDesktopHostResources } from "./desktop-host-resources.js";
-import { createElectronHostWorkerLauncher } from "./electron-host-worker-launcher.js";
-import { DesktopHostLifecycleControl } from "./host-lifecycle-control.js";
-import { registerDesktopIpc } from "./ipc-handlers.js";
+} from "./credentials/credential-store.js";
+import { createDesktopProtocolHandler } from "./security/custom-protocol.js";
+import { resolveDesktopConfig } from "./app/desktop-config.js";
+import { resolveDesktopHostResources } from "./host/desktop-host-resources.js";
+import { createElectronHostWorkerLauncher } from "./host/electron-host-worker-launcher.js";
+import { DesktopHostLifecycleControl } from "./host/host-lifecycle-control.js";
+import { registerDesktopIpc } from "./ipc/ipc-handlers.js";
 import {
   DESKTOP_APP_URL,
   DESKTOP_IPC,
   type DesktopRealtimeEventV1,
-} from "./ipc-contract.js";
-import { DesktopRealtimeManager } from "./realtime-manager.js";
-import { DesktopRelayTransport } from "./relay-http-client.js";
-import { connectDesktopHost } from "./shared-host-ipc.js";
+} from "./ipc/ipc-contract.js";
+import { DesktopRealtimeManager } from "./relay/realtime-manager.js";
+import { DesktopRelayTransport } from "./relay/relay-http-client.js";
+import { connectDesktopHost } from "./host/shared-host-ipc.js";
 
 protocol.registerSchemesAsPrivileged([
   {

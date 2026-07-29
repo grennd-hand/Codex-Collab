@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { collabTools } from "../../mcp-tool-catalog.js";
+import { collabTools } from "../../mcp/mcp-tool-catalog.js";
 import type { HostApplication } from "../host-application.js";
 import {
   HostIpcClientAuthenticator,

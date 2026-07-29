@@ -14,19 +14,19 @@
     "dev": "npm run dev --workspace @codex-collab/relay",
     "dev:dashboard": "npm run dev --workspace @codex-collab/dashboard",
     "dev:mcp": "npm run dev --workspace codex-collab",
-    "test": "npm run build --workspace @codex-collab/protocol && npm run test --workspace @codex-collab/dashboard && npm run test --workspace @codex-collab/relay && npm run test --workspace codex-collab && npm run test --workspace @codex-collab/desktop",
+    "test": "npm run build --workspace @codex-collab/protocol && npm run test --workspace @codex-collab/dashboard -- --maxWorkers=1 --minWorkers=1 && npm run test --workspace @codex-collab/relay -- --maxWorkers=1 --minWorkers=1 && npm run test --workspace codex-collab -- --maxWorkers=1 --minWorkers=1 && npm run test --workspace @codex-collab/desktop -- --maxWorkers=1 --minWorkers=1",
     "test:desktop": "npm run build --workspace @codex-collab/protocol && npm run test --workspace @codex-collab/desktop",
-    "test:e2e": "node scripts/run-local-desktop-e2e.mjs",
-    "test:host-lifecycle": "npm run build --workspace @codex-collab/protocol && npm run test --workspace codex-collab -- src/host/host-application.test.ts src/host/host-runtime.test.ts src/host/host-runtime-lock.test.ts src/host/host-service.test.ts src/host/ipc/ipc.test.ts src/host/ipc/endpoint.test.ts src/host/ipc/transport.test.ts src/host/ipc/mcp-client-manager.test.ts src/workspace-sync-worker-control.test.ts && cargo test --manifest-path native/host-ipc/Cargo.toml",
-    "test:workspace-flow": "node scripts/probe-workspace-flow.mjs",
+    "test:e2e": "node scripts/desktop/run-local-desktop-e2e.mjs",
+    "test:host-lifecycle": "npm run build --workspace @codex-collab/protocol && npm run test --workspace codex-collab -- src/host/host-application.test.ts src/host/host-runtime.test.ts src/host/host-runtime-lock.test.ts src/host/host-service.test.ts src/host/ipc/ipc.test.ts src/host/ipc/endpoint.test.ts src/host/ipc/transport.test.ts src/host/ipc/mcp-client-manager.test.ts src/host/workspace-sync-worker-control.test.ts && cargo test --manifest-path native/host-ipc/Cargo.toml",
+    "test:workspace-flow": "node scripts/probes/probe-workspace-flow.mjs",
     "typecheck": "npm run validate:architecture && npm run build --workspace @codex-collab/protocol && npm run typecheck --workspace @codex-collab/dashboard && npm run typecheck --workspace @codex-collab/relay && npm run typecheck --workspace codex-collab && npm run typecheck --workspace @codex-collab/desktop",
     "typecheck:desktop": "npm run build --workspace @codex-collab/protocol && npm run typecheck --workspace @codex-collab/desktop",
     "package:desktop": "npm run package:win --workspace @codex-collab/desktop",
     "package:desktop:dir": "npm run package:dir --workspace @codex-collab/desktop",
-    "verify:desktop-artifact": "node scripts/verify-desktop-artifact.mjs",
-    "verify:desktop-source": "node scripts/verify-desktop-artifact.mjs --source-only",
-    "validate:architecture": "node scripts/check-architecture.mjs",
-    "validate:plugin": "python C:/Users/21497/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py ./plugins/codex-collab"
+    "verify:desktop-artifact": "node scripts/desktop/verify-desktop-artifact.mjs",
+    "verify:desktop-source": "node scripts/desktop/verify-desktop-artifact.mjs --source-only",
+    "validate:architecture": "node scripts/architecture/check-architecture.mjs",
+    "validate:plugin": "node scripts/plugin/validate-plugin.mjs"
   },
   "engines": {
     "node": ">=24.0.0"

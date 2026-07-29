@@ -1,5 +1,5 @@
-import type { LocalProfile } from "../local-profile.js";
-import type { DurableRecoveryBlockedError } from "../durable-recovery.js";
+import type { LocalProfile } from "../persistence/local-profile.js";
+import type { DurableRecoveryBlockedError } from "../persistence/durable-recovery.js";
 import type { HostWorkAdmission } from "./host-runtime-admission.js";
 import type { HostRuntimePhase } from "./host-runtime-phase.js";
 import type {

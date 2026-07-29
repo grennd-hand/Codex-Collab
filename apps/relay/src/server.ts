@@ -17,12 +17,12 @@ import {
   AccountAuthService,
   resolvePasskeyConfig,
   type PasskeyRequestConfig,
-} from "./account-auth.js";
-import { SessionStore, type AccountSessionIdentity } from "./session-store.js";
+} from "./accounts/account-auth.js";
+import { SessionStore, type AccountSessionIdentity } from "./application/session-store.js";
 import {
   RealtimeTicketStore,
   type RealtimeTicketIdentity,
-} from "./realtime-tickets.js";
+} from "./realtime/realtime-tickets.js";
 import { handleAccountRoutes } from "./routes/account-routes.js";
 import { handleMessageRoutes } from "./routes/message-routes.js";
 import type { RelayRouteContext } from "./routes/route-context.js";

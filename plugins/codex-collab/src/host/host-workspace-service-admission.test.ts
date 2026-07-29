@@ -2,12 +2,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import type { CodexAppServerClient } from "../app-server-client.js";
-import { recoverCommandReceipt } from "../command-outbox.js";
-import { DurableRecoveryBlockedError } from "../durable-recovery.js";
-import type { LocalProfile } from "../local-profile.js";
-import type { RelayClient } from "../relay-client.js";
-import type { WorkspaceSyncService } from "../workspace-sync-service.js";
+import type { CodexAppServerClient } from "../app-server/app-server-client.js";
+import { recoverCommandReceipt } from "../persistence/command-outbox.js";
+import { DurableRecoveryBlockedError } from "../persistence/durable-recovery.js";
+import type { LocalProfile } from "../persistence/local-profile.js";
+import type { RelayClient } from "../relay/relay-client.js";
+import type { WorkspaceSyncService } from "../sync/workspace-sync-service.js";
 import type { HostProfileContext } from "./host-profile-context.js";
 import { HostWorkspaceService } from "./host-workspace-service.js";
 

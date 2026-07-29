@@ -1,12 +1,12 @@
 import { AttachRegular, BotRegular, HistoryRegular } from "@fluentui/react-icons";
-import type { UnifiedTimelineItem } from "./imported-timeline.js";
+import type { UnifiedTimelineItem } from "./history/imported-timeline.js";
 import type { MemberIdentity } from "../collaboration/member-identity.js";
 import type { CodexExecutionPhase } from "../composer/codex-controls.js";
-import type { IdeNavigationTarget } from "../../ide/types.js";
+import type { IdeNavigationTarget } from "../../ide/state/types.js";
 import { formatFileSize } from "../composer/attachments.js";
 import { shortTimeLabel } from "../../shared/date-time.js";
-import { deliveryStatusLabel } from "./message-status.js";
-import { ExecutionProcess, ReadableOutput } from "./ExecutionProcess.js";
+import { deliveryStatusLabel } from "./content/message-status.js";
+import { ExecutionProcess, ReadableOutput } from "./execution/ExecutionProcess.js";
 
 interface TimelineItemListProps {
   items: readonly UnifiedTimelineItem[];

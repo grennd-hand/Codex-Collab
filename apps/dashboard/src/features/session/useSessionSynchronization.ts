@@ -11,7 +11,7 @@ import {
   type MutableRefObject,
   type SetStateAction,
 } from "react";
-import type { ConnectionState } from "../../app/connection.js";
+import type { ConnectionState } from "./connection.js";
 import { isCredentialRejected, requestJson } from "../../shared/api/api-client.js";
 import type { ActivityItem } from "../activity/ActivityPanel.js";
 import {
@@ -19,7 +19,7 @@ import {
   type SavedCredential,
   updateCredential,
 } from "./session-storage.js";
-import { useRealtimeConnection } from "./useRealtimeConnection.js";
+import { useRealtimeConnection } from "./realtime/useRealtimeConnection.js";
 
 type SessionSynchronizationOptions = {
   addMessage: (message: Message) => void;

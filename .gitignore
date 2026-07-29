@@ -9,3 +9,4 @@ coverage/
 .codex-collab/
 .runtime-data/
 apps/desktop/release/
+apps/desktop/release-*/

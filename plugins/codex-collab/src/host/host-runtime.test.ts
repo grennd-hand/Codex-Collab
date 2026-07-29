@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { LocalProfile } from "../local-profile.js";
-import { DurableRecoveryBlockedError } from "../durable-recovery.js";
+import type { LocalProfile } from "../persistence/local-profile.js";
+import { DurableRecoveryBlockedError } from "../persistence/durable-recovery.js";
 import { HostRuntime, type HostRuntimeOptions } from "./host-runtime.js";
 
 class FakeRealtimeSocket {

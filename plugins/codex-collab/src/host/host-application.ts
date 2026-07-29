@@ -1,12 +1,12 @@
-import { CodexAppServerClient } from "../app-server-client.js";
-import { LocalProfileStore, type LocalProfile } from "../local-profile.js";
-import { WorkspaceSyncService } from "../workspace-sync-service.js";
+import { CodexAppServerClient } from "../app-server/app-server-client.js";
+import { LocalProfileStore, type LocalProfile } from "../persistence/local-profile.js";
+import { WorkspaceSyncService } from "../sync/workspace-sync-service.js";
 import { HostProfileContext } from "./host-profile-context.js";
 import { HostSessionService, isSessionToolName } from "./host-session-service.js";
 import { hostToolArguments } from "./host-tool-arguments.js";
 import { HostWorkspaceService } from "./host-workspace-service.js";
 import type { HostWorkAdmission } from "./host-runtime-admission.js";
-import type { DurableRecoveryBlockedError } from "../durable-recovery.js";
+import type { DurableRecoveryBlockedError } from "../persistence/durable-recovery.js";
 import { HostApplicationWork } from "./host-application-work.js";
 
 export class HostApplication {

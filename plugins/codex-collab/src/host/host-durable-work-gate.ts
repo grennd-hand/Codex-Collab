@@ -1,7 +1,7 @@
 import {
   isDurableRecoveryBlockedError,
   type DurableRecoveryBlockedError,
-} from "../durable-recovery.js";
+} from "../persistence/durable-recovery.js";
 
 export class HostDurableWorkGate {
   private active: Promise<void> = Promise.resolve();

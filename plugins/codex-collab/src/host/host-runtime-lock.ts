@@ -1,6 +1,6 @@
 import { mkdir, open, readFile, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { localProfilePath } from "../local-profile.js";
+import { localProfilePath } from "../persistence/local-profile.js";
 
 export interface HostRuntimeLockInfo {
   pid: number;

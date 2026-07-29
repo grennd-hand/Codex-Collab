@@ -1,0 +1,40 @@
+@media (max-width: 760px) {
+  .people-panel {
+    height: min(54dvh, 520px);
+    max-height: none;
+    padding: 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--colorNeutralStroke2);
+  }
+
+  .member-section {
+    padding: 10px 14px 12px;
+  }
+
+  .member-section-body {
+    max-height: min(26dvh, 240px);
+  }
+
+  .handoff-rail {
+    min-height: 50px;
+    margin: 12px 0 0;
+    padding: 9px 12px 9px 44px;
+  }
+
+  .handoff-rail::before {
+    top: 8px;
+    bottom: 8px;
+  }
+
+  .handoff-icon {
+    top: 13px;
+  }
+
+  .handoff-rail p {
+    display: none;
+  }
+
+  .peer-chat-heading {
+    min-height: 58px;
+  }
+}

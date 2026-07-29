@@ -5,7 +5,7 @@ import type {
   DesktopHostStatusEventV1,
   DesktopRealtimeEventV1,
   DesktopRelayOperationV1,
-} from "./ipc-contract.js";
+} from "./ipc/ipc-contract.js";
 
 const channels = Object.freeze({
   runtimeInfo: "codex-collab:runtime-info",

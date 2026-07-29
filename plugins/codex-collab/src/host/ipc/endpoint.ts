@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { localProfilePath } from "../../local-profile.js";
+import { localProfilePath } from "../../persistence/local-profile.js";
 import type { HostIpcCapability } from "./authentication.js";
 import { HOST_IPC_PROTOCOL_VERSION, type HostIpcClientKind, HostIpcProtocolError } from "./protocol.js";
 

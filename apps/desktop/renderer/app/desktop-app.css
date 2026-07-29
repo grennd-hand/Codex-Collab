@@ -1,0 +1,38 @@
+:root {
+  font-family: "Segoe UI Variable", "Segoe UI", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  min-width: 980px;
+  background: var(--colorNeutralBackground1, #ffffff);
+}
+
+.desktop-provider {
+  width: 100%;
+  height: 100dvh;
+  min-height: 0;
+  color: var(--colorNeutralForeground1);
+  background: var(--colorNeutralBackground1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .desktop-provider *,
+  .desktop-provider *::before,
+  .desktop-provider *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

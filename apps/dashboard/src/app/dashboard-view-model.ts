@@ -4,7 +4,7 @@ import type {
   RefObject,
   SetStateAction,
 } from "react";
-import type { connectionPresentation } from "./connection.js";
+import type { connectionPresentation } from "../features/session/connection.js";
 import type { ThemeMode } from "./shell/theme.js";
 import type { ActivityItem } from "../features/activity/ActivityPanel.js";
 import type { useCollaborationController } from "../features/collaboration/useCollaborationController.js";
@@ -13,13 +13,13 @@ import type { useComposerController } from "../features/composer/useComposerCont
 import type {
   codexExecutionPhase,
 } from "../features/composer/codex-controls.js";
-import type { useInviteController } from "../features/session/useInviteController.js";
-import type { useOwnerRecoveryController } from "../features/session/useOwnerRecoveryController.js";
-import type { useSubmissionController } from "../features/session/useSubmissionController.js";
+import type { useInviteController } from "../features/session/invite/useInviteController.js";
+import type { useOwnerRecoveryController } from "../features/session/recovery/useOwnerRecoveryController.js";
+import type { useSubmissionController } from "../features/session/submission/useSubmissionController.js";
 import type {
   buildUnifiedTimeline,
-} from "../features/timeline/imported-timeline.js";
-import type { collectExecutionFileChanges } from "../features/timeline/readable-output.js";
+} from "../features/timeline/history/imported-timeline.js";
+import type { collectExecutionFileChanges } from "../features/timeline/content/readable-output.js";
 import type { useWorkspaceConnectionController } from "../features/workspace/useWorkspaceConnectionController.js";
 import type { useWorkspaceFileController } from "../features/workspace/useWorkspaceFileController.js";
 import type { useWorkspaceHistoryController } from "../features/workspace/useWorkspaceHistoryController.js";

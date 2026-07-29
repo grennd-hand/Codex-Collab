@@ -1,6 +1,6 @@
 # Codex Collab code-generation rules
 
-Read `AGENTS.md` and `docs/CODE_ORGANIZATION.md` before editing. Repository security and
+Read `AGENTS.md` and `docs/reference/CODE_ORGANIZATION.md` before editing. Repository security and
 concurrency invariants are mandatory and take precedence over convenience.
 
 - Put new code in the documented layer and feature directory; do not add product modules to a

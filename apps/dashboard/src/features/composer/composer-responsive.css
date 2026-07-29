@@ -1,0 +1,25 @@
+@media (max-width: 760px) {
+  .composer {
+    padding: 12px 14px 14px;
+  }
+
+  .composer-toolbar {
+    align-items: flex-end;
+  }
+
+  .composer-tools {
+    flex: 1;
+  }
+
+  .composer-tools select {
+    max-width: 128px;
+  }
+
+  .composer-actions {
+    display: flex;
+  }
+
+  .composer-actions button {
+    width: 32px;
+  }
+}

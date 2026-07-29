@@ -5,7 +5,7 @@ import {
   type Session,
   ProtocolError,
 } from "@codex-collab/protocol";
-import { hashToken } from "../token.js";
+import { hashToken } from "../security/token.js";
 import { migrateSessionStore } from "./sqlite-migrations.js";
 import {
   type MemberRow,

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { CodexAppServerClient } from "../app-server-client.js";
-import type { LocalProfileStore } from "../local-profile.js";
-import type { WorkspaceSyncService } from "../workspace-sync-service.js";
+import type { CodexAppServerClient } from "../app-server/app-server-client.js";
+import type { LocalProfileStore } from "../persistence/local-profile.js";
+import type { WorkspaceSyncService } from "../sync/workspace-sync-service.js";
 import { HostApplication } from "./host-application.js";
 import { publicHostProfile } from "./host-profile-context.js";
 

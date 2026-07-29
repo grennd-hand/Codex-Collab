@@ -11,6 +11,7 @@
     "./host-worker": "./dist/workspace-sync-worker.js"
   },
   "scripts": {
+    "prebuild": "node ../../scripts/build/clean-output.mjs dist",
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/mcp-server.ts",
     "test": "vitest run",

@@ -1,10 +1,10 @@
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { access, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { runDesktopArtifactVerification } from "../../../scripts/verify-desktop-artifact.mjs";
+import { runDesktopArtifactVerification } from "../../../scripts/desktop/verify-desktop-artifact.mjs";
 
 const requireFromDesktop = createRequire(import.meta.url);
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -18,6 +18,16 @@ const target = process.argv[2];
 if (target !== "--dir" && target !== "--win") {
   throw new Error("Desktop package target must be --dir or --win.");
 }
+
+const desktopPackage = JSON.parse(
+  await readFile(join(desktopRoot, "package.json"), "utf8"),
+);
+const releaseRoot = join(
+  desktopRoot,
+  "release",
+  "candidates",
+  `${desktopPackage.version}-${Date.now()}`,
+);
 
 await mkdir(electronCache, { recursive: true });
 const temporaryRoot = await mkdtemp(join(runtimeRoot, "temp-"));
@@ -93,11 +103,14 @@ try {
     "--win",
     target === "--dir" ? "--dir" : "nsis",
     "--x64",
+    `--config.directories.output=${relative(desktopRoot, releaseRoot)}`,
   ];
   await run(process.execPath, builderArguments, desktopRoot);
   await runDesktopArtifactVerification([
     target === "--dir" ? "--unpacked-only" : "--write",
+    `--release-root=${relative(repositoryRoot, releaseRoot)}`,
   ]);
+  console.log(`Desktop artifacts: ${releaseRoot}`);
 } finally {
   await rm(temporaryRoot, { recursive: true, force: true });
 }

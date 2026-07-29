@@ -8,7 +8,7 @@ import {
   elapsedExecutionLabel,
   executionProcessPresentation,
   resolveExecutionProcessExpanded,
-} from "./features/timeline/ExecutionProcess.js";
+} from "./features/timeline/execution/ExecutionProcess.js";
 import {
   canMemberStopCodex,
   chatMessageBody,

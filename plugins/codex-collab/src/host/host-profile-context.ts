@@ -1,6 +1,6 @@
-import type { LocalProfile, LocalProfileStore } from "../local-profile.js";
-import { RelayClient } from "../relay-client.js";
-import { openWorkspaceSandboxes } from "../workspace-roots.js";
+import type { LocalProfile, LocalProfileStore } from "../persistence/local-profile.js";
+import { RelayClient } from "../relay/relay-client.js";
+import { openWorkspaceSandboxes } from "../workspace/workspace-roots.js";
 
 export interface CurrentHostSession {
   profile: LocalProfile;

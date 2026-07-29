@@ -1,5 +1,5 @@
 import type { CodexCollabDesktopApiV1 as DashboardContract } from "../../dashboard/src/shared/runtime/desktop-contract.js";
-import type { CodexCollabDesktopApiV1 as DesktopContract } from "../src/ipc-contract.js";
+import type { CodexCollabDesktopApiV1 as DesktopContract } from "../src/ipc/ipc-contract.js";
 
 declare const dashboardContract: DashboardContract;
 declare const desktopContract: DesktopContract;

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { type Account, ProtocolError } from "@codex-collab/protocol";
-import { hashToken, issueToken } from "../token.js";
+import { hashToken, issueToken } from "../security/token.js";
 import { SqliteSessionStore } from "../storage/sqlite-session-store.js";
 import {
   type AccountChallenge,

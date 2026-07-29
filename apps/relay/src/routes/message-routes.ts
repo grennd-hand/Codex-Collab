@@ -11,7 +11,7 @@ import {
 import {
   parseCodexOptions,
   validateCodexPromptCapabilities,
-} from "../codex-options.js";
+} from "../http/codex-options.js";
 import type { RelayRouteContext } from "./route-context.js";
 
 export async function handleMessageRoutes(

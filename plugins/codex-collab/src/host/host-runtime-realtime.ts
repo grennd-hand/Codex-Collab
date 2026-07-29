@@ -1,4 +1,4 @@
-import type { LocalProfile } from "../local-profile.js";
+import type { LocalProfile } from "../persistence/local-profile.js";
 
 export interface RealtimeSocket {
   readonly readyState: number;

@@ -7,18 +7,18 @@ import {
   useState,
   type RefObject,
 } from "react";
-import { resolveWorkspaceFilePath } from "../../ide/file-tree.js";
+import { resolveWorkspaceFilePath } from "../../ide/explorer/file-tree.js";
 import {
   WorkspaceFileCache,
   workspaceFileCacheKey,
   workspaceRootScope,
-} from "../../ide/workspace-file-cache.js";
+} from "../../ide/state/workspace-file-cache.js";
 import {
   createWorkspaceDirectoryOperation,
   readWorkspaceFileOperation,
   renameWorkspaceEntryOperation,
   saveWorkspaceFileOperation,
-} from "../../ide/workspace-file-operations.js";
+} from "../../ide/state/workspace-file-operations.js";
 import type {
   IdeFileDocument,
   IdeNavigationTarget,
@@ -26,12 +26,12 @@ import type {
   IdeRenameRequest,
   IdeSaveRequest,
   IdeSaveResult,
-} from "../../ide/types.js";
+} from "../../ide/state/types.js";
 import {
   captureHistoryScrollAnchor,
   restoreHistoryScrollAnchor,
   type HistoryScrollAnchor,
-} from "../timeline/history-scroll.js";
+} from "../timeline/history/history-scroll.js";
 
 type WorkspaceFileControllerOptions = {
   authHeaders: (includeJson?: boolean) => HeadersInit;

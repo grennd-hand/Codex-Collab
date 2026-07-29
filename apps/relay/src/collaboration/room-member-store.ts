@@ -9,7 +9,7 @@ import {
   type WorkspaceFileAccess,
   ProtocolError,
 } from "@codex-collab/protocol";
-import { hashToken, issueToken } from "../token.js";
+import { hashToken, issueToken } from "../security/token.js";
 import { AccountRoomStore } from "../accounts/account-room-store.js";
 import {
   type AccountSessionIdentity,

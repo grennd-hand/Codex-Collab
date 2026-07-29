@@ -4,7 +4,7 @@ import {
   type RestoreAccountRoomResponse,
   ProtocolError,
 } from "@codex-collab/protocol";
-import { hashToken, issueToken } from "../token.js";
+import { hashToken, issueToken } from "../security/token.js";
 import { AccountAuthStore } from "./account-auth-store.js";
 import {
   type AccountRoomRow,

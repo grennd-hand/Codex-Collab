@@ -6,8 +6,8 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { McpHostIpcClientManager } from "./host/ipc/mcp-client-manager.js";
 import { isHostToolMethod } from "./host/ipc/protocol.js";
-import { collabTools } from "./mcp-tool-catalog.js";
-import { ensureWorkspaceSyncWorker } from "./workspace-sync-worker-control.js";
+import { collabTools } from "./mcp/mcp-tool-catalog.js";
+import { ensureWorkspaceSyncWorker } from "./host/workspace-sync-worker-control.js";
 
 const server = new Server(
   { name: "codex-collab", version: "0.1.0" },

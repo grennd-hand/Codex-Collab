@@ -1,12 +1,12 @@
 import type { RealtimeEnvelope } from "@codex-collab/protocol";
-import { RelayClient, RelayRequestError } from "../relay-client.js";
+import { RelayClient, RelayRequestError } from "../relay/relay-client.js";
 import { HostRoomLifecycle, type HostRuntimePhase } from "./host-runtime-phase.js";
 import type { HostWorkAdmission } from "./host-runtime-admission.js";
 import { withHostRuntimeTimeout } from "./host-runtime-timeout.js";
 import { hostRealtimeProfileKey, reportHostRuntimeError, type RealtimeSocket, type RealtimeTicketClient } from "./host-runtime-realtime.js";
 import {
   isDurableRecoveryBlockedError,
-} from "../durable-recovery.js";
+} from "../persistence/durable-recovery.js";
 import type { HostRuntimeOptions } from "./host-runtime-options.js";
 export type { HostRuntimeApplication, HostRuntimeOptions } from "./host-runtime-options.js";
 export type { HostRuntimePhase } from "./host-runtime-phase.js";

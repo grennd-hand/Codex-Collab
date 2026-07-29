@@ -12,7 +12,7 @@ import {
 } from "@fluentui/react-components";
 import { DismissRegular } from "@fluentui/react-icons";
 import type { FormEvent } from "react";
-import type { SetupSubmissionMode } from "../session/invite-session.js";
+import type { SetupSubmissionMode } from "../session/invite/invite-session.js";
 import { RoomAccessFields, RoomSubmitButton } from "./RoomAccessFields.js";
 
 interface SetupDialogProps {

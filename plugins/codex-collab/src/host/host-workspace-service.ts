@@ -1,17 +1,17 @@
 import { hostname } from "node:os";
 import { basename } from "node:path";
-import type { CodexAppServerClient } from "../app-server-client.js";
+import type { CodexAppServerClient } from "../app-server/app-server-client.js";
 import {
   deliverCodexCommand,
-} from "../command-outbox.js";
-import type { LocalProfile } from "../local-profile.js";
-import { RelayClient } from "../relay-client.js";
-import type { WorkspaceSyncService } from "../workspace-sync-service.js";
+} from "../persistence/command-outbox.js";
+import type { LocalProfile } from "../persistence/local-profile.js";
+import { RelayClient } from "../relay/relay-client.js";
+import type { WorkspaceSyncService } from "../sync/workspace-sync-service.js";
 import {
   openBoundProjectSandbox,
   openProjectSandbox,
   openWorkspaceSandboxes,
-} from "../workspace-roots.js";
+} from "../workspace/workspace-roots.js";
 import { HostProfileContext, publicHostProfile } from "./host-profile-context.js";
 import { hostWorkAllowed, type HostWorkAdmission } from "./host-runtime-admission.js";
 import { stringArgument, type HostToolArguments } from "./host-tool-arguments.js";

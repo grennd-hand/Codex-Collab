@@ -12,25 +12,23 @@ import {
   useState,
   type RefObject,
 } from "react";
-import { isWorkspaceRefreshAbort, shouldApplyWorkspaceResponse } from "../../app/workspace-refresh.js";
+import { isWorkspaceRefreshAbort, shouldApplyWorkspaceResponse } from "./history/workspace-refresh.js";
 import {
   beginLatestHistoryLoad,
-  beginOlderHistoryLoad,
   createWorkspaceHistoryWindow,
   failHistoryLoad,
   finishOlderHistoryLoad,
-  prependOlderHistoryPage,
   reconcileLatestHistoryPage,
   type WorkspaceHistoryWindow,
-} from "../../app/workspace-history-window.js";
-import { mergeWorkspaceOverview } from "../../app/workspace-state.js";
+} from "./history/workspace-history-window.js";
+import { loadOlderWorkspaceHistory } from "./history/older-workspace-history.js";
+import { mergeWorkspaceOverview } from "./history/workspace-state.js";
 import { workspaceNeedsConversationLoad } from "../composer/codex-controls.js";
 import {
-  captureHistoryScrollAnchor,
   restoreHistoryScrollAnchor,
   type PendingHistoryScrollRestore,
-} from "../timeline/history-scroll.js";
-import { ApiRequestError, requestJson } from "../../shared/api/api-client.js";
+} from "../timeline/history/history-scroll.js";
+import { requestJson } from "../../shared/api/api-client.js";
 
 type WorkspaceHistoryControllerOptions = {
   approved: boolean;
@@ -272,105 +270,23 @@ export function useWorkspaceHistoryController({
   ]);
 
   const loadOlder = useCallback(async () => {
-    const current = historyWindowRef.current;
-    if (
-      !session ||
-      !token ||
-      !approved ||
-      !current.threadId ||
-      !current.hasOlder ||
-      !current.olderCursor ||
-      current.olderLoading ||
-      olderAbortRef.current
-    ) {
-      return;
-    }
-    const sessionId = session.id;
-    const threadId = current.threadId;
-    const hostGeneration = current.hostGeneration;
-    const requestedCursor = current.olderCursor;
-    const historyEpoch = historyEpochRef.current;
-    const requestId = ++olderRequestIdRef.current;
-    const anchor = captureHistoryScrollAnchor(messageStreamRef.current);
-    const controller = new AbortController();
-    let restoreScheduled = false;
-    olderAbortRef.current = controller;
-    prependingRef.current = true;
-    commitHistoryWindow(beginOlderHistoryLoad);
-    try {
-      const result = await requestJson<{ workspaceHistoryPage: WorkspaceHistoryPage }>(
-        `/v1/sessions/${sessionId}/workspace/history/page?limit=40&before=${encodeURIComponent(requestedCursor)}`,
-        { headers: authHeaders(), signal: controller.signal },
-      );
-      if (
-        sessionIdRef.current !== sessionId ||
-        historyEpochRef.current !== historyEpoch ||
-        olderRequestIdRef.current !== requestId ||
-        result.workspaceHistoryPage.selectedThreadId !== threadId
-      ) {
-        return;
-      }
-      const latest = historyWindowRef.current;
-      if (
-        latest.sessionId !== sessionId ||
-        latest.threadId !== threadId ||
-        latest.hostGeneration !== hostGeneration ||
-        latest.olderCursor !== requestedCursor
-      ) {
-        return;
-      }
-      const next = prependOlderHistoryPage(
-        latest,
-        sessionId,
-        hostGeneration,
-        requestedCursor,
-        result.workspaceHistoryPage,
-      );
-      if (next === latest) return;
-      pendingScrollRestoreRef.current = {
-        sessionId,
-        threadId,
-        hostGeneration,
-        historyEpoch,
-        requestId,
-        anchor,
-      };
-      restoreScheduled = true;
-      commitHistoryWindow(() => next);
-    } catch (caught) {
-      if (isWorkspaceRefreshAbort(caught)) return;
-      if (
-        sessionIdRef.current !== sessionId ||
-        historyEpochRef.current !== historyEpoch ||
-        olderRequestIdRef.current !== requestId ||
-        historyWindowRef.current.threadId !== threadId ||
-        historyWindowRef.current.hostGeneration !== hostGeneration
-      ) {
-        return;
-      }
-      if (caught instanceof ApiRequestError && caught.code === "history_cursor_stale") {
-        commitHistoryWindow(() =>
-          createWorkspaceHistoryWindow(
-            sessionId,
-            threadId,
-            true,
-            hostGeneration,
-          ),
-        );
-        void refresh(true).catch(onError);
-        return;
-      }
-      const message = caught instanceof Error ? caught.message : "更早记录加载失败";
-      commitHistoryWindow((window) => failHistoryLoad(window, message));
-    } finally {
-      if (olderRequestIdRef.current === requestId) {
-        if (!restoreScheduled) {
-          commitHistoryWindow(finishOlderHistoryLoad);
-          prependingRef.current = false;
-          if (olderAbortRef.current === controller) olderAbortRef.current = null;
-        }
-      }
-    }
+    await loadOlderWorkspaceHistory({
+      approved,
+      authHeaders,
+      commitHistoryWindow,
+      historyEpochRef,
+      historyWindowRef,
+      messageStreamRef,
+      onError,
+      olderAbortRef,
+      olderRequestIdRef,
+      pendingScrollRestoreRef,
+      prependingRef,
+      refresh,
+      session,
+      sessionIdRef,
+      token,
+    });
   }, [
     approved,
     authHeaders,

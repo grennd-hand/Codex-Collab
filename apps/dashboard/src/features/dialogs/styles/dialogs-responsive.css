@@ -1,0 +1,56 @@
+@media (max-width: 760px) {
+  .workspace-dialog-surface {
+    width: calc(100vw - 20px);
+    max-height: calc(100dvh - 20px);
+  }
+
+  .workspace-dialog-content {
+    min-height: 0;
+  }
+
+  .workspace-data-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .custom-permission-panel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .custom-permission-panel p {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 480px) {
+  .workspace-dialog-surface {
+    width: 100vw;
+    max-height: 100dvh;
+    border-radius: 0;
+  }
+
+  .workspace-section-heading {
+    align-items: flex-start;
+  }
+
+  .file-browser {
+    grid-template-columns: 1fr;
+  }
+
+  .file-browser nav {
+    max-height: 180px;
+    border-right: 0;
+    border-bottom: 1px solid var(--colorNeutralStroke2);
+  }
+
+  .file-preview {
+    min-height: 220px;
+  }
+
+  .custom-permission-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .custom-permission-panel p {
+    grid-column: auto;
+  }
+}

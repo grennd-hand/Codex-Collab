@@ -1,8 +1,8 @@
 import { hostname } from "node:os";
 import type { MessageKind } from "@codex-collab/protocol";
-import type { LocalProfile } from "../local-profile.js";
-import { RelayClient } from "../relay-client.js";
-import { openProjectSandbox, openWorkspaceSandboxes } from "../workspace-roots.js";
+import type { LocalProfile } from "../persistence/local-profile.js";
+import { RelayClient } from "../relay/relay-client.js";
+import { openProjectSandbox, openWorkspaceSandboxes } from "../workspace/workspace-roots.js";
 import { HostProfileContext, publicHostProfile } from "./host-profile-context.js";
 import {
   integerArgument,

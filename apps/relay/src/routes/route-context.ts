@@ -7,12 +7,12 @@ import type { RealtimeEnvelope } from "@codex-collab/protocol";
 import type {
   AccountAuthService,
   PasskeyRequestConfig,
-} from "../account-auth.js";
+} from "../accounts/account-auth.js";
 import type {
   AccountSessionIdentity,
   SessionStore,
-} from "../session-store.js";
-import type { RealtimeTicketStore } from "../realtime-tickets.js";
+} from "../application/session-store.js";
+import type { RealtimeTicketStore } from "../realtime/realtime-tickets.js";
 
 export interface RelayRouteContext {
   store: SessionStore;

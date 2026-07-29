@@ -1,0 +1,11 @@
+{
+  "extends": "../dashboard/tsconfig.json",
+  "compilerOptions": {
+    "types": ["vite/client"]
+  },
+  "include": [
+    "renderer/**/*.ts",
+    "renderer/**/*.tsx",
+    "../dashboard/src/**/*.d.ts"
+  ]
+}

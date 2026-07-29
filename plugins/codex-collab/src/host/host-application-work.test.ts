@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { DurableRecoveryBlockedError } from "../durable-recovery.js";
-import type { WorkspaceSyncService } from "../workspace-sync-service.js";
+import { DurableRecoveryBlockedError } from "../persistence/durable-recovery.js";
+import type { WorkspaceSyncService } from "../sync/workspace-sync-service.js";
 import { HostApplicationWork } from "./host-application-work.js";
 
 function fixture() {

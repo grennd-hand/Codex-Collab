@@ -7,7 +7,7 @@ import {
   type WorkspaceSummary,
   ProtocolError,
 } from "@codex-collab/protocol";
-import { hashToken, issueToken } from "../token.js";
+import { hashToken, issueToken } from "../security/token.js";
 import { MessageStore } from "../collaboration/message-store.js";
 import {
   type HostPairingRow,

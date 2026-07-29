@@ -1,0 +1,104 @@
+@media (max-width: 1120px) {
+  .topbar-thread-control {
+    max-width: 340px;
+  }
+}
+
+@media (max-width: 1360px) {
+  .topbar-panel-controls .panel-control-label,
+  .topbar-panel-controls .workspace-button-label {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .app-provider {
+    padding: 0;
+  }
+
+  .app-frame {
+    width: 100%;
+    min-height: 100dvh;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .topbar {
+    min-height: 64px;
+    padding: 10px 12px;
+    flex-wrap: wrap;
+  }
+
+  .topbar-thread-control {
+    order: 4;
+    min-width: 0;
+    max-width: none;
+    flex: 1 0 100%;
+    margin-left: 0;
+  }
+
+  .topbar-panel-controls {
+    order: 3;
+    flex: 1 0 100%;
+  }
+
+  .product-context,
+  .invite-button {
+    display: none;
+  }
+
+  .room-switch {
+    min-width: auto;
+  }
+
+  .room-switch .fui-Switch__label {
+    display: none;
+  }
+
+  .workspace-button {
+    min-width: 32px;
+    padding-inline: 6px;
+  }
+
+  .workspace-button-label {
+    display: none;
+  }
+
+  .room-identity {
+    width: 32px;
+    padding-inline: 6px;
+    justify-content: center;
+  }
+
+  .room-identity-name,
+  .room-identity-role {
+    display: none;
+  }
+
+  .brand-mark {
+    width: 36px;
+    height: 36px;
+  }
+
+  .brand-lockup h1 {
+    font-size: 18px;
+  }
+}
+
+@media (max-width: 480px) {
+  .topbar-actions {
+    gap: 2px;
+  }
+
+  .connection-badge {
+    width: 12px !important;
+    min-width: 12px !important;
+    height: 12px !important;
+    padding: 0 !important;
+    overflow: hidden;
+    border-radius: 50%;
+    font-size: 0 !important;
+    line-height: 0 !important;
+  }
+}

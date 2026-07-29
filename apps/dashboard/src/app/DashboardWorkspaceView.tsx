@@ -2,8 +2,8 @@ import { Button, Skeleton, SkeletonItem } from "@fluentui/react-components";
 import { ArrowSyncRegular } from "@fluentui/react-icons";
 import { lazy, Suspense } from "react";
 import type { DashboardViewModel } from "./dashboard-view-model.js";
-import { taskUiScope, workspaceDataScope } from "../ide/workspace-file-cache.js";
-import { useIdeWorkspaceRelease } from "../ide/ide-workspace-lifecycle.js";
+import { taskUiScope, workspaceDataScope } from "../ide/state/workspace-file-cache.js";
+import { useIdeWorkspaceRelease } from "../ide/state/ide-workspace-lifecycle.js";
 import { AppHeader } from "./shell/AppHeader.js";
 import { ErrorBanner } from "./shell/ErrorBanner.js";
 import { ActivityPanel } from "../features/activity/ActivityPanel.js";
@@ -15,7 +15,7 @@ import {
   WorkspacePanelLayout,
 } from "../layout/index.js";
 
-const IdeWorkspace = lazy(() => import("../ide/IdeWorkspace.js"));
+const IdeWorkspace = lazy(() => import("../ide/shell/IdeWorkspace.js"));
 
 export function DashboardWorkspaceView({ model }: { model: DashboardViewModel }) {
   const {

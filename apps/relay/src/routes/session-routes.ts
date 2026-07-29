@@ -5,7 +5,7 @@ import {
   requiredString,
   type RoomStatus,
 } from "@codex-collab/protocol";
-import { buildInviteLink, resolveInviteOrigin } from "../invite-link.js";
+import { buildInviteLink, resolveInviteOrigin } from "../http/invite-link.js";
 import type { RelayRouteContext } from "./route-context.js";
 
 export async function handleSessionRoutes(

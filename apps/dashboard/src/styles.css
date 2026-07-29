@@ -1,8 +1,8 @@
 @import "./styles/foundation.css";
-@import "./styles/collaboration.css";
-@import "./styles/timeline.css";
-@import "./styles/composer.css";
-@import "./styles/activity.css";
-@import "./styles/dialogs.css";
-@import "./styles/setup-dialog.css";
+@import "./features/collaboration/collaboration.css";
+@import "./features/timeline/styles/timeline.css";
+@import "./features/composer/composer.css";
+@import "./features/activity/activity.css";
+@import "./features/dialogs/styles/dialogs.css";
+@import "./features/dialogs/styles/setup-dialog.css";
 @import "./styles/responsive.css";
