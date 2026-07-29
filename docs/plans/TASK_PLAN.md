@@ -80,6 +80,7 @@
 - [x] Dashboard browser/desktop Runtime 与 task-scoped Codex 草稿、附件、IDE tabs/dirty state
 - [x] Relay 使用 `expectedWorkspaceThreadId` 在消息落库前原子拒绝 task 切换竞态
 - [x] 结构化 file activity 贯通协议、Host 导入、Relay 校验、timeline 和 IDE
+- [x] 成功任务默认折叠执行步骤，并在同一结果块持续显示耗时、最终总结和紧凑文件变更汇总
 - [x] Host `active/draining/suspended/catching-up` 状态机及 focused tests
 - [x] Electron main/preload、白名单 IPC、`safeStorage`、安全 custom protocol 与安全窗口策略
 - [x] Host IPC 的跨进程唯一 owner、Windows pipe ACL/SID、HMAC/replay、帧限制、ready probe、

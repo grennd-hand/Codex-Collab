@@ -82,6 +82,36 @@
   font-size: 12px;
 }
 
+.ide-file-changes-more {
+  min-height: 32px;
+  margin-left: 32px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  color: var(--colorNeutralForeground2);
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.ide-file-changes-more:hover {
+  color: var(--colorBrandForeground1);
+  background: var(--colorNeutralBackground1Hover);
+}
+
+.ide-file-changes-more:focus-visible {
+  outline: 2px solid var(--colorBrandStroke1);
+  outline-offset: -2px;
+}
+
+.ide-file-changes-more svg {
+  display: block;
+  font-size: 13px;
+}
+
 .ide-file-change {
   min-width: 0;
 }

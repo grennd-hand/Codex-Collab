@@ -1,8 +1,16 @@
 import { ChevronDownRegular } from "@fluentui/react-icons";
 import { useId, useLayoutEffect, useRef, useState } from "react";
 import type { CodexRecordEntry } from "@codex-collab/protocol";
+import {
+  IdeFileChanges,
+  navigationTargetForFileChange,
+} from "../../../ide/changes/IdeFileChanges.js";
 import type { IdeNavigationTarget } from "../../../ide/state/types.js";
-import { presentExecutionEntries } from "../content/readable-output.js";
+import { ReadableOutput } from "../content/ReadableOutput.js";
+import {
+  collectExecutionFileChanges,
+  presentExecutionEntries,
+} from "../content/readable-output.js";
 import { ExecutionStepCard } from "./ExecutionStepCard.js";
 import {
   completedExecutionDurationLabel,
@@ -29,6 +37,7 @@ export function ExecutionProcess({
   completedAt = null,
   historyKey,
   historyEntryKeys,
+  completion,
   sourceLabel = null,
   onOpenFile,
 }: {
@@ -37,11 +46,18 @@ export function ExecutionProcess({
   completedAt?: string | null;
   historyKey?: string;
   historyEntryKeys?: readonly (string | null)[];
+  completion?: {
+    entry: CodexRecordEntry;
+    historyKey?: string;
+  } | null;
   sourceLabel?: string | null;
   onOpenFile?: (target: IdeNavigationTarget) => void;
 }) {
-  const finalized = Boolean(completedAt);
+  const finalized = Boolean(completedAt || completion);
   const records = presentExecutionEntries(entries, active && !finalized, finalized);
+  const completedFileChanges = completion
+    ? collectExecutionFileChanges(entries)
+    : [];
   const presentation = executionProcessPresentation(
     records,
     active && !finalized,
@@ -82,7 +98,7 @@ export function ExecutionProcess({
     <section
       className={`execution-process ${presentation.status} ${
         expanded ? "expanded" : "collapsed"
-      }`}
+      }${completion ? " has-completion" : ""}`}
       data-history-key={historyKey}
       data-history-anchor={expanded ? undefined : historyKey}
       aria-label={`${sourceLabel ? `${sourceLabel}，` : ""}${
@@ -116,7 +132,8 @@ export function ExecutionProcess({
           </span>
           <span className="execution-process-title">
             <strong>
-              {sourceLabel
+              {sourceLabel &&
+              !(presentation.status === "completed" && completion)
                 ? `${sourceLabel}：${presentation.title}`
                 : presentation.title}
             </strong>
@@ -128,7 +145,7 @@ export function ExecutionProcess({
             {runningStartedAt ? (
               <ExecutionElapsedTime startedAt={runningStartedAt} />
             ) : null}
-            {completedDuration ? <span>耗时 {completedDuration}</span> : null}
+            {completedDuration ? <span>{completedDuration}</span> : null}
             {presentation.status !== "completed" ||
             expanded ||
             !completedDuration ? (
@@ -151,6 +168,33 @@ export function ExecutionProcess({
               onOpenFile={onOpenFile}
             />
           ))}
+        </div>
+      ) : null}
+      {completion ? (
+        <div className="execution-completion">
+          <article
+            className="execution-completion-summary"
+            data-history-anchor={completion.historyKey}
+            data-history-key={completion.historyKey}
+            aria-label="Codex 最终总结"
+          >
+            <ReadableOutput text={completion.entry.text} />
+          </article>
+          {completedFileChanges.length > 0 ? (
+            <IdeFileChanges
+              changes={completedFileChanges}
+              className="execution-completion-files"
+              title="已编辑"
+              defaultExpanded
+              initialVisibleCount={3}
+              onOpenFile={
+                onOpenFile
+                  ? (_path, change) =>
+                      onOpenFile(navigationTargetForFileChange(change))
+                  : undefined
+              }
+            />
+          ) : null}
         </div>
       ) : null}
     </section>

@@ -44,6 +44,9 @@ Host 才启动的顺序已在实机成立，关闭/恢复/右键退出的最终�
 - [x] 当前源码已修复协作者 Codex 时间线末帧被 750ms 限流丢弃、线程已空闲但旧 turn 仍保持
   `inProgress`，以及 Realtime 重连/终态缺少消息状态对账的问题；全仓 601 项测试和本地临时
   Relay/SQLite workspace-flow 已通过。
+- [x] 当前源码已把相邻的执行过程、最终回复和结构化文件变更收拢为一个完成任务单元：成功任务
+  默认只收起过程、始终显示最终总结和耗时，文件汇总默认展示前三项并可继续展开；不会跨越中间
+  时间线项目合并。focused tests 与全仓 604 项测试已通过。
 - [ ] 上述实时反馈修复尚未重新安装桌面候选，也未部署 Primary/Guest；本批继续保持服务器不变。
 - [ ] 在已安装 `v0.1.0-beta.4` 上手工点击关闭、托盘恢复和托盘退出，完成最后的 Windows Shell 验收。
 - [ ] 在桌面产品壳完成并通过真实安装验收前，不再宣称“整个桌面端已经完成”。
@@ -285,6 +288,8 @@ Status bar: root / task / room / Relay / Host / sync / dirty and permission stat
   status bar、splitter 和 layout persistence。
 - [x] **D3.5-C Feature migration**：按 Explorer/Editor、Codex timeline、Collaboration、room/member
   dialogs 顺序迁移，复用 controller/view-model，不复制网络或凭据逻辑。
+- [x] **D3.5-C Timeline completion**：成功任务按“已处理 + 耗时 / 最终总结 / 文件变更汇总”显示，
+  处理步骤默认折叠，整行 disclosure 可恢复全过程，手动选择不被实时更新重置。
 - [ ] **D3.5-D Desktop journeys**：补齐 desktop onboarding、恢复房间、Host restart-required、tray、
   notification、offline/catching-up 和退出确认。
 - [ ] **D3.5-E Release proof**：完成 component tests、键盘测试、视觉几何检查、打包 Electron 实机
@@ -362,6 +367,8 @@ Status bar: root / task / room / Relay / Host / sync / dirty and permission stat
 - 继续使用 Fluent UI React v9 和 `@fluentui/react-icons`，不引入第二套组件/图标系统；
 - 左侧常驻项目树，中间 Monaco workspace，右侧所选 Codex task 时间线，成员协作保持独立；
 - running 默认展开，成功默认折叠，失败/审批/冲突保持展开；手动 disclosure 不被实时更新重置；
+- 成功任务折叠的是执行细节，不隐藏最终总结；最终总结与本次文件变更属于同一任务结果块，文件
+  变更先显示聚合增删行和前三项，再由用户展开其余文件；
 - 主 pane 使用真实 splitter，保存本机尺寸，支持鼠标、触摸、键盘与双击复位；
 - 明确覆盖 loading、offline、reconnecting、read-only、dirty、saving、saved、conflict、failed、
   cancelled 和 permission denied，而不是只验证 happy path。

@@ -114,6 +114,19 @@ function ImportedTimelineMessage({
   );
 }
 
+function isCompletedExecutionPair(
+  execution: UnifiedTimelineItem | undefined,
+  summary: UnifiedTimelineItem | undefined,
+): boolean {
+  return Boolean(
+    execution?.kind === "imported" &&
+      execution.item.kind === "execution" &&
+      summary?.kind === "imported" &&
+      summary.item.kind === "message" &&
+      summary.item.entry.role === "assistant",
+  );
+}
+
 export function TimelineItemList({
   items,
   memberId,
@@ -121,7 +134,8 @@ export function TimelineItemList({
   identityForMember,
   onOpenFile,
 }: TimelineItemListProps) {
-  return items.map((timelineItem, index) => {
+  return items.flatMap((timelineItem, index) => {
+    if (isCompletedExecutionPair(items[index - 1], timelineItem)) return [];
     if (timelineItem.kind === "shared") {
       const item = timelineItem.message;
       return (
@@ -138,11 +152,28 @@ export function TimelineItemList({
       return <ImportedTimelineMessage key={`codex-${item.key ?? item.entry.id}`} item={item} />;
     }
     const item = timelineItem.item;
+    const completionItem = isCompletedExecutionPair(
+      timelineItem,
+      items[index + 1],
+    )
+      ? items[index + 1]
+      : null;
+    const completion =
+      completionItem?.kind === "imported" &&
+      completionItem.item.kind === "message"
+        ? {
+            entry: completionItem.item.entry,
+            ...(completionItem.item.key
+              ? { historyKey: completionItem.item.key }
+              : {}),
+          }
+        : null;
     return (
       <ExecutionProcess
         active={executionPhase === "running" && index === items.length - 1}
         entries={item.entries}
         completedAt={item.completedAt ?? null}
+        completion={completion}
         historyKey={item.id}
         historyEntryKeys={item.entryKeys}
         key={item.id}

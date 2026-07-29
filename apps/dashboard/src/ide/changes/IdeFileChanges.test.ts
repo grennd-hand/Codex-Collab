@@ -105,4 +105,21 @@ describe("IdeFileChanges", () => {
     expect(markup).toContain('aria-expanded="false"');
     expect(markup).toContain("hidden=\"\"");
   });
+
+  it("keeps completed-task file summaries compact until more files are requested", () => {
+    const markup = renderToStaticMarkup(
+      createElement(IdeFileChanges, {
+        changes,
+        initialVisibleCount: 2,
+        onOpenFile: vi.fn(),
+      }),
+    );
+
+    expect(markup).toContain("3 个文件");
+    expect(markup).toContain("src/new-file.ts");
+    expect(markup).toContain("src/existing.ts");
+    expect(markup).not.toContain("legacy.ts 已删除");
+    expect(markup).toContain("再显示 1 个文件");
+    expect(markup).toContain('aria-expanded="false"');
+  });
 });

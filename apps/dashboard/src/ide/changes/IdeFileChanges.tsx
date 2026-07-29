@@ -23,6 +23,7 @@ export interface IdeFileChangesProps {
   title?: string;
   expanded?: boolean;
   defaultExpanded?: boolean;
+  initialVisibleCount?: number;
   expandedFilePaths?: ReadonlySet<string>;
   defaultExpandedFilePaths?: readonly string[];
   className?: string;
@@ -96,6 +97,7 @@ export function IdeFileChanges({
   title = "文件更改",
   expanded,
   defaultExpanded = true,
+  initialVisibleCount,
   expandedFilePaths,
   defaultExpandedFilePaths = [],
   className,
@@ -107,10 +109,17 @@ export function IdeFileChanges({
   const [localExpandedPaths, setLocalExpandedPaths] = useState<Set<string>>(
     () => new Set(defaultExpandedFilePaths),
   );
+  const [showAllChanges, setShowAllChanges] = useState(false);
   const contentId = useId();
   const isExpanded = expanded ?? localExpanded;
   const visibleExpandedPaths = expandedFilePaths ?? localExpandedPaths;
   const summary = useMemo(() => summarizeIdeFileChanges(changes), [changes]);
+  const visibleLimit =
+    initialVisibleCount === undefined || !Number.isFinite(initialVisibleCount)
+      ? changes.length
+      : Math.max(1, Math.trunc(initialVisibleCount));
+  const visibleChanges = showAllChanges ? changes : changes.slice(0, visibleLimit);
+  const hiddenChangeCount = Math.max(0, changes.length - visibleLimit);
 
   const changeSectionExpanded = (nextExpanded: boolean) => {
     if (expanded === undefined) {
@@ -160,7 +169,7 @@ export function IdeFileChanges({
         {changes.length === 0 ? (
           <div className="ide-file-changes-empty">当前没有文件更改</div>
         ) : null}
-        {changes.map((change) => {
+        {visibleChanges.map((change) => {
           const presentation = CHANGE_PRESENTATION[change.kind];
           const displayPath = splitDisplayPath(change.path);
           const fileExpanded = visibleExpandedPaths.has(change.path);
@@ -227,6 +236,21 @@ export function IdeFileChanges({
             </div>
           );
         })}
+        {hiddenChangeCount > 0 ? (
+          <button
+            type="button"
+            className="ide-file-changes-more"
+            aria-expanded={showAllChanges}
+            onClick={() => setShowAllChanges((current) => !current)}
+          >
+            {showAllChanges
+              ? `收起 ${hiddenChangeCount} 个文件`
+              : `再显示 ${hiddenChangeCount} 个文件`}
+            <span aria-hidden="true">
+              {showAllChanges ? <ChevronDownRegular /> : <ChevronRightRegular />}
+            </span>
+          </button>
+        ) : null}
       </div>
     </section>
   );

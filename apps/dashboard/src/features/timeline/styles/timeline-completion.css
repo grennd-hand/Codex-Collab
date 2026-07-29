@@ -1,0 +1,50 @@
+.execution-process.completed.collapsed.has-completion {
+  margin-bottom: 18px;
+  overflow: visible;
+  border-bottom: 0;
+}
+
+.execution-process.completed.collapsed.has-completion .execution-process-heading {
+  border-bottom: 1px solid var(--colorNeutralStroke2);
+}
+
+.execution-completion {
+  min-width: 0;
+  background: var(--colorNeutralBackground1);
+}
+
+.execution-process.completed.collapsed .execution-completion {
+  background: transparent;
+}
+
+.execution-process.expanded .execution-completion {
+  border-top: 1px solid var(--colorNeutralStroke2);
+}
+
+.execution-completion-summary {
+  min-width: 0;
+  padding: 13px 12px 12px;
+}
+
+.execution-process.completed.collapsed .execution-completion-summary {
+  padding-inline: 2px;
+}
+
+.execution-completion-summary .readable-output {
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.58;
+}
+
+.execution-completion-files {
+  margin: 2px 10px 11px;
+  overflow: hidden;
+  border: 1px solid var(--colorNeutralStroke2);
+  border-radius: 9px;
+  background: var(--colorNeutralBackground1);
+}
+
+.execution-process.completed.collapsed .execution-completion-files {
+  margin-inline: 0;
+  margin-bottom: 0;
+}
