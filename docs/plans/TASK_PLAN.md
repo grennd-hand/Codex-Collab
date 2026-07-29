@@ -93,8 +93,12 @@
   和尺寸持久化回归约束
 - [x] 底部状态栏已按连接、上下文、权限/同步三组布局；窄宽度优先收起上下文，避免状态重叠
 - [x] `v0.1.0-beta.3` 本地候选已生成独立 NSIS/unpacked、SHA-256、SBOM 和 manifest，旧候选未覆盖
-- [ ] 补齐桌面 onboarding、Host restart-required、tray、offline/catching-up、room/member dialogs
-- [ ] 安装 `v0.1.0-beta.3` 后复验分隔条、状态栏并完成 Electron/Monaco 主人完整协作/IDE 旅程
+- [x] 修复损坏托盘 PNG 导致启动停在 `createTray()` 的缺陷；加入安装图标回退、后台提示、
+  单击/双击恢复、“打开主人工作台”和“退出并停止 Host”菜单，以及 PNG 解码回归测试
+- [x] `v0.1.0-beta.4` 已生成并安装；安装 ASAR 与候选哈希一致，主窗口和 Host 启动已核验
+- [ ] 补齐桌面 onboarding、Host restart-required、offline/catching-up、room/member dialogs
+- [ ] 在 `v0.1.0-beta.4` 手工确认关闭、托盘恢复和托盘退出，并完成 Electron/Monaco 主人完整
+  协作/IDE 旅程
 - [x] 未签名 per-user NSIS、unpacked build、SHA-256、SBOM、manifest 和 ASAR/资源凭据扫描
 - [x] 全仓五项门禁、18 工具 MCP probe、Host/Desktop 专项和本地临时 Relay/SQLite 进程级 E2E
 - [ ] 干净 Windows VM、双用户 Pipe、N-1 -> N 升级/卸载和真实双浏览器 UI E2E

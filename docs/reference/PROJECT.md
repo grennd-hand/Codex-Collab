@@ -47,8 +47,9 @@ Named Pipe IPC、Codex/文件 durable receipt，以及 Electron main/preload、�
 需要明确区分：已发布的 `v0.1.0-beta.1` 仍是直接复用网页 Dashboard 的 runtime/security Beta。
 本机已升级安装独立 `DesktopWorkspaceShell`、Renderer entry、全窗口 Fluent 工作台、Activity rail、
 command/status bar 和桌面导航的 `v0.1.0-beta.2`；真实检查发现的项目文件分隔条和底部状态栏问题
-已在 `v0.1.0-beta.3` 修复，并生成通过静态成品校验的本地候选。`beta.3` 尚待安装和交互复验，
-因此仍不把该候选描述为“桌面产品界面已经完成”。后续状态见
+已在后续候选修复。进一步检查确认原内嵌托盘 PNG 损坏，窗口会隐藏但没有可见恢复/退出入口；
+该问题已在 `v0.1.0-beta.4` 修复并完成本机升级安装，安装 ASAR 与候选哈希一致。托盘最终点击
+旅程和其余主人完整旅程仍待人工放行，因此仍不把该候选描述为“桌面产品界面已经完成”。后续状态见
 [主人桌面端实施计划](../plans/DESKTOP_IMPLEMENTATION_PLAN.md)。
 
 当前桌面发布口径是“未签名内部 Beta”：没有自动更新，未宣称通过 SmartScreen；测试者安装时
@@ -217,9 +218,9 @@ scripts/plugin/             插件校验入口
   隐藏面板和根目录释放后的完整恢复仍需桌面 E2E 最终验证；
 - Dashboard Runtime、Relay task 原子校验、结构化 file activity、Host 休眠状态机、Host IPC、
   Electron 安全壳与未签名 NSIS 已通过自动验证；干净 VM、双用户 Pipe、真实 UI E2E 仍待人工验证；
-- 当前本地 Electron Renderer 已使用独立 root 和桌面产品壳；`v0.1.0-beta.2` 已安装并进入真实
-  检查，检查发现的分隔条与状态栏问题已在 `v0.1.0-beta.3` 候选修复；`beta.3` 的安装复验和完整
-  主人旅程仍待放行；已发布的 `v0.1.0-beta.1` 不包含本轮界面；
+- 当前本地 Electron Renderer 已使用独立 root 和桌面产品壳；`v0.1.0-beta.4` 已安装并包含分隔条、
+  状态栏和托盘启动修复；安装哈希、主窗口和 Host 启动已核验，托盘关闭/恢复/退出的最后点击
+  验收及完整主人旅程仍待放行；已发布的 `v0.1.0-beta.1` 不包含本轮界面；
 - 指令 outbox 和文件 receipt 已自动覆盖恢复与 fail-closed 路径；真实进程强杀矩阵仍待人工验证，
   `executing` 文件窗口不会自动重试，需要主人核对；
 - Realtime 断开会触发权威全量 catch-up，但显式 sequence/gap 缺口游标和精确回放尚未实现；
