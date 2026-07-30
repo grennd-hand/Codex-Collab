@@ -6,6 +6,7 @@ COPY packages/protocol/package.json packages/protocol/package.json
 COPY apps/dashboard/package.json apps/dashboard/package.json
 COPY apps/relay/package.json apps/relay/package.json
 COPY plugins/codex-collab/package.json plugins/codex-collab/package.json
+COPY scripts/build/clean-output.mjs scripts/build/clean-output.mjs
 RUN npm ci
 
 COPY packages/protocol packages/protocol

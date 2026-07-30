@@ -16,6 +16,9 @@ coverage
 *.sqlite-*
 docs
 tests
-scripts
+scripts/*
+!scripts/build
+scripts/build/*
+!scripts/build/clean-output.mjs
 **/*.test.ts
 **/*.test.tsx
