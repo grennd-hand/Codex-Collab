@@ -100,10 +100,9 @@ export function presentExecutionEntries(
   if (active) {
     for (let index = latestIndex; index >= 0; index -= 1) {
       const record = records[index];
-      if (record?.role === "command" && record.status === "running") {
-        currentRunningCommandIndex = index;
-        break;
-      }
+      if (record?.role !== "command") continue;
+      if (record.status === "running") currentRunningCommandIndex = index;
+      break;
     }
   }
   for (let index = 0; index < records.length; index += 1) {

@@ -241,6 +241,54 @@ describe("presentExecutionEntry", () => {
     ]);
   });
 
+  it("stops a stale running command after a newer command has completed", () => {
+    const records = presentExecutionEntries(
+      [
+        {
+          id: "stale-command",
+          role: "command",
+          text: [
+            "tool: exec_command",
+            "status: completed",
+            "input:",
+            '{"cmd":"rg --files"}',
+            "output:",
+            "Script running with cell ID 291\nWall time 11.0 seconds",
+          ].join("\n"),
+          createdAt: null,
+        },
+        {
+          id: "newer-command",
+          role: "command",
+          text: [
+            "tool: exec_command",
+            "status: completed",
+            "input:",
+            '{"cmd":"npm test"}',
+            "output:",
+            "Process exited with code 0\nFinal output:\nTests passed",
+          ].join("\n"),
+          createdAt: null,
+        },
+        {
+          id: "commentary-after-command",
+          role: "assistant",
+          phase: "commentary",
+          text: "测试已经完成，继续检查界面。",
+          createdAt: null,
+        },
+      ],
+      true,
+    );
+
+    expect(records.map((record) => record.status)).toEqual([
+      "stopped",
+      "completed",
+      "completed",
+    ]);
+    expect(records[0]?.summary).toBe("后续步骤已继续，该步骤不再运行");
+  });
+
   it("presents commentary as a readable processing update", () => {
     expect(
       presentExecutionEntry({
