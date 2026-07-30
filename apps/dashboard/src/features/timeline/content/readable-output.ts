@@ -3,6 +3,7 @@ import type {
   CodexRecordEntry,
 } from "@codex-collab/protocol";
 import { presentCommandEntry } from "../execution/command-entry-presentation.js";
+import { nestedProcessSession } from "../execution/nested-process-session.js";
 import type {
   PresentExecutionEntryOptions,
   ReadableExecution,
@@ -84,6 +85,50 @@ export function presentExecutionEntries(
   finalized = false,
 ): ReadableExecution[] {
   const records = entries.map((entry) => presentExecutionEntry(entry));
+  const sessionOwners = new Map<string, number>();
+  entries.forEach((entry, index) => {
+    const process = nestedProcessSession(entry);
+    if (!process) return;
+    if (process.kind === "start") {
+      sessionOwners.set(process.sessionId, index);
+      if (active && !finalized) {
+        records[index] = {
+          ...records[index]!,
+          status: "running",
+          summary: "正在执行，结果返回后会自动更新",
+        };
+      }
+      return;
+    }
+
+    const ownerIndex = sessionOwners.get(process.sessionId);
+    if (ownerIndex === undefined) return;
+    const owner = records[ownerIndex]!;
+    const status = process.running
+      ? "running"
+      : process.exitCode === null || process.exitCode === 0
+        ? "completed"
+        : "failed";
+    records[index] = {
+      ...records[index]!,
+      title: owner.title,
+      input: owner.input,
+      status,
+      summary:
+        status === "running"
+          ? "正在执行，结果返回后会自动更新"
+          : status === "failed"
+            ? `执行失败，退出码 ${process.exitCode}`
+            : "执行完成",
+    };
+    if (!process.running) {
+      records[ownerIndex] = {
+        ...owner,
+        status,
+        summary: records[index]!.summary,
+      };
+    }
+  });
   if (finalized) {
     return records.map((record) =>
       record.status === "running"

@@ -289,6 +289,128 @@ describe("presentExecutionEntry", () => {
     expect(records[0]?.summary).toBe("后续步骤已继续，该步骤不再运行");
   });
 
+  it("keeps a nested exec session open under its real command", () => {
+    const records = presentExecutionEntries(
+      [
+        {
+          id: "nested-exec",
+          role: "command",
+          text: [
+            "tool: exec",
+            "status: completed",
+            "input:",
+            "const result = await tools.exec_command({cmd: \"npm run typecheck\"});",
+            "output:",
+            "Script completed",
+            "Output:",
+            "TypeScript is still running",
+            "session=41299",
+          ].join("\n"),
+          createdAt: null,
+        },
+        {
+          id: "commentary",
+          role: "assistant",
+          phase: "commentary",
+          text: "类型检查仍在运行。",
+          createdAt: null,
+        },
+      ],
+      true,
+    );
+
+    expect(records[0]).toMatchObject({
+      status: "running",
+      input: "$ npm run typecheck",
+    });
+    expect(records[1]?.status).toBe("completed");
+  });
+
+  it("keeps the original command visible while polling its nested session", () => {
+    const records = presentExecutionEntries(
+      [
+        {
+          id: "nested-exec",
+          role: "command",
+          text: [
+            "tool: exec",
+            "status: completed",
+            "input:",
+            "const result = await tools.exec_command({cmd: \"npm run typecheck\"});",
+            "output:",
+            "Script completed",
+            "session=41299",
+          ].join("\n"),
+          createdAt: null,
+        },
+        {
+          id: "nested-poll",
+          role: "command",
+          text: [
+            "tool: exec",
+            "status: completed",
+            "input:",
+            "const result = await tools.write_stdin({session_id: 41299, chars: \"\"});",
+            "output:",
+            "Script completed",
+            "Output:",
+            "TypeScript is still running",
+            "session=41299",
+          ].join("\n"),
+          createdAt: null,
+        },
+      ],
+      true,
+    );
+
+    expect(records.map((record) => record.status)).toEqual(["stopped", "running"]);
+    expect(records[1]).toMatchObject({
+      input: "$ npm run typecheck",
+      summary: "正在执行，结果返回后会自动更新",
+    });
+  });
+
+  it("folds a nested command after its continuation returns an exit code", () => {
+    const records = presentExecutionEntries(
+      [
+        {
+          id: "nested-exec",
+          role: "command",
+          text: [
+            "tool: exec",
+            "status: completed",
+            "input:",
+            "const result = await tools.exec_command({cmd: \"npm run typecheck\"});",
+            "output:",
+            "Script completed",
+            "session=41299",
+          ].join("\n"),
+          createdAt: null,
+        },
+        {
+          id: "nested-poll",
+          role: "command",
+          text: [
+            "tool: exec",
+            "status: completed",
+            "input:",
+            "const result = await tools.write_stdin({session_id: 41299, chars: \"\"});",
+            "output:",
+            "Script completed",
+            "Output:",
+            "TypeScript passed",
+            "exit=0",
+          ].join("\n"),
+          createdAt: null,
+        },
+      ],
+      true,
+    );
+
+    expect(records.map((record) => record.status)).toEqual(["completed", "completed"]);
+    expect(records[1]?.input).toBe("$ npm run typecheck");
+  });
+
   it("presents commentary as a readable processing update", () => {
     expect(
       presentExecutionEntry({
