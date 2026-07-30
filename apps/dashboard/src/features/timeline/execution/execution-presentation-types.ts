@@ -8,7 +8,12 @@ export type ReadableBlock =
   | { kind: "quote"; text: string }
   | { kind: "code"; language: string | null; text: string };
 
-export type ExecutionStatus = "running" | "completed" | "failed" | "unknown";
+export type ExecutionStatus =
+  | "running"
+  | "completed"
+  | "failed"
+  | "stopped"
+  | "unknown";
 
 export interface ReadableExecution {
   id: string;
@@ -29,4 +34,3 @@ export interface PresentExecutionEntryOptions {
 }
 
 export type ReadableSourceKind = "markdown" | "code";
-

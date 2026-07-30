@@ -20,6 +20,7 @@ import {
   updateCredential,
 } from "./session-storage.js";
 import { useRealtimeConnection } from "./realtime/useRealtimeConnection.js";
+import { mergeConversationMessages } from "./message-state.js";
 
 type SessionSynchronizationOptions = {
   addMessage: (message: Message) => void;
@@ -124,7 +125,9 @@ export function useSessionSynchronization({
         ),
         refreshWorkspace(),
       ]);
-      setMessages(messageResult.messages);
+      setMessages((current) =>
+        mergeConversationMessages(current, messageResult.messages),
+      );
       setMembers(memberResult.members);
       if (
         meResult.member.status !== member.status ||

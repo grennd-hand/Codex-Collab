@@ -21,7 +21,9 @@ export function ExecutionStepCard({
   historyKey?: string | null;
   onOpenFile?: (target: IdeNavigationTarget) => void;
 }) {
-  const [expanded, setExpanded] = useState(record.status === "failed");
+  const [expanded, setExpanded] = useState(
+    record.status === "failed" || record.status === "stopped",
+  );
   const [outputCopied, setOutputCopied] = useState(false);
   const contentId = useId();
   const outputNeedsViewport = executionOutputNeedsViewport(record.output);
@@ -42,7 +44,9 @@ export function ExecutionStepCard({
       .replaceAll("`", "") ?? record.summary;
 
   useEffect(() => {
-    if (record.status === "failed") setExpanded(true);
+    if (record.status === "failed" || record.status === "stopped") {
+      setExpanded(true);
+    }
   }, [record.status]);
 
   useEffect(() => {
@@ -116,6 +120,8 @@ export function ExecutionStepCard({
                   ? "正在编辑文件"
                   : record.status === "failed"
                     ? "文件编辑失败"
+                    : record.status === "stopped"
+                      ? "文件编辑已停止"
                     : `编辑了 ${record.fileChanges.length} 个文件`
               }
               defaultExpanded

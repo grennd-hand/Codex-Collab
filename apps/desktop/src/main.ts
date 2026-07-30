@@ -22,7 +22,10 @@ import {
 } from "./credentials/credential-store.js";
 import { createDesktopProtocolHandler } from "./security/custom-protocol.js";
 import { resolveDesktopConfig } from "./app/desktop-config.js";
-import { resolveDesktopHostResources } from "./host/desktop-host-resources.js";
+import {
+  resolveDesktopHostResources,
+  resolveSharedHostStateDirectory,
+} from "./host/desktop-host-resources.js";
 import { createElectronHostWorkerLauncher } from "./host/electron-host-worker-launcher.js";
 import { DesktopHostLifecycleControl } from "./host/host-lifecycle-control.js";
 import { registerDesktopIpc } from "./ipc/ipc-handlers.js";
@@ -196,7 +199,7 @@ if (!app.requestSingleInstanceLock()) {
     );
     const hostResources = resolveDesktopHostResources({
       appPath: app.getAppPath(),
-      userDataPath: app.getPath("userData"),
+      hostStateDirectory: resolveSharedHostStateDirectory(),
       resourcesPath: process.resourcesPath,
       isPackaged: app.isPackaged,
     });

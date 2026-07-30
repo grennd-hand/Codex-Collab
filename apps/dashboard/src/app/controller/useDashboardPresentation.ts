@@ -6,6 +6,7 @@ import type { useComposerController } from "../../features/composer/useComposerC
 import { collectExecutionFileChanges } from "../../features/timeline/content/readable-output.js";
 import {
   buildUnifiedTimeline,
+  latestTimelineTurnHasFinalAnswer,
   selectCodexMessagesForThread,
   splitConversationMessages,
 } from "../../features/timeline/history/imported-timeline.js";
@@ -58,6 +59,7 @@ export function useDashboardPresentation({
   const executionPhase = codexExecutionPhase(
     currentThreadMessages,
     workspaceSummary?.codexRuntimeStatus,
+    latestTimelineTurnHasFinalAnswer(codexTimeline),
   );
   const latestCodexTimelineItem = codexTimeline.at(-1);
   const workspaceFileAccess = memberWorkspaceFileAccess(member);

@@ -90,7 +90,10 @@ export function ExecutionProcess({
   useLayoutEffect(() => {
     const previousStatus = previousStatusRef.current;
     previousStatusRef.current = presentation.status;
-    if (previousStatus !== presentation.status && presentation.status === "failed") {
+    if (
+      previousStatus !== presentation.status &&
+      (presentation.status === "failed" || presentation.status === "stopped")
+    ) {
       setManualExpanded(null);
     }
   }, [presentation.status]);

@@ -101,8 +101,13 @@
 - [x] 修复损坏托盘 PNG 导致启动停在 `createTray()` 的缺陷；加入安装图标回退、后台提示、
   单击/双击恢复、“打开主人工作台”和“退出并停止 Host”菜单，以及 PNG 解码回归测试
 - [x] `v0.1.0-beta.4` 已生成并安装；安装 ASAR 与候选哈希一致，主窗口和 Host 启动已核验
+- [x] `v0.1.0-beta.5` 已加入 Explorer-only 双向缩放修复并完成本机安装
+- [x] `v0.1.0-beta.6` 已修复最终回复后仍显示全局运行转圈、陈旧消息快照覆盖终态，以及
+  Desktop/MCP 分离 Host 状态目录导致双 Writer；本机安装后 lock/endpoint 已收敛到唯一 Host PID
+- [x] 已修复任务被停止但缺少 `task_complete` 时旧命令逐行永久转圈：非活动任务未决步骤显示
+  “已停止”，活动任务只保留最后一个真实活动步骤的 Spinner；旧 Beta 6 安装候选等待覆盖
 - [ ] 补齐桌面 onboarding、Host restart-required、offline/catching-up、room/member dialogs
-- [ ] 在 `v0.1.0-beta.4` 手工确认关闭、托盘恢复和托盘退出，并完成 Electron/Monaco 主人完整
+- [ ] 在 `v0.1.0-beta.6` 手工确认关闭、托盘恢复和托盘退出，并完成 Electron/Monaco 主人完整
   协作/IDE 旅程
 - [x] 未签名 per-user NSIS、unpacked build、SHA-256、SBOM、manifest 和 ASAR/资源凭据扫描
 - [x] 全仓五项门禁、18 工具 MCP probe、Host/Desktop 专项和本地临时 Relay/SQLite 进程级 E2E

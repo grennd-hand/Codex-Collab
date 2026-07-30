@@ -356,6 +356,40 @@ export function buildUnifiedTimeline(
     .map((candidate) => candidate.item);
 }
 
+export function latestTimelineTurnHasFinalAnswer(
+  items: readonly UnifiedTimelineItem[],
+): boolean {
+  let latestTurnStartIndex = -1;
+  let latestFinalAnswerIndex = -1;
+
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+    if (!item) continue;
+    if (
+      (item.kind === "shared" && item.message.kind === "codex_prompt") ||
+      (item.kind === "imported" &&
+        item.item.kind === "message" &&
+        item.item.entry.role === "user")
+    ) {
+      latestTurnStartIndex = index;
+      continue;
+    }
+    if (
+      item.kind === "imported" &&
+      item.item.kind === "message" &&
+      item.item.entry.role === "assistant" &&
+      item.item.entry.phase !== "commentary"
+    ) {
+      latestFinalAnswerIndex = index;
+    }
+  }
+
+  return (
+    latestFinalAnswerIndex >= 0 &&
+    latestFinalAnswerIndex > latestTurnStartIndex
+  );
+}
+
 export function executionDetailLabel(entries: CodexRecordEntry[]): string {
   const processCount = entries.filter(
     (entry) => entry.role === "reasoning" || entry.phase === "commentary",

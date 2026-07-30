@@ -79,6 +79,26 @@ describe("Codex execution controls", () => {
     expect(codexExecutionPhase([], "running")).toBe("running");
   });
 
+  it("lets a final answer settle a stale global runtime state", () => {
+    expect(
+      codexExecutionPhase(
+        [command("codex_prompt", "submitted")],
+        "running",
+        true,
+      ),
+    ).toBe("idle");
+    expect(
+      codexExecutionPhase(
+        [
+          command("codex_prompt", "submitted"),
+          command("codex_stop", "submitted"),
+        ],
+        "running",
+        true,
+      ),
+    ).toBe("idle");
+  });
+
   it("allows an approved invited editor to stop an active shared task", () => {
     expect(canMemberStopCodex(member("editor"), "running")).toBe(true);
     expect(canMemberStopCodex(member("editor"), "queued")).toBe(true);
@@ -148,6 +168,18 @@ describe("Codex client-style task process", () => {
       status: "failed",
       title: "任务过程有错误",
       progress: "1 个失败",
+      defaultExpanded: true,
+    });
+    expect(
+      executionProcessPresentation([
+        { status: "completed", title: "读取文件" },
+        { status: "stopped", title: "运行测试" },
+      ]),
+    ).toMatchObject({
+      status: "stopped",
+      title: "已停止",
+      detail: "运行测试",
+      progress: "1 个未完成",
       defaultExpanded: true,
     });
     expect(
@@ -252,6 +284,7 @@ describe("Codex client-style task process", () => {
 
     const running = renderToStaticMarkup(
       createElement(ExecutionProcess, {
+        active: true,
         entries: [
           {
             id: "running",
@@ -270,8 +303,26 @@ describe("Codex client-style task process", () => {
     expect(running).toContain('title="npm test"');
     expect(running).not.toContain("execution-output-viewer");
 
+    const stopped = renderToStaticMarkup(
+      createElement(ExecutionProcess, {
+        entries: [
+          {
+            id: "stopped",
+            role: "command",
+            text: "tool: exec_command\nstatus: running\ninput:\n{\"cmd\":\"npm test\"}",
+            createdAt: null,
+          },
+        ],
+      }),
+    );
+    expect(stopped).toContain("execution-process stopped expanded");
+    expect(stopped).toContain("任务已停止，该步骤未收到完成结果");
+    expect(stopped).toContain("已停止");
+    expect(stopped).not.toContain("fui-Spinner");
+
     const anchoredRunning = renderToStaticMarkup(
       createElement(ExecutionProcess, {
+        active: true,
         historyKey: "execution-page-group",
         historyEntryKeys: ["history-step-1"],
         entries: [

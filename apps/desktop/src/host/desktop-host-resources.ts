@@ -1,4 +1,5 @@
-import { isAbsolute, join, resolve } from "node:path";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
 const HOST_WORKER_RELATIVE_PATH = join("dist", "workspace-sync-worker.js");
 const HOST_IPC_MODULE_RELATIVE_PATH = join("dist", "host", "ipc", "public.js");
@@ -18,7 +19,7 @@ const DEVELOPMENT_BROKER_RELATIVE_PATH = join(
 
 export interface DesktopHostPathInputs {
   appPath: string;
-  userDataPath: string;
+  hostStateDirectory: string;
   resourcesPath: string;
   isPackaged: boolean;
 }
@@ -40,7 +41,7 @@ export function resolveDesktopHostResources(
   inputs: DesktopHostPathInputs,
 ): DesktopHostResources {
   assertAbsolutePath(inputs.appPath, "appPath");
-  assertAbsolutePath(inputs.userDataPath, "userDataPath");
+  assertAbsolutePath(inputs.hostStateDirectory, "hostStateDirectory");
   assertAbsolutePath(inputs.resourcesPath, "resourcesPath");
 
   const hostRoot = inputs.isPackaged
@@ -55,9 +56,22 @@ export function resolveDesktopHostResources(
     workerPath,
     hostIpcModulePath: join(hostRoot, HOST_IPC_MODULE_RELATIVE_PATH),
     brokerPath,
-    stateDirectory: join(inputs.userDataPath, "host"),
+    stateDirectory: resolve(inputs.hostStateDirectory),
     workingDirectory: hostRoot,
   };
+}
+
+export function resolveSharedHostStateDirectory(
+  environment: NodeJS.ProcessEnv = process.env,
+  homeDirectory = homedir(),
+): string {
+  const profilePath = resolve(
+    environment.CODEX_COLLAB_STATE_FILE ??
+      join(homeDirectory, ".codex-collab", "state.json"),
+  );
+  return resolve(
+    environment.CODEX_COLLAB_HOST_STATE_DIR ?? dirname(profilePath),
+  );
 }
 
 function assertAbsolutePath(value: string, label: string): void {

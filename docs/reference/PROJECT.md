@@ -52,13 +52,16 @@ Named Pipe IPC、Codex/文件 durable receipt，以及 Electron main/preload、�
 本机已升级安装独立 `DesktopWorkspaceShell`、Renderer entry、全窗口 Fluent 工作台、Activity rail、
 command/status bar 和桌面导航的 `v0.1.0-beta.2`；真实检查发现的项目文件分隔条和底部状态栏问题
 已在后续候选修复。进一步检查确认原内嵌托盘 PNG 损坏，窗口会隐藏但没有可见恢复/退出入口；
-该问题已在 `v0.1.0-beta.4` 修复并完成本机升级安装，安装 ASAR 与候选哈希一致。托盘最终点击
-旅程和其余主人完整旅程仍待人工放行，因此仍不把该候选描述为“桌面产品界面已经完成”。后续状态见
+该问题已在 `v0.1.0-beta.4` 修复；Explorer 双向缩放进入 `v0.1.0-beta.5`。当前本机已升级到
+`v0.1.0-beta.6`：最终回复会终止对应 turn 的转圈，陈旧消息刷新不能回退 `completed`，Desktop
+与 MCP 也已统一连接本机 profile 下的唯一 Host。后续源码又补齐“任务已停止但无 task_complete”
+的逐步终态：旧命令显示“已停止”，只有当前最后一步能继续转圈；原安装候选等待同版本覆盖。托盘最终点击旅程
+和其余主人完整旅程仍待人工放行，因此仍不把该候选描述为“桌面产品界面已经完成”。后续状态见
 [主人桌面端实施计划](../plans/DESKTOP_IMPLEMENTATION_PLAN.md)。
 
 当前桌面发布口径是“未签名内部 Beta”：没有自动更新，未宣称通过 SmartScreen；测试者安装时
 应预期 Windows 可能显示 SmartScreen 警告。本批只改本地仓库，Guest 完全未触碰，也未作为
-桌面端验证环境；最新协作者实时反馈修复尚未部署到 Primary 或重新安装桌面候选。详细状态见
+桌面端验证环境；最新协作者实时反馈修复已进入本机 Beta 6，但尚未部署到 Primary/Guest。详细状态见
 [主人桌面端实施计划](../plans/DESKTOP_IMPLEMENTATION_PLAN.md)。
 
 这代表“可邀请真实测试者验证 MVP”，不代表已经完成商业生产的全部加固。未完成项在

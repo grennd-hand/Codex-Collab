@@ -12,6 +12,7 @@ import {
 } from "../../features/session/session-storage.js";
 import { isCredentialRejected } from "../../shared/api/api-client.js";
 import type { ConnectionState } from "../../features/session/connection.js";
+import { mergeConversationMessages } from "../../features/session/message-state.js";
 
 type DashboardSessionStateOptions = {
   initialCredential: SavedCredential | null;
@@ -142,13 +143,7 @@ export function useDashboardSessionState({
     [credential],
   );
   const addMessage = useCallback((next: Message) => {
-    setMessages((current) => {
-      const index = current.findIndex((message) => message.id === next.id);
-      if (index === -1) return [...current, next];
-      const updated = [...current];
-      updated[index] = next;
-      return updated;
-    });
+    setMessages((current) => mergeConversationMessages(current, [next]));
   }, []);
 
   return {

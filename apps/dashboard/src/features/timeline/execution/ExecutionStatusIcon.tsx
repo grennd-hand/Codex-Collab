@@ -1,5 +1,11 @@
 import { Spinner } from "@fluentui/react-components";
-import { CheckmarkCircleRegular, DismissRegular, DocumentRegular, HistoryRegular } from "@fluentui/react-icons";
+import {
+  CheckmarkCircleRegular,
+  DismissRegular,
+  DocumentRegular,
+  HistoryRegular,
+  StopRegular,
+} from "@fluentui/react-icons";
 import { useEffect, useState } from "react";
 import type { ExecutionStatus } from "../content/readable-output.js";
 import { elapsedExecutionLabel } from "./execution-process-presentation.js";
@@ -25,6 +31,6 @@ export function ExecutionStatusIcon({
   if (status === "running") return <Spinner size="tiny" />;
   if (status === "completed") return <CheckmarkCircleRegular />;
   if (status === "failed") return <DismissRegular />;
+  if (status === "stopped") return <StopRegular />;
   return fallback === "command" ? <DocumentRegular /> : <HistoryRegular />;
 }
-

@@ -72,6 +72,7 @@ export function workspaceNeedsConversationLoad(
 export function codexExecutionPhase(
   messages: readonly Pick<Message, "kind" | "deliveryStatus">[],
   runtimeStatus: CodexRuntimeStatus | null | undefined,
+  terminalHistoryObserved = false,
 ): CodexExecutionPhase {
   let latestPromptIndex = -1;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -79,6 +80,10 @@ export function codexExecutionPhase(
       latestPromptIndex = index;
       break;
     }
+  }
+
+  if (terminalHistoryObserved) {
+    return "idle";
   }
 
   for (let index = messages.length - 1; index > latestPromptIndex; index -= 1) {

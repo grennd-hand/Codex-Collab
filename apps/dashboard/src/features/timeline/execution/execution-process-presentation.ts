@@ -15,6 +15,8 @@ export function executionStatusLabel(status: ExecutionStatus): string {
       return "已完成";
     case "failed":
       return "失败";
+    case "stopped":
+      return "已停止";
     default:
       return "已记录";
   }
@@ -43,6 +45,7 @@ export function executionProcessPresentation(
 ): ExecutionProcessPresentation {
   const running = records.filter((record) => record.status === "running");
   const failed = records.filter((record) => record.status === "failed");
+  const stopped = records.filter((record) => record.status === "stopped");
   const completedCount = records.filter(
     (record) => record.status === "completed",
   ).length;
@@ -96,6 +99,17 @@ export function executionProcessPresentation(
       progress: hasRoleDetails
         ? `${failed.length} 个失败；${stepBreakdown}`
         : `${failed.length} 个失败`,
+      defaultExpanded: true,
+    };
+  }
+  if (stopped.length > 0) {
+    return {
+      status: "stopped",
+      title: "已停止",
+      detail: stopped.at(-1)?.title ?? "任务未继续执行",
+      progress: hasRoleDetails
+        ? `${stopped.length} 个未完成；${stepBreakdown}`
+        : `${stopped.length} 个未完成`,
       defaultExpanded: true,
     };
   }

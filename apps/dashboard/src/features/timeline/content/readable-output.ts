@@ -95,12 +95,35 @@ export function presentExecutionEntries(
         : record,
     );
   }
-  if (!active || records.some((record) => record.status === "running")) {
-    return records;
+  const latestIndex = records.length - 1;
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index]!;
+    if (record.status !== "running") continue;
+    const isCurrentStep = active && index === latestIndex;
+    if (!isCurrentStep) {
+      records[index] = {
+        ...record,
+        status: "stopped",
+        summary: active
+          ? "后续步骤已继续，该步骤不再运行"
+          : "任务已停止，该步骤未收到完成结果",
+        output:
+          record.output?.replace(
+            "后台任务仍在运行，结果会继续同步",
+            active
+              ? "该后台步骤已被后续处理取代"
+              : "该后台步骤已随任务停止",
+          ) ?? null,
+      };
+    }
   }
 
-  const latestIndex = entries.length - 1;
-  if (latestIndex >= 0 && entries[latestIndex]?.role === "reasoning") {
+  if (
+    active &&
+    latestIndex >= 0 &&
+    records[latestIndex]?.status !== "running" &&
+    entries[latestIndex]?.role === "reasoning"
+  ) {
     records[latestIndex] = presentExecutionEntry(entries[latestIndex]!, {
       active: true,
     });

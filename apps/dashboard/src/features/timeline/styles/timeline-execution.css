@@ -16,6 +16,10 @@
   border-color: var(--colorStatusDangerBorder1);
 }
 
+.execution-process.stopped {
+  border-color: var(--colorStatusWarningBorder1);
+}
+
 .execution-process.completed.collapsed {
   margin-top: 0;
   margin-bottom: 6px;
@@ -124,6 +128,11 @@
   background: var(--colorStatusDangerBackground1);
 }
 
+.execution-process.stopped .execution-process-status-icon {
+  color: var(--colorStatusWarningForeground1);
+  background: var(--colorStatusWarningBackground1);
+}
+
 .execution-process-title {
   min-width: 0;
   flex: 1;
@@ -229,6 +238,10 @@
   color: var(--colorStatusDangerForeground1);
 }
 
+.execution-step.stopped .execution-step-marker {
+  color: var(--colorStatusWarningForeground1);
+}
+
 .execution-step-disclosure > strong {
   flex: 0 0 auto;
   color: var(--colorNeutralForeground2);
@@ -280,6 +293,10 @@
 
 .execution-step.failed .execution-step-content {
   border-left-color: var(--colorStatusDangerBorder1);
+}
+
+.execution-step.stopped .execution-step-content {
+  border-left-color: var(--colorStatusWarningBorder1);
 }
 
 .execution-step-content > .ide-file-changes {
@@ -454,4 +471,8 @@
 
 .execution-output-result.failed {
   color: var(--colorStatusDangerForeground1);
+}
+
+.execution-output-result.stopped {
+  color: var(--colorStatusWarningForeground1);
 }

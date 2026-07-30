@@ -164,6 +164,57 @@ describe("presentExecutionEntry", () => {
     });
   });
 
+  it("marks unresolved steps as stopped after their task is no longer active", () => {
+    expect(
+      presentExecutionEntries([
+        {
+          id: "stopped-command",
+          role: "command",
+          text: [
+            "tool: exec",
+            "status: completed",
+            "input:",
+            'const result = await tools.exec_command({"cmd":"npm run package:desktop"});',
+            "output:",
+            "Script running with cell ID 42",
+            "Wall time 11.0 seconds",
+          ].join("\n"),
+          createdAt: "2026-07-30T00:00:00.000Z",
+        },
+      ])[0],
+    ).toMatchObject({
+      status: "stopped",
+      summary: "任务已停止，该步骤未收到完成结果",
+      output: "该后台步骤已随任务停止\n\n耗时：11.0 秒",
+    });
+  });
+
+  it("keeps only the current final step running in an active task", () => {
+    const records = presentExecutionEntries(
+      [
+        {
+          id: "old-command",
+          role: "command",
+          text: "tool: exec_command\nstatus: running\ninput:\n{\"cmd\":\"npm test\"}",
+          createdAt: null,
+        },
+        {
+          id: "current-command",
+          role: "command",
+          text: "tool: exec_command\nstatus: running\ninput:\n{\"cmd\":\"npm run build\"}",
+          createdAt: null,
+        },
+      ],
+      true,
+    );
+
+    expect(records.map((record) => record.status)).toEqual([
+      "stopped",
+      "running",
+    ]);
+    expect(records[0]?.summary).toBe("后续步骤已继续，该步骤不再运行");
+  });
+
   it("presents commentary as a readable processing update", () => {
     expect(
       presentExecutionEntry({
