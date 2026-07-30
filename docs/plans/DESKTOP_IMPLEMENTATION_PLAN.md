@@ -24,8 +24,9 @@ IDE/Codex 分隔条不易发现、底部状态信息挤在单一行。`v0.1.0-be
 
 ### 当前批次边界
 
-- [x] 只修改本地仓库；没有 SSH、部署、重启或修改 Primary/Guest Relay。
-- [x] Guest 实例完全未触碰：未 SSH、未重启、未重建、未改数据卷或共享 Caddy，也未用作测试环境。
+- [x] 桌面开发、打包和本机安装阶段没有部署服务器；用户随后明确要求部署时，只更新 Primary Relay。
+- [x] Guest 实例未重启、未重建、未改数据卷或共享 Caddy，也未用作测试环境；发布前后只做只读健康、
+  容器 ID、release 和首页 hash 核对。
 - [x] Dashboard 已拆出 browser/desktop Runtime；Codex 草稿、附件与 IDE tabs/dirty state 按 task 隔离。
 - [x] Relay 在创建 `codex_prompt` 时原子校验 `expectedWorkspaceThreadId`，拒绝 task 切换竞态。
 - [x] file activity 已采用结构化协议，并贯通 Host 导入、Relay 校验、timeline 与 IDE 展示。
@@ -62,7 +63,8 @@ IDE/Codex 分隔条不易发现、底部状态信息挤在单一行。`v0.1.0-be
 - [x] `v0.1.0-beta.6` 已生成 NSIS/unpacked、SHA-256、SBOM 和 manifest，完成本机升级安装；
   最终安装 ASAR SHA-256 为 `14B73FCD3C7DFED84225849075B22EDE88F05A0A1647F15E4FA6E523279854D3`，
   manifest 对应提交 `6e9636d`，Host lock/endpoint 再次收敛到同一 PID。
-- [ ] 上述实时反馈修复尚未部署 Primary/Guest；本批继续保持服务器不变。
+- [x] 上述实时反馈修复已于 2026-07-31 随提交 `6904723` 部署到 Primary；公网闭环验证协作者可实时
+  收到 `submitted`、assistant history 和 `completed`，刷新后终态仍为 `completed`。Guest 明确保留旧版。
 - [ ] 在已安装 `v0.1.0-beta.6` 上手工点击关闭、托盘恢复和托盘退出，完成最后的 Windows Shell 验收。
 - [ ] 在桌面产品壳完成并通过真实安装验收前，不再宣称“整个桌面端已经完成”。
 - [ ] 打包后 Electron 的完整交互旅程、两个真实浏览器 context 和干净 Windows 11 x64 VM

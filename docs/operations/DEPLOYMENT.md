@@ -165,6 +165,21 @@ docker compose \
 只有 Caddy 配置本身发生变化且明确授权时才更新 Caddy。回滚后重新核对 release marker、
 schema、资产 hash、HTTPS 和真实登录/邀请流程，并证明 Guest 容器、卷和首页 hash 未改变。
 
+### 7.1 2026-07-31 Primary 发布记录
+
+- 源提交：`69047231cd574c4f1255046c3eab06734a84bf5a`；不可变 release：
+  `/opt/codex-collab/releases/6904723-20260730T211622Z/app`。
+- 源归档 SHA-256：`f5f3f0741ed118c4ef24739e151475777277a077fcae4b0dbad6fe7871f6c816`。
+- 切换前一致性备份：`/opt/codex-collab/backups/relay-data-20260730T212400Z.tar.gz`；旧 release
+  `/opt/codex-collab/releases/d10f20f/app` 和旧镜像回滚标签保留。
+- Primary 容器切换为 `8040771316db` 并通过 Docker health 与公网 `/health`；首页 SHA-256 切换为
+  `44e6444feca4c2b6d34b4a6e88e2679041122b7679006d5fc1fdbc317c724da9`，入口引用的 5 个资产均返回成功。
+- 公网临时会话完成邀请、加入、批准即 `workspace-write`、Realtime `submitted`、assistant history、
+  `completed` 和刷新后终态持久化闭环。
+- Guest 仍为 release `d10f20f`、容器 `d74f3456a2a3`、首页 SHA-256
+  `727780650530aae367adc8b29dd7045c87d691fa59355541760489a8cdb35195`；Caddy 容器仍为
+  `055f22e85bd9`。两者未重启、未重建、未改配置或数据卷。
+
 ## 8. 数据备份
 
 当前版本尚未自动备份，也没有仓库内可执行的恢复流程或恢复报告，因此不满足生产恢复要求。

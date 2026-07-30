@@ -112,6 +112,8 @@
   协作/IDE 旅程
 - [x] 未签名 per-user NSIS、unpacked build、SHA-256、SBOM、manifest 和 ASAR/资源凭据扫描
 - [x] 全仓五项门禁、18 工具 MCP probe、Host/Desktop 专项和本地临时 Relay/SQLite 进程级 E2E
+- [x] 2026-07-31 将提交 `6904723` 部署到 Primary Relay；部署前创建一致性卷备份，公网验证入口资产、
+  邀请/批准即写、Realtime `submitted -> history -> completed` 和刷新后终态；Guest 与 Caddy 容器未变化
 - [ ] 干净 Windows VM、双用户 Pipe、N-1 -> N 升级/卸载和真实双浏览器 UI E2E
 
 详细实施顺序、当前/计划边界见

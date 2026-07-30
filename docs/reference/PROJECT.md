@@ -62,8 +62,9 @@ SHA-256 为 `14B73FCD3C7DFED84225849075B22EDE88F05A0A1647F15E4FA6E523279854D3`�
 [主人桌面端实施计划](../plans/DESKTOP_IMPLEMENTATION_PLAN.md)。
 
 当前桌面发布口径是“未签名内部 Beta”：没有自动更新，未宣称通过 SmartScreen；测试者安装时
-应预期 Windows 可能显示 SmartScreen 警告。本批只改本地仓库，Guest 完全未触碰，也未作为
-桌面端验证环境；最新协作者实时反馈修复已进入本机 Beta 6，但尚未部署到 Primary/Guest。详细状态见
+应预期 Windows 可能显示 SmartScreen 警告。最新协作者实时反馈修复已进入本机 Beta 6，并于
+2026-07-31 随提交 `6904723` 部署到 Primary Relay；Guest 保持原 release、原容器和原首页资产，
+共享 Caddy 未重启，也未作为桌面端验证环境。详细状态见
 [主人桌面端实施计划](../plans/DESKTOP_IMPLEMENTATION_PLAN.md)。
 
 这代表“可邀请真实测试者验证 MVP”，不代表已经完成商业生产的全部加固。未完成项在
