@@ -1,6 +1,6 @@
 import { Button } from "@fluentui/react-components";
 import { ChevronDownRegular, CopyRegular } from "@fluentui/react-icons";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   IdeFileChanges,
   navigationTargetForFileChange,
@@ -10,6 +10,10 @@ import { copyText } from "../../../shared/clipboard.js";
 import { executionOutputNeedsViewport, type ReadableExecution } from "../content/readable-output.js";
 import { ReadableOutput, ReadableSource } from "../content/ReadableOutput.js";
 import { executionStatusLabel, timeLabel } from "./execution-process-presentation.js";
+import {
+  executionStepDefaultExpanded,
+  resolveExecutionStepExpanded,
+} from "./execution-stream-presentation.js";
 import { ExecutionStatusIcon } from "./ExecutionStatusIcon.js";
 
 export function ExecutionStepCard({
@@ -21,8 +25,12 @@ export function ExecutionStepCard({
   historyKey?: string | null;
   onOpenFile?: (target: IdeNavigationTarget) => void;
 }) {
-  const [expanded, setExpanded] = useState(
-    record.status === "failed" || record.status === "stopped",
+  const defaultExpanded = executionStepDefaultExpanded(record);
+  const [manualExpanded, setManualExpanded] = useState<boolean | null>(null);
+  const previousStatusRef = useRef(record.status);
+  const expanded = resolveExecutionStepExpanded(
+    defaultExpanded,
+    manualExpanded,
   );
   const [outputCopied, setOutputCopied] = useState(false);
   const contentId = useId();
@@ -44,8 +52,10 @@ export function ExecutionStepCard({
       .replaceAll("`", "") ?? record.summary;
 
   useEffect(() => {
-    if (record.status === "failed" || record.status === "stopped") {
-      setExpanded(true);
+    const previousStatus = previousStatusRef.current;
+    previousStatusRef.current = record.status;
+    if (record.status === "failed" && previousStatus !== "failed") {
+      setManualExpanded(null);
     }
   }, [record.status]);
 
@@ -66,7 +76,7 @@ export function ExecutionStepCard({
         aria-controls={contentId}
         aria-expanded={expanded}
         aria-label={`${expanded ? "收起" : "展开"} ${record.title}`}
-        onClick={() => setExpanded((current) => !current)}
+        onClick={() => setManualExpanded(!expanded)}
       >
         <span className="execution-step-marker" aria-hidden="true">
           <ExecutionStatusIcon

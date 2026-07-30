@@ -296,12 +296,12 @@ describe("Codex client-style task process", () => {
       }),
     );
     expect(running).toContain('aria-expanded="true"');
-    expect(running).toContain("折叠任务过程");
+    expect(running).toContain("execution-process running expanded streaming");
     expect(running).toContain('role="status"');
-    expect(running).toContain('aria-label="展开 运行测试"');
-    expect(running).toContain('class="execution-step command running collapsed"');
+    expect(running).toContain('aria-label="收起 运行测试"');
+    expect(running).toContain('class="execution-step command running expanded"');
     expect(running).toContain('title="npm test"');
-    expect(running).not.toContain("execution-output-viewer");
+    expect(running).toContain("正在执行，结果返回后会自动更新");
 
     const stopped = renderToStaticMarkup(
       createElement(ExecutionProcess, {
@@ -316,7 +316,8 @@ describe("Codex client-style task process", () => {
       }),
     );
     expect(stopped).toContain("execution-process stopped expanded");
-    expect(stopped).toContain("任务已停止，该步骤未收到完成结果");
+    expect(stopped).toContain('class="execution-step command stopped collapsed"');
+    expect(stopped).toContain('aria-label="展开 运行测试"');
     expect(stopped).toContain("已停止");
     expect(stopped).not.toContain("fui-Spinner");
 

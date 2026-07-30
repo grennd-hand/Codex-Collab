@@ -96,10 +96,20 @@ export function presentExecutionEntries(
     );
   }
   const latestIndex = records.length - 1;
+  let currentRunningCommandIndex = -1;
+  if (active) {
+    for (let index = latestIndex; index >= 0; index -= 1) {
+      const record = records[index];
+      if (record?.role === "command" && record.status === "running") {
+        currentRunningCommandIndex = index;
+        break;
+      }
+    }
+  }
   for (let index = 0; index < records.length; index += 1) {
     const record = records[index]!;
     if (record.status !== "running") continue;
-    const isCurrentStep = active && index === latestIndex;
+    const isCurrentStep = active && index === currentRunningCommandIndex;
     if (!isCurrentStep) {
       records[index] = {
         ...record,
@@ -120,6 +130,7 @@ export function presentExecutionEntries(
 
   if (
     active &&
+    currentRunningCommandIndex < 0 &&
     latestIndex >= 0 &&
     records[latestIndex]?.status !== "running" &&
     entries[latestIndex]?.role === "reasoning"

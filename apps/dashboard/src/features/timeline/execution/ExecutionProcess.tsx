@@ -12,6 +12,7 @@ import {
   presentExecutionEntries,
 } from "../content/readable-output.js";
 import { ExecutionStepCard } from "./ExecutionStepCard.js";
+import { ExecutionStream } from "./ExecutionStream.js";
 import {
   completedExecutionDurationLabel,
   executionProcessPresentation,
@@ -86,6 +87,7 @@ export function ExecutionProcess({
       : expanded
         ? "折叠任务过程"
         : "展开任务过程";
+  const streaming = active && !finalized && presentation.status === "running";
 
   useLayoutEffect(() => {
     const previousStatus = previousStatusRef.current;
@@ -101,7 +103,7 @@ export function ExecutionProcess({
     <section
       className={`execution-process ${presentation.status} ${
         expanded ? "expanded" : "collapsed"
-      }${completion ? " has-completion" : ""}`}
+      }${completion ? " has-completion" : ""}${streaming ? " streaming" : ""}`}
       data-history-key={historyKey}
       data-history-anchor={expanded ? undefined : historyKey}
       aria-label={`${sourceLabel ? `${sourceLabel}，` : ""}${
@@ -117,51 +119,60 @@ export function ExecutionProcess({
         {presentation.title}：{completedDuration ? `耗时 ${completedDuration}，` : ""}
         {presentation.detail}，{presentation.progress}
       </span>
-      <header className="execution-process-heading">
-        <button
-          type="button"
-          aria-controls={contentId}
-          aria-expanded={expanded}
-          aria-label={`${presentation.title}：${presentation.detail}，${
-            presentation.progress
-          }，${disclosureAction}`}
-          onClick={() => setManualExpanded(!expanded)}
-        >
-          <span className="execution-process-status-icon" aria-hidden="true">
-            <ExecutionStatusIcon
-              status={presentation.status}
-              fallback="reasoning"
+      {!streaming ? (
+        <header className="execution-process-heading">
+          <button
+            type="button"
+            aria-controls={contentId}
+            aria-expanded={expanded}
+            aria-label={`${presentation.title}：${presentation.detail}，${
+              presentation.progress
+            }，${disclosureAction}`}
+            onClick={() => setManualExpanded(!expanded)}
+          >
+            <span className="execution-process-status-icon" aria-hidden="true">
+              <ExecutionStatusIcon
+                status={presentation.status}
+                fallback="reasoning"
+              />
+            </span>
+            <span className="execution-process-title">
+              <strong>
+                {sourceLabel &&
+                !(presentation.status === "completed" && completion)
+                  ? `${sourceLabel}：${presentation.title}`
+                  : presentation.title}
+              </strong>
+              {presentation.status !== "completed" || expanded ? (
+                <span>{presentation.detail}</span>
+              ) : null}
+            </span>
+            <span className="execution-process-meta">
+              {runningStartedAt ? (
+                <ExecutionElapsedTime startedAt={runningStartedAt} />
+              ) : null}
+              {completedDuration ? <span>{completedDuration}</span> : null}
+              {presentation.status !== "completed" ||
+              expanded ||
+              !completedDuration ? (
+                <span>{presentation.progress}</span>
+              ) : null}
+            </span>
+            <ChevronDownRegular
+              className="execution-process-chevron"
+              aria-hidden="true"
             />
-          </span>
-          <span className="execution-process-title">
-            <strong>
-              {sourceLabel &&
-              !(presentation.status === "completed" && completion)
-                ? `${sourceLabel}：${presentation.title}`
-                : presentation.title}
-            </strong>
-            {presentation.status !== "completed" || expanded ? (
-              <span>{presentation.detail}</span>
-            ) : null}
-          </span>
-          <span className="execution-process-meta">
-            {runningStartedAt ? (
-              <ExecutionElapsedTime startedAt={runningStartedAt} />
-            ) : null}
-            {completedDuration ? <span>{completedDuration}</span> : null}
-            {presentation.status !== "completed" ||
-            expanded ||
-            !completedDuration ? (
-              <span>{presentation.progress}</span>
-            ) : null}
-          </span>
-          <ChevronDownRegular
-            className="execution-process-chevron"
-            aria-hidden="true"
-          />
-        </button>
-      </header>
-      {expanded ? (
+          </button>
+        </header>
+      ) : null}
+      {streaming ? (
+        <ExecutionStream
+          records={records}
+          historyEntryKeys={historyEntryKeys}
+          sourceLabel={sourceLabel}
+          onOpenFile={onOpenFile}
+        />
+      ) : expanded ? (
         <div className="execution-step-list" id={contentId}>
           {records.map((record, index) => (
             <ExecutionStepCard

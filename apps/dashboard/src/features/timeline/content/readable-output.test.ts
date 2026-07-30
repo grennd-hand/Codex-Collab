@@ -215,6 +215,32 @@ describe("presentExecutionEntry", () => {
     expect(records[0]?.summary).toBe("后续步骤已继续，该步骤不再运行");
   });
 
+  it("keeps the current command running when commentary follows it", () => {
+    const records = presentExecutionEntries(
+      [
+        {
+          id: "current-command",
+          role: "command",
+          text: "tool: exec_command\nstatus: running\ninput:\n{\"cmd\":\"npm test\"}",
+          createdAt: null,
+        },
+        {
+          id: "commentary",
+          role: "assistant",
+          phase: "commentary",
+          text: "测试仍在运行，我会继续同步输出。",
+          createdAt: null,
+        },
+      ],
+      true,
+    );
+
+    expect(records.map((record) => record.status)).toEqual([
+      "running",
+      "completed",
+    ]);
+  });
+
   it("presents commentary as a readable processing update", () => {
     expect(
       presentExecutionEntry({

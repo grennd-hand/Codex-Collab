@@ -113,3 +113,62 @@ describe("TimelineItemList completed task presentation", () => {
     );
   });
 });
+
+describe("TimelineItemList active task presentation", () => {
+  it("renders commentary as prose, folds old commands, and keeps the current command open", () => {
+    const items: UnifiedTimelineItem[] = [
+      {
+        kind: "imported",
+        item: {
+          kind: "execution",
+          id: "execution-live",
+          entryKeys: ["commentary-1", "command-1", "command-2"],
+          entries: [
+            {
+              id: "commentary-1",
+              role: "assistant",
+              phase: "commentary",
+              text: "先核对同步状态，再运行验证。",
+              createdAt: "2026-07-30T00:00:00.000Z",
+            },
+            {
+              id: "command-1",
+              role: "command",
+              text: "tool: exec_command\nstatus: completed\ninput:\n{\"cmd\":\"npm test\"}",
+              createdAt: "2026-07-30T00:00:01.000Z",
+            },
+            {
+              id: "command-2",
+              role: "command",
+              text: "tool: exec_command\nstatus: running\ninput:\n{\"cmd\":\"npm run build\"}",
+              createdAt: "2026-07-30T00:00:02.000Z",
+            },
+          ],
+        },
+      },
+    ];
+    const markup = renderToStaticMarkup(
+      createElement(TimelineItemList, {
+        items,
+        memberId: "owner-1",
+        executionPhase: "running",
+        identityForMember: fallbackMemberIdentity,
+        onOpenFile: vi.fn(),
+      }),
+    );
+
+    expect(markup).toContain("execution-process running expanded streaming");
+    expect(markup).toContain("先核对同步状态，再运行验证。");
+    expect(markup).toContain("运行了 1 个命令");
+    expect(markup).toContain('aria-label="展开 运行了 1 个命令"');
+    expect(markup).toContain('class="execution-step command running expanded"');
+    expect(markup).toContain("npm run build");
+    expect(markup).not.toContain("npm test");
+    expect(markup.indexOf("先核对同步状态，再运行验证。")).toBeLessThan(
+      markup.indexOf("运行了 1 个命令"),
+    );
+    expect(markup.indexOf("运行了 1 个命令")).toBeLessThan(
+      markup.indexOf("npm run build"),
+    );
+  });
+});

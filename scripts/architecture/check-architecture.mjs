@@ -117,6 +117,7 @@ const styleFacades = new Map([
     [
       '@import "./timeline-messages.css";',
       '@import "./timeline-execution.css";',
+      '@import "./timeline-execution-stream.css";',
       '@import "./timeline-completion.css";',
       '@import "./timeline-content.css";',
     ],

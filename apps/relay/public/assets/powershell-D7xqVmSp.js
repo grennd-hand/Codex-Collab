@@ -1,1 +1,0 @@
-import{d as e,f as t}from"./IdeWorkspace-0uv-IIUC.js";export{e as conf,t as language};
