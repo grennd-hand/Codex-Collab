@@ -107,8 +107,12 @@
 - [x] 已修复任务被停止但缺少 `task_complete` 时旧命令逐行永久转圈：非活动任务未决步骤显示
   “已停止”，活动任务只保留最后一个真实活动步骤的 Spinner；最终 Beta 6 已覆盖安装并通过
   可访问性树实机核验，旧运行文案也已随状态收敛
+- [x] `v0.1.0-beta.10` 已把活动时间线改为 Codex 式“正文 + 命令”：相邻历史命令折叠，只有当前
+  命令展开；长命令启动和轮询保持原始命令，明确完成输出或退出码到达后立即折叠
+- [x] Beta 10 已覆盖安装并通过 Renderer 动态探针：运行中的 `npm run typecheck` 显示为唯一活动
+  命令，`exit=0` 后运行行立即消失；凭据、Relay、Host 与 task 恢复正常。全仓 625 项测试通过
 - [ ] 补齐桌面 onboarding、Host restart-required、offline/catching-up、room/member dialogs
-- [ ] 在 `v0.1.0-beta.6` 手工确认关闭、托盘恢复和托盘退出，并完成 Electron/Monaco 主人完整
+- [ ] 在 `v0.1.0-beta.10` 手工确认关闭、托盘恢复和托盘退出，并完成 Electron/Monaco 主人完整
   协作/IDE 旅程
 - [x] 未签名 per-user NSIS、unpacked build、SHA-256、SBOM、manifest 和 ASAR/资源凭据扫描
 - [x] 全仓五项门禁、18 工具 MCP probe、Host/Desktop 专项和本地临时 Relay/SQLite 进程级 E2E

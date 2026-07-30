@@ -29,6 +29,8 @@ Codex Collab 是一套 local-first 协作层，让小型可信团队通过同一
   对账指令状态，避免已完成任务继续显示运行中；
 - 已完成任务把执行过程、Codex 最终总结和结构化文件变更显示为一个结果块；执行步骤默认折叠，
   总结与耗时保持可见，文件列表先显示前三项且可继续展开；
+- 活动任务使用 Codex 式正文流：处理说明直接显示，相邻历史命令折叠为命令批次，仅当前运行命令
+  展开；嵌套长命令在轮询期间保留原始命令，明确完成输出或退出码到达后立即折叠；
 - 每个 task 的有界历史缓存、后台回填与向上分页；
 - 全屏 Monaco IDE，支持文件树搜索、标签页、未保存状态、`Ctrl+S` 和冲突 Diff；
 - 新建 UTF-8 文件/目录与同父目录安全重命名；
@@ -52,17 +54,20 @@ Named Pipe IPC、Codex/文件 durable receipt，以及 Electron main/preload、�
 本机已升级安装独立 `DesktopWorkspaceShell`、Renderer entry、全窗口 Fluent 工作台、Activity rail、
 command/status bar 和桌面导航的 `v0.1.0-beta.2`；真实检查发现的项目文件分隔条和底部状态栏问题
 已在后续候选修复。进一步检查确认原内嵌托盘 PNG 损坏，窗口会隐藏但没有可见恢复/退出入口；
-该问题已在 `v0.1.0-beta.4` 修复；Explorer 双向缩放进入 `v0.1.0-beta.5`。当前本机已升级到
-`v0.1.0-beta.6`：最终回复会终止对应 turn 的转圈，陈旧消息刷新不能回退 `completed`，Desktop
+该问题已在 `v0.1.0-beta.4` 修复；Explorer 双向缩放进入 `v0.1.0-beta.5`。Beta 6 修复了最终回复
+终止对应 turn 的转圈、陈旧消息刷新回退 `completed` 和 Desktop/MCP 双 Writer。当前本机已升级到
+`v0.1.0-beta.10`：活动过程按正文、折叠命令批次和唯一当前命令显示，Desktop
 与 MCP 也已统一连接本机 profile 下的唯一 Host。后续源码又补齐“任务已停止但无 task_complete”
-的逐步终态：旧命令显示“已停止”，只有当前最后一步能继续转圈。最终 Beta 6 已覆盖安装，ASAR
-SHA-256 为 `14B73FCD3C7DFED84225849075B22EDE88F05A0A1647F15E4FA6E523279854D3`；可访问性树确认
-停止步骤的旧运行文案已同步替换。托盘最终点击旅程
+的逐步终态与嵌套命令会话关联。Beta 10 已覆盖安装，ASAR SHA-256 为
+`63F1D6D92C5C0512DB4F01E1F93379D4DC13006B769B2419F726363601A693F3`；Renderer 动态探针确认
+长命令运行时显示真实命令，返回退出码后立即折叠，Relay 200、Host active 且旧陈旧命令不可见。
+托盘最终点击旅程
 和其余主人完整旅程仍待人工放行，因此仍不把该候选描述为“桌面产品界面已经完成”。后续状态见
 [主人桌面端实施计划](../plans/DESKTOP_IMPLEMENTATION_PLAN.md)。
 
 当前桌面发布口径是“未签名内部 Beta”：没有自动更新，未宣称通过 SmartScreen；测试者安装时
-应预期 Windows 可能显示 SmartScreen 警告。最新协作者实时反馈修复已进入本机 Beta 6，并于
+应预期 Windows 可能显示 SmartScreen 警告。最新协作者实时反馈修复已进入本机 Beta 10；服务端
+反馈闭环已于
 2026-07-31 随提交 `6904723` 部署到 Primary Relay；Guest 保持原 release、原容器和原首页资产，
 共享 Caddy 未重启，也未作为桌面端验证环境。详细状态见
 [主人桌面端实施计划](../plans/DESKTOP_IMPLEMENTATION_PLAN.md)。

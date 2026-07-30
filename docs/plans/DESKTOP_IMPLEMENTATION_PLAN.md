@@ -1,6 +1,6 @@
 # Codex Collab 主人桌面端实施计划
 
-> 状态基线：2026-07-30。本文把“已实现”和“计划”分开记录；勾选项必须有代码与验证证据。
+> 状态基线：2026-07-31。本文把“已实现”和“计划”分开记录；勾选项必须有代码与验证证据。
 
 ## 1. 结论
 
@@ -17,7 +17,10 @@ IDE/Codex 分隔条不易发现、底部状态信息挤在单一行。`v0.1.0-be
 陈旧消息刷新回退以及 Desktop/MCP 使用不同 Host 状态目录造成双 Writer 的问题。后续实机检查又
 发现：被停止且没有 `task_complete` 的旧命令仍保留逐行转圈。最终 Beta 6 候选已把这类未决步骤
 收敛为“已停止”，同一活动任务只有最后一个真实活动步骤可以继续转圈，并已在本机覆盖安装。关闭/恢复/
-右键退出的最终点击验收仍待主人确认，因此任何版本暂不能描述为“桌面专属产品界面完成版”。
+右键退出的最终点击验收仍待主人确认。`v0.1.0-beta.10` 又把活动时间线改为 Codex 式正文流：处理说明
+直接显示，相邻历史命令折叠为“运行了 N 个命令”，只有当前命令保持展开；嵌套命令会话在轮询期间沿用
+原始命令，明确完成输出或退出码到达后立即折叠。Beta 10 已覆盖安装并通过真实 Renderer 动态探针，
+但其余完整主人旅程仍未全部人工放行，因此暂不能描述为“桌面专属产品界面完成版”。
 
 这比把 Dashboard 直接套进 Electron 更稳妥。当前 Dashboard 假定页面 origin 就是 Relay、
 在 renderer 保存房间凭据并直接创建 WebSocket；原样打包会把网络与主人权限带进特权页面。
@@ -63,9 +66,18 @@ IDE/Codex 分隔条不易发现、底部状态信息挤在单一行。`v0.1.0-be
 - [x] `v0.1.0-beta.6` 已生成 NSIS/unpacked、SHA-256、SBOM 和 manifest，完成本机升级安装；
   最终安装 ASAR SHA-256 为 `14B73FCD3C7DFED84225849075B22EDE88F05A0A1647F15E4FA6E523279854D3`，
   manifest 对应提交 `6e9636d`，Host lock/endpoint 再次收敛到同一 PID。
+- [x] `v0.1.0-beta.10` 已将活动过程显示为正文、历史命令批次与单一当前命令；长命令的启动/轮询/
+  退出码已按同一进程会话关联，明确 `Script completed` 的记录不再等待下一步才停止。54 项时间线
+  focused tests、全仓 625 项测试、五项门禁与本地 workspace-flow 通过。
+- [x] Beta 10 已生成 NSIS/unpacked、SHA-256、SBOM 和 manifest 并覆盖安装；manifest 对应提交
+  `83d5f49`，安装包 SHA-256 为 `257C5E4B2CC286612C7C3B92469B6B2C784AECD05EDD3AFFBF39DCF6D4C02FE7`，
+  安装 ASAR 与候选均为 `63F1D6D92C5C0512DB4F01E1F93379D4DC13006B769B2419F726363601A693F3`。
+- [x] 已安装 Renderer 动态验证：运行中的 `npm run typecheck` 只有一条展开命令并显示真实命令；
+  返回 `exit=0` 后运行命令数立即归零并进入折叠批次；凭据恢复、Relay 200、Host active、任务已选，
+  原陈旧 `rg --files` 命令不可见。
 - [x] 上述实时反馈修复已于 2026-07-31 随提交 `6904723` 部署到 Primary；公网闭环验证协作者可实时
   收到 `submitted`、assistant history 和 `completed`，刷新后终态仍为 `completed`。Guest 明确保留旧版。
-- [ ] 在已安装 `v0.1.0-beta.6` 上手工点击关闭、托盘恢复和托盘退出，完成最后的 Windows Shell 验收。
+- [ ] 在已安装 `v0.1.0-beta.10` 上手工点击关闭、托盘恢复和托盘退出，完成最后的 Windows Shell 验收。
 - [ ] 在桌面产品壳完成并通过真实安装验收前，不再宣称“整个桌面端已经完成”。
 - [ ] 打包后 Electron 的完整交互旅程、两个真实浏览器 context 和干净 Windows 11 x64 VM
   安装/升级/卸载仍是人工放行项。
@@ -309,6 +321,8 @@ Status bar: root / task / room / Relay / Host / sync / dirty and permission stat
   dialogs 顺序迁移，复用 controller/view-model，不复制网络或凭据逻辑。
 - [x] **D3.5-C Timeline completion**：成功任务按“已处理 + 耗时 / 最终总结 / 文件变更汇总”显示，
   处理步骤默认折叠，整行 disclosure 可恢复全过程，手动选择不被实时更新重置。
+- [x] **D3.5-C Live execution stream**：活动任务按正文与命令批次交替显示；历史命令默认折叠，当前
+  命令默认展开，嵌套进程会话保留原始命令，完成/失败后按终态折叠或保留注意状态。
 - [ ] **D3.5-D Desktop journeys**：补齐 desktop onboarding、恢复房间、Host restart-required、tray、
   notification、offline/catching-up 和退出确认。
 - [ ] **D3.5-E Release proof**：完成 component tests、键盘测试、视觉几何检查、打包 Electron 实机
