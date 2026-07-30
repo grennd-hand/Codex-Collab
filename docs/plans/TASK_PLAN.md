@@ -105,7 +105,8 @@
 - [x] `v0.1.0-beta.6` 已修复最终回复后仍显示全局运行转圈、陈旧消息快照覆盖终态，以及
   Desktop/MCP 分离 Host 状态目录导致双 Writer；本机安装后 lock/endpoint 已收敛到唯一 Host PID
 - [x] 已修复任务被停止但缺少 `task_complete` 时旧命令逐行永久转圈：非活动任务未决步骤显示
-  “已停止”，活动任务只保留最后一个真实活动步骤的 Spinner；旧 Beta 6 安装候选等待覆盖
+  “已停止”，活动任务只保留最后一个真实活动步骤的 Spinner；最终 Beta 6 已覆盖安装并通过
+  可访问性树实机核验，旧运行文案也已随状态收敛
 - [ ] 补齐桌面 onboarding、Host restart-required、offline/catching-up、room/member dialogs
 - [ ] 在 `v0.1.0-beta.6` 手工确认关闭、托盘恢复和托盘退出，并完成 Electron/Monaco 主人完整
   协作/IDE 旅程
