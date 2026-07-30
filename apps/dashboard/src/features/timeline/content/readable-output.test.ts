@@ -449,6 +449,31 @@ describe("presentExecutionEntry", () => {
     });
   });
 
+  it("trusts an explicit completed output over a stale running header", () => {
+    expect(
+      presentExecutionEntry({
+        id: "completed-wrapper",
+        role: "command",
+        text: [
+          "tool: exec",
+          "status: running",
+          "input:",
+          'const result = await tools.exec_command({cmd: "npm test"});',
+          "output:",
+          "Script completed",
+          "Wall time 1.2 seconds",
+          "Output:",
+          "Tests passed",
+        ].join("\n"),
+        createdAt: null,
+      }),
+    ).toMatchObject({
+      title: "运行测试",
+      status: "completed",
+      input: "$ npm test",
+    });
+  });
+
   it("marks a non-zero command output as failed", () => {
     expect(
       presentExecutionEntry({

@@ -135,6 +135,16 @@ function outputIndicatesRunning(output: string): boolean {
   return /^Script running with cell ID\b/i.test(output.trim());
 }
 
+function outputIndicatesCompleted(output: string): boolean {
+  const normalized = output.trim();
+  return (
+    /^Script completed(?:\r?\n|$)/i.test(normalized) ||
+    /^(?:Chunk ID:\s*[^\n]+\n)?(?:Wall time:\s*[\d.]+\s*seconds?\n)?Process exited with code\s+-?\d+/i.test(
+      normalized,
+    )
+  );
+}
+
 function friendlyCommandInput(tool: string, input: string | null): string | null {
   if (!input) return null;
   try {
@@ -297,6 +307,8 @@ function parseTaggedCommand(text: string): {
         ? "running"
         : exitCode !== null && exitCode !== 0
         ? "failed"
+        : output && outputIndicatesCompleted(output)
+        ? "completed"
         : (header[2] as ExecutionStatus),
     input: input || null,
     output: output || null,
