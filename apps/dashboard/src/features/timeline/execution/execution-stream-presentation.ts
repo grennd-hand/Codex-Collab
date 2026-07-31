@@ -22,23 +22,27 @@ function commandNeedsOwnRow(record: ReadableExecution): boolean {
 export function buildExecutionStreamBlocks(
   records: readonly ReadableExecution[],
 ): ExecutionStreamBlock[] {
-  const historicalCommands = records.flatMap((record, index) =>
-    record.role === "command" && !commandNeedsOwnRow(record)
-      ? [{ index, record }]
-      : [],
-  );
-  const firstHistoricalCommandIndex = historicalCommands[0]?.index;
+  const blocks: ExecutionStreamBlock[] = [];
+  let commandBatch: ExecutionStreamRecord[] = [];
 
-  return records.flatMap((record, index): ExecutionStreamBlock[] => {
+  const flushCommandBatch = () => {
+    if (commandBatch.length === 0) return;
+    blocks.push({ kind: "command-batch", items: commandBatch });
+    commandBatch = [];
+  };
+
+  records.forEach((record, index) => {
     const item = { index, record };
     if (record.role === "command" && !commandNeedsOwnRow(record)) {
-      return index === firstHistoricalCommandIndex
-        ? [{ kind: "command-batch", items: historicalCommands }]
-        : [];
+      commandBatch.push(item);
+      return;
     }
 
-    return [{ kind: record.role, item }];
+    flushCommandBatch();
+    blocks.push({ kind: record.role, item });
   });
+  flushCommandBatch();
+  return blocks;
 }
 
 export function hasLiveExecutionRecord(

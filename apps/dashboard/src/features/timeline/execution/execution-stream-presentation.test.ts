@@ -28,26 +28,36 @@ function record(
 }
 
 describe("buildExecutionStreamBlocks", () => {
-  it("uses one history disclosure for commands separated by narrative updates", () => {
+  it("folds each command run between narrative updates without reordering prose", () => {
     const blocks = buildExecutionStreamBlocks([
       record("intro", "commentary"),
       record("command-a", "command"),
-      record("update", "commentary"),
       record("command-b", "command", "stopped"),
-      record("command-c", "command", "running"),
+      record("update", "commentary"),
+      record("command-c", "command"),
+      record("command-d", "command", "stopped"),
+      record("command-e", "command", "running"),
     ]);
 
     expect(blocks.map((block) => block.kind)).toEqual([
       "commentary",
       "command-batch",
       "commentary",
+      "command-batch",
       "command",
     ]);
     expect(blocks[1]).toMatchObject({
       kind: "command-batch",
       items: [
         { index: 1, record: { id: "command-a" } },
-        { index: 3, record: { id: "command-b" } },
+        { index: 2, record: { id: "command-b" } },
+      ],
+    });
+    expect(blocks[3]).toMatchObject({
+      kind: "command-batch",
+      items: [
+        { index: 4, record: { id: "command-c" } },
+        { index: 5, record: { id: "command-d" } },
       ],
     });
   });
@@ -63,14 +73,16 @@ describe("buildExecutionStreamBlocks", () => {
     expect(blocks.map((block) => block.kind)).toEqual([
       "command-batch",
       "command",
+      "command-batch",
       "command",
     ]);
     expect(blocks[0]).toMatchObject({
       kind: "command-batch",
-      items: [
-        { record: { id: "done" } },
-        { record: { id: "stopped" } },
-      ],
+      items: [{ record: { id: "done" } }],
+    });
+    expect(blocks[2]).toMatchObject({
+      kind: "command-batch",
+      items: [{ record: { id: "stopped" } }],
     });
     expect(hasLiveExecutionRecord(blocks.flatMap((block) =>
       block.kind === "command-batch"
