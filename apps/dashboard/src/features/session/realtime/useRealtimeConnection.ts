@@ -205,7 +205,6 @@ export function useRealtimeConnection({
                   : current,
               );
               if (payload.codexRuntimeStatus === "running") {
-                clearHistoryRefreshTimer();
                 workspaceHistoryRequestedAtRef.current = 0;
                 return;
               }

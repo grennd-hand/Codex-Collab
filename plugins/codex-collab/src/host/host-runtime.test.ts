@@ -411,9 +411,14 @@ describe("HostRuntime", () => {
     await runtime.stop();
   });
 
-  it("reports a failed catch-up and retries it on the next open control state", async () => {
+  it("automatically retries a transient failed catch-up without another open event", async () => {
     const socket = new FakeRealtimeSocket();
     const reportError = vi.fn();
+    let finishRuntimePublication: (() => void) | undefined;
+    const runtimePublication = new Promise<void>((resolve) => {
+      finishRuntimePublication = resolve;
+    });
+    const publishRuntimeUnavailable = vi.fn().mockReturnValue(runtimePublication);
     const reconcileAfterResume = vi
       .fn()
       .mockRejectedValueOnce(new Error("catch-up failed"))
@@ -423,10 +428,13 @@ describe("HostRuntime", () => {
         readRuntimeProfile: vi.fn().mockResolvedValue(ownerProfile),
         runBackgroundCycle: vi.fn().mockResolvedValue(undefined),
         reconcileAfterResume,
+        publishRuntimeUnavailable,
         forwardPendingCommand: vi.fn().mockResolvedValue(null),
         close: vi.fn().mockResolvedValue(undefined),
       },
       syncIntervalMs: 60_000,
+      catchUpRetryBaseMs: 5,
+      random: () => 0.5,
       createRelayClient: () => ({
         createRealtimeTicket: vi.fn().mockResolvedValue({ ticket: "ticket-1" }),
       }),
@@ -443,29 +451,32 @@ describe("HostRuntime", () => {
       }),
     };
     socket.emit("message", openEnvelope);
-    await vi.waitFor(() => expect(runtime.getPhase()).toBe("failed"));
-    expect(reportError).toHaveBeenCalledWith("[codex-collab resume]", expect.any(Error));
-
-    socket.emit("message", openEnvelope);
+    await vi.waitFor(() => expect(publishRuntimeUnavailable).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    expect(reconcileAfterResume).toHaveBeenCalledTimes(1);
+    finishRuntimePublication?.();
+    await vi.waitFor(() => expect(reconcileAfterResume).toHaveBeenCalledTimes(2));
     await vi.waitFor(() => expect(runtime.getPhase()).toBe("active"));
-    expect(reconcileAfterResume).toHaveBeenCalledTimes(2);
+    expect(reportError).toHaveBeenCalledWith("[codex-collab resume]", expect.any(Error));
     await runtime.stop();
   });
 
   it("fails closed when durable reconciliation is permanently blocked", async () => {
     const socket = new FakeRealtimeSocket();
     const runBackgroundCycle = vi.fn().mockResolvedValue(undefined);
+    const reconcileAfterResume = vi.fn().mockRejectedValue(
+      new DurableRecoveryBlockedError("ambiguous durable receipt"),
+    );
     const runtime = new HostRuntime({
       application: {
         readRuntimeProfile: vi.fn().mockResolvedValue(ownerProfile),
         runBackgroundCycle,
-        reconcileAfterResume: vi.fn().mockRejectedValue(
-          new DurableRecoveryBlockedError("ambiguous durable receipt"),
-        ),
+        reconcileAfterResume,
         forwardPendingCommand: vi.fn().mockResolvedValue(null),
         close: vi.fn().mockResolvedValue(undefined),
       },
       syncIntervalMs: 60_000,
+      catchUpRetryBaseMs: 5,
       createRelayClient: () => ({
         createRealtimeTicket: vi.fn().mockResolvedValue({ ticket: "ticket-1" }),
       }),
@@ -483,6 +494,8 @@ describe("HostRuntime", () => {
     });
 
     await vi.waitFor(() => expect(runtime.getPhase()).toBe("failed"));
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(reconcileAfterResume).toHaveBeenCalledTimes(1);
     socket.emit("message", {
       data: JSON.stringify({
         type: "file.operation.updated",

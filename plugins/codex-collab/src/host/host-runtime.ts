@@ -2,12 +2,12 @@ import type { RealtimeEnvelope } from "@codex-collab/protocol";
 import { RelayClient, RelayRequestError } from "../relay/relay-client.js";
 import { HostRoomLifecycle, type HostRuntimePhase } from "./host-runtime-phase.js";
 import type { HostWorkAdmission } from "./host-runtime-admission.js";
-import { withHostRuntimeTimeout } from "./host-runtime-timeout.js";
 import { hostRealtimeProfileKey, reportHostRuntimeError, type RealtimeSocket, type RealtimeTicketClient } from "./host-runtime-realtime.js";
 import {
   isDurableRecoveryBlockedError,
 } from "../persistence/durable-recovery.js";
 import type { HostRuntimeOptions } from "./host-runtime-options.js";
+import { createHostRuntimeRoom } from "./host-runtime-room.js";
 export type { HostRuntimeApplication, HostRuntimeOptions } from "./host-runtime-options.js";
 export type { HostRuntimePhase } from "./host-runtime-phase.js";
 const defaultSyncIntervalMs = 1_000;
@@ -39,21 +39,11 @@ export class HostRuntime {
       options.createRealtimeSocket ?? ((url) => new WebSocket(url));
     this.random = options.random ?? Math.random;
     this.reportError = options.reportError ?? reportHostRuntimeError;
-    const cancelTimeoutMs = options.cancelTimeoutMs ?? 10_000;
-    this.roomLifecycle = new HostRoomLifecycle({
+    this.roomLifecycle = createHostRuntimeRoom(options, {
       waitForActiveWork: () => this.waitForActiveWork(),
-      cancelActiveWork: () => options.application.cancelActiveWork
-        ? withHostRuntimeTimeout(
-            options.application.cancelActiveWork(), cancelTimeoutMs,
-            "Timed out cancelling the active Codex turn",
-          )
-        : Promise.resolve(),
       reconcileAfterResume: () => this.runResumeReconciliation(),
       reportError: this.reportError,
-      ...(options.onPhaseChange ? { onPhaseChange: options.onPhaseChange } : {}),
-    });
-    options.application.setDurableFailureHandler?.((error) => {
-      this.roomLifecycle.markFailed(error);
+      random: this.random,
     });
   }
 

@@ -15,6 +15,24 @@ describe("workspace live history sync", () => {
     vi.restoreAllMocks();
   });
 
+  it("publishes an unavailable runtime state when the Host cannot catch up", async () => {
+    const publishRuntimeStatus = vi
+      .spyOn(RelayClient.prototype, "publishCodexRuntimeStatus")
+      .mockResolvedValue({} as never);
+    const service = new WorkspaceSyncService(
+      { read: vi.fn().mockResolvedValue(profile) } as never,
+      {} as never,
+    );
+
+    await service.publishRuntimeUnavailable();
+
+    expect(publishRuntimeStatus).toHaveBeenCalledWith(
+      profile.sessionId,
+      profile.memberToken,
+      "unavailable",
+    );
+  });
+
   it("publishes running history without rebuilding the file snapshot", async () => {
     const directory = await mkdtemp(join(tmpdir(), "codex-collab-live-sync-"));
     const rolloutPath = join(directory, "rollout-thread-1.jsonl");

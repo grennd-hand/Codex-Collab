@@ -11,6 +11,7 @@ export interface HostRuntimeApplication {
   readRuntimeProfile(): Promise<LocalProfile | null>;
   runBackgroundCycle(admission?: HostWorkAdmission): Promise<void>;
   reconcileAfterResume?(admission?: HostWorkAdmission): Promise<void>;
+  publishRuntimeUnavailable?(): Promise<void>;
   cancelActiveWork?(): Promise<void>;
   forwardPendingCommand(admission?: HostWorkAdmission): Promise<string | null>;
   close(): Promise<void>;
@@ -29,4 +30,5 @@ export interface HostRuntimeOptions {
   reportError?: (scope: string, error: unknown) => void;
   onPhaseChange?: (phase: HostRuntimePhase) => void;
   cancelTimeoutMs?: number;
+  catchUpRetryBaseMs?: number;
 }

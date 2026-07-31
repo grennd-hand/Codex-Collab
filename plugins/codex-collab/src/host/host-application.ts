@@ -64,6 +64,10 @@ export class HostApplication {
     await this.work.reconcileAfterResume(admission);
   }
 
+  async publishRuntimeUnavailable(): Promise<void> {
+    await this.workspaceSync.publishRuntimeUnavailable();
+  }
+
   async forwardPendingCommand(admission?: HostWorkAdmission): Promise<string | null> {
     return this.work.forwardPendingCommand(admission);
   }

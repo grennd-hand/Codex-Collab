@@ -27,6 +27,7 @@ import {
   workspaceHistoryDigest,
   type WorkspaceSyncMarker,
 } from "./workspace-sync.js";
+import { publishRuntimeUnavailable } from "./workspace-runtime-status.js";
 import {
   forwardNextCodexPrompt,
   hasInFlightCodexCommand,
@@ -117,6 +118,10 @@ export class WorkspaceSyncService {
   private marker: WorkspaceSyncMarker | null = null;
   private workspaceDigest: string | null = null;
   private filesDirty = false;
+
+  async publishRuntimeUnavailable(): Promise<void> {
+    await publishRuntimeUnavailable(this.profiles);
+  }
   private processingFileOperations: Promise<number> | null = null;
   private readonly durableReceipts: DurableReceiptReconciler;
 
