@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Member, Session } from "@codex-collab/protocol";
 import {
+  bindBrowserFetch,
   createBrowserRuntime,
   type BrowserRuntimeEnvironment,
 } from "./browser-runtime.js";
@@ -61,6 +62,24 @@ function environment(initialCredential?: unknown) {
 }
 
 describe("browser Dashboard runtime", () => {
+  it("binds native fetch to the browser Window receiver", async () => {
+    const fallback = vi.fn();
+    const browserWindow = {
+      fetch: vi.fn(function (this: unknown) {
+        if (this !== browserWindow) {
+          throw new TypeError("Illegal invocation");
+        }
+        return Promise.resolve(new Response(null, { status: 204 }));
+      }),
+    } as unknown as Pick<Window, "fetch">;
+
+    const fetcher = bindBrowserFetch(browserWindow, fallback as typeof fetch);
+
+    await expect(fetcher("/health")).resolves.toMatchObject({ status: 204 });
+    expect(browserWindow.fetch).toHaveBeenCalledOnce();
+    expect(fallback).not.toHaveBeenCalled();
+  });
+
   it("preserves same-origin requests and browser bearer auth", async () => {
     const setup = environment();
     const runtime = createBrowserRuntime(setup.value);

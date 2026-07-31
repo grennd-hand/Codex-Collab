@@ -29,6 +29,15 @@ export interface BrowserRuntimeEnvironment {
   notify?: (notification: RuntimeNotificationV1) => void;
 }
 
+export function bindBrowserFetch(
+  browserWindow: Pick<Window, "fetch"> | null,
+  fallbackFetch: typeof fetch,
+): typeof fetch {
+  return browserWindow
+    ? browserWindow.fetch.bind(browserWindow)
+    : fallbackFetch;
+}
+
 function defaultEnvironment(): BrowserRuntimeEnvironment {
   const memory = new Map<string, string>();
   const browserWindow = typeof window === "undefined" ? null : window;
@@ -53,7 +62,7 @@ function defaultEnvironment(): BrowserRuntimeEnvironment {
     },
   };
   return {
-    fetch: globalThis.fetch,
+    fetch: bindBrowserFetch(browserWindow, globalThis.fetch),
     WebSocket: globalThis.WebSocket,
     location: runtimeLocation,
     history: browserWindow?.history ?? { replaceState() {} },
