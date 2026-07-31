@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ReadableExecution } from "./execution-presentation-types.js";
 import {
   buildExecutionStreamBlocks,
+  compactLiveExecutionStream,
   executionStepDefaultExpanded,
   hasLiveExecutionRecord,
   resolveExecutionStepExpanded,
@@ -104,5 +105,38 @@ describe("buildExecutionStreamBlocks", () => {
     ).toBe(false);
     expect(resolveExecutionStepExpanded(true, false)).toBe(false);
     expect(resolveExecutionStepExpanded(false, true)).toBe(true);
+  });
+});
+
+describe("compactLiveExecutionStream", () => {
+  it("keeps only the current running record visible and folds prior work", () => {
+    const records = [
+      record("analysis", "commentary"),
+      record("command-a", "command"),
+      record("command-b", "command", "failed"),
+      record("current", "command", "running"),
+    ];
+
+    const compact = compactLiveExecutionStream(records);
+
+    expect(compact.history.map(({ record: item }) => item.id)).toEqual([
+      "analysis",
+      "command-a",
+      "command-b",
+    ]);
+    expect(compact.current).toMatchObject({
+      index: 3,
+      record: { id: "current", status: "running" },
+    });
+  });
+
+  it("folds all completed records while waiting for the next live step", () => {
+    const compact = compactLiveExecutionStream([
+      record("analysis", "commentary"),
+      record("command", "command"),
+    ]);
+
+    expect(compact.current).toBeNull();
+    expect(compact.history).toHaveLength(2);
   });
 });

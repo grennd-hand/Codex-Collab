@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isWorkspaceRefreshAbort,
   shouldApplyWorkspaceResponse,
+  TrailingHistoryRefreshLatch,
 } from "./workspace-refresh.js";
 
 describe("shouldApplyWorkspaceResponse", () => {
@@ -23,5 +24,27 @@ describe("shouldApplyWorkspaceResponse", () => {
 
     expect(isWorkspaceRefreshAbort(aborted)).toBe(true);
     expect(isWorkspaceRefreshAbort(new Error("network failed"))).toBe(false);
+  });
+});
+
+describe("TrailingHistoryRefreshLatch", () => {
+  it("coalesces a burst into one trailing history refresh", () => {
+    const latch = new TrailingHistoryRefreshLatch();
+
+    latch.queue();
+    latch.queue();
+    latch.queue();
+
+    expect(latch.take()).toBe(true);
+    expect(latch.take()).toBe(false);
+  });
+
+  it("drops a queued refresh when the workspace request epoch is cancelled", () => {
+    const latch = new TrailingHistoryRefreshLatch();
+
+    latch.queue();
+    latch.clear();
+
+    expect(latch.take()).toBe(false);
   });
 });

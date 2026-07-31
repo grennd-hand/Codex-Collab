@@ -12,7 +12,11 @@ import {
   useState,
   type RefObject,
 } from "react";
-import { isWorkspaceRefreshAbort, shouldApplyWorkspaceResponse } from "./history/workspace-refresh.js";
+import {
+  isWorkspaceRefreshAbort,
+  shouldApplyWorkspaceResponse,
+  TrailingHistoryRefreshLatch,
+} from "./history/workspace-refresh.js";
 import {
   beginLatestHistoryLoad,
   createWorkspaceHistoryWindow,
@@ -59,6 +63,7 @@ export function useWorkspaceHistoryController({
   const appliedSequenceRef = useRef(0);
   const refreshInFlightRef = useRef<Promise<WorkspaceSummary | null> | null>(null);
   const refreshIncludesHistoryRef = useRef(false);
+  const trailingHistoryRefreshRef = useRef(new TrailingHistoryRefreshLatch());
   const refreshAbortRef = useRef<AbortController | null>(null);
   const olderAbortRef = useRef<AbortController | null>(null);
   const prependingRef = useRef(false);
@@ -91,6 +96,7 @@ export function useWorkspaceHistoryController({
     refreshAbortRef.current = null;
     refreshInFlightRef.current = null;
     refreshIncludesHistoryRef.current = false;
+    trailingHistoryRefreshRef.current.clear();
     olderAbortRef.current?.abort();
     olderAbortRef.current = null;
     pendingScrollRestoreRef.current = null;
@@ -150,7 +156,12 @@ export function useWorkspaceHistoryController({
     }
     const inFlight = refreshInFlightRef.current;
     if (inFlight) {
-      if (!includeHistory || refreshIncludesHistoryRef.current) return inFlight;
+      if (!includeHistory || refreshIncludesHistoryRef.current) {
+        if (includeHistory && refreshIncludesHistoryRef.current) {
+          trailingHistoryRefreshRef.current.queue();
+        }
+        return inFlight;
+      }
       refreshAbortRef.current?.abort();
       refreshInFlightRef.current = null;
     }
@@ -256,6 +267,24 @@ export function useWorkspaceHistoryController({
         if (refreshInFlightRef.current === request) {
           refreshInFlightRef.current = null;
           refreshIncludesHistoryRef.current = false;
+          const refreshTrailingHistory =
+            trailingHistoryRefreshRef.current.take() &&
+            sessionIdRef.current === sessionId &&
+            historyEpochRef.current === historyEpoch;
+          if (refreshTrailingHistory) {
+            if (priorityFileReadsRef.current > 0) {
+              refreshPendingRef.current = true;
+            } else {
+              queueMicrotask(() => {
+                if (
+                  sessionIdRef.current === sessionId &&
+                  historyEpochRef.current === historyEpoch
+                ) {
+                  void refresh(true).catch(onError);
+                }
+              });
+            }
+          }
         }
       });
     refreshInFlightRef.current = request;
@@ -264,6 +293,7 @@ export function useWorkspaceHistoryController({
     approved,
     authHeaders,
     commitHistoryWindow,
+    onError,
     session,
     setConversationLoading,
     token,

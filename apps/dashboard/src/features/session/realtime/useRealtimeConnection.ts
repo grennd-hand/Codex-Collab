@@ -15,6 +15,7 @@ import type { ActivityItem } from "../../activity/ActivityPanel.js";
 import type { ConnectionState } from "../connection.js";
 import type { SavedCredential } from "../session-storage.js";
 import {
+  REALTIME_HISTORY_REFRESH_INTERVAL_MS,
   realtimeHistoryRefreshDelay,
   shouldRefreshRealtimeHistory,
 } from "./realtime-history-refresh.js";
@@ -220,7 +221,10 @@ export function useRealtimeConnection({
             if (terminalRuntime) {
               clearHistoryRefreshTimer();
               workspaceHistoryRequestedAtRef.current = Date.now();
-              void refresh().catch(showError);
+              historyRefreshTimer = window.setTimeout(
+                requestWorkspaceHistory,
+                REALTIME_HISTORY_REFRESH_INTERVAL_MS,
+              );
               return;
             }
             if (historyChanged) {

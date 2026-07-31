@@ -112,6 +112,25 @@ describe("TimelineItemList completed task presentation", () => {
       markup.indexOf("任务已经完成。"),
     );
   });
+
+  it("keeps the final summary when a manually stopped command produced an answer", () => {
+    const items = completedItems();
+    const execution = items[0];
+    if (execution?.kind !== "imported" || execution.item.kind !== "execution") {
+      throw new Error("Expected an execution fixture");
+    }
+    execution.item.entries[0] = {
+      ...execution.item.entries[0]!,
+      text: "tool: exec_command\nstatus: stopped\ninput:\n{\"cmd\":\"npm test\"}",
+    };
+
+    const markup = renderTimeline(items);
+
+    expect(markup).toContain("execution-process completed collapsed has-completion");
+    expect(markup).toContain('aria-label="Codex 最终总结"');
+    expect(markup).toContain("任务已经完成。");
+    expect(markup).not.toContain("imported-message assistant");
+  });
 });
 
 describe("TimelineItemList active task presentation", () => {
@@ -199,31 +218,24 @@ describe("TimelineItemList active task presentation", () => {
     );
 
     expect(markup).toContain("execution-process running expanded streaming");
-    expect(markup).toContain("先核对同步状态，再运行验证。");
-    expect(markup).toContain("测试通过，继续构建。");
-    expect(markup).toContain("类型检查通过，开始生成发布资产。");
-    expect(markup).toContain("运行了多个命令");
-    expect(markup).toContain('aria-label="展开 运行了 2 个命令"');
-    expect(markup.match(/class="execution-command-batch /g)).toHaveLength(2);
-    expect(markup).toContain("execution-command-batch collapsed has-failure");
-    expect(markup).toContain('aria-label="展开 运行了 2 个命令，其中 1 个失败"');
+    expect(markup).toContain("已运行 7 个步骤");
+    expect(markup).toContain(
+      'aria-label="展开 已运行 7 个步骤，其中 4 个命令，1 个失败"',
+    );
+    expect(markup.match(/execution-history-batch/g)).toHaveLength(1);
+    expect(markup).toContain("execution-history-batch collapsed has-failure");
     expect(markup).toContain("1 个失败");
     expect(markup).toContain('class="execution-step command running expanded"');
     expect(markup).toContain("npm run build");
+    expect(markup).not.toContain("先核对同步状态，再运行验证。");
+    expect(markup).not.toContain("测试通过，继续构建。");
+    expect(markup).not.toContain("类型检查通过，开始生成发布资产。");
     expect(markup).not.toContain("npm test");
     expect(markup).not.toContain("npm run test:relay");
     expect(markup).not.toContain("npm run lint");
     expect(markup).not.toContain("npm run typecheck");
-    const firstBatch = markup.indexOf("运行了多个命令");
-    const secondBatch = markup.lastIndexOf("运行了多个命令");
-    expect(markup.indexOf("先核对同步状态，再运行验证。")).toBeLessThan(firstBatch);
-    expect(firstBatch).toBeLessThan(markup.indexOf("测试通过，继续构建。"));
-    expect(markup.indexOf("测试通过，继续构建。")).toBeLessThan(secondBatch);
-    expect(secondBatch).toBeLessThan(
-      markup.indexOf("类型检查通过，开始生成发布资产。"),
+    expect(markup.indexOf("已运行 7 个步骤")).toBeLessThan(
+      markup.indexOf("npm run build"),
     );
-    expect(
-      markup.indexOf("类型检查通过，开始生成发布资产。"),
-    ).toBeLessThan(markup.indexOf("npm run build"));
   });
 });
