@@ -63,6 +63,8 @@
 - [x] 运行中保持 Relay 队列、逐条提交、不唤起 Desktop 与投递状态
 - [x] 协作者 Codex 输出使用前沿加尾随的实时历史刷新；终态与 Realtime 重连执行消息状态对账，
   线程整体空闲时可收敛 app-server 遗留的 `inProgress` 状态
+- [x] Relay 重启或瞬时追平失败后 Host 会先发布 `unavailable` 再自动重试；无需等待第二个
+  `open` 事件，durable receipt 歧义仍保持 fail-closed；网页运行态事件不会取消待执行的 history 刷新
 - [x] 桌面安全通知；非 owner 指令继续按 `workspace + on-request` 转发并保留 Codex 审批
 - [x] Codex durable outbox/receipt 与文件 intent/executing/result journal；恢复歧义时 fail-closed
 - [ ] 登录/重启自动拉起、长期健康监督、安全 profile 迁移与持久 Realtime sequence/gap 游标
@@ -122,8 +124,11 @@
   左右按钮、键盘调宽、双击复位和 task-scoped 持久化，换位不卸载 Monaco
 - [x] Beta 13 已按 `7da252a` 生成 NSIS/unpacked、SBOM、manifest 和 SHA-256，并覆盖安装；
   安装 ASAR 与候选一致，桌面/开始菜单快捷方式指向新 EXE 图标，重启后为单一主人进程/Host broker
+- [x] Beta 14 已按 `e680d90` 生成并覆盖安装；真实房间从卡住的 832 条追平到 968 条，Primary
+  实际重启后 Host 自动恢复为 `active` 并继续同步到 991 条。安装包 SHA-256 为
+  `CF2957A3AD94F342142873388DC7BF54CF3414F2D9F24C57EEC50B07D91B2586`
 - [ ] 补齐桌面 onboarding、Host restart-required、offline/catching-up、room/member dialogs
-- [ ] 在 `v0.1.0-beta.13` 手工确认面板拖放、Monaco 状态保留、关闭、托盘恢复和托盘退出，
+- [ ] 在 `v0.1.0-beta.14` 手工确认面板拖放、Monaco 状态保留、关闭、托盘恢复和托盘退出，
   并完成 Electron/Monaco 主人完整协作/IDE 旅程
 - [x] 未签名 per-user NSIS、unpacked build、SHA-256、SBOM、manifest 和 ASAR/资源凭据扫描
 - [x] 全仓五项门禁、18 工具 MCP probe、Host/Desktop 专项和本地临时 Relay/SQLite 进程级 E2E
@@ -136,6 +141,9 @@
   一个可展开的历史批次；终态实时刷新加入延迟追平和单次尾随重取，手动停止后仍同步 Codex 最终
   总结并收敛完成状态。全仓 639 项测试和五项门禁通过；公网邀请、批准即写、Realtime history 与
   completed 持久化闭环通过，Guest 与 Caddy 容器未变化
+- [x] 2026-07-31 将 `e680d90` 部署到 Primary Relay：修复 Host 瞬时 catch-up 失败后永久停摆和网页
+  history 刷新定时器被运行态取消。切换前备份 Primary 数据；公网资产哈希一致，Host 在真实 Relay
+  重启后从 968 条继续同步到 991 条；Guest 与 Caddy 容器未变化
 - [ ] 干净 Windows VM、双用户 Pipe、N-1 -> N 升级/卸载和真实双浏览器 UI E2E
 
 详细实施顺序、当前/计划边界见

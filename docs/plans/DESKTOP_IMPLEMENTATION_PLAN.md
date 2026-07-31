@@ -25,7 +25,10 @@ Beta 12 已进一步统一终态历史的展开内容：“已处理”“失败
 不再退回逐命令列表。Beta 12 已覆盖安装并通过真实 Renderer 动态探针，
 Beta 13 已把白底深靛蓝图标统一接入窗口、托盘、安装器和卸载项，并把三块桌面工作区改为
 可拖动换位的稳定面板槽位；换位不重挂载 Monaco，布局和宽度按 task 本地保存。其余完整主人
-旅程仍未全部人工放行，因此暂不能描述为“桌面专属产品界面完成版”。
+旅程仍未全部人工放行，因此暂不能描述为“桌面专属产品界面完成版”。Beta 14 修复了 Relay 重启后
+一次追平失败会让 Host 永久停在 `failed` 的问题：临时失败会先发布 `unavailable`，再按有界退避
+自动追平；durable receipt 歧义仍保持 fail-closed。网页 Realtime 也不再用后到的 `running` 事件
+取消已经排队的 history 刷新。
 
 这比把 Dashboard 直接套进 Electron 更稳妥。当前 Dashboard 假定页面 origin 就是 Relay、
 在 renderer 保存房间凭据并直接创建 WebSocket；原样打包会把网络与主人权限带进特权页面。
@@ -102,7 +105,13 @@ Beta 13 已把白底深靛蓝图标统一接入窗口、托盘、安装器和卸
   和一个 Host broker；桌面与开始菜单快捷方式均引用安装 EXE 的图标资源。
 - [x] 上述实时反馈修复已于 2026-07-31 随提交 `6904723` 部署到 Primary；公网闭环验证协作者可实时
   收到 `submitted`、assistant history 和 `completed`，刷新后终态仍为 `completed`。Guest 明确保留旧版。
-- [ ] 在已安装 `v0.1.0-beta.13` 上手工拖动三个面板，并点击关闭、托盘恢复和托盘退出，完成最后的
+- [x] `v0.1.0-beta.14` 已按提交 `e680d90` 生成并覆盖安装；安装包 SHA-256 为
+  `CF2957A3AD94F342142873388DC7BF54CF3414F2D9F24C57EEC50B07D91B2586`，安装 ASAR 与候选均为
+  `81A16BA6BF644AE14EEF59D2AB47EC9AC7BD07657C22F7C4AA618CDF2AAED623`。真实房间在旧 Host 卡于
+  832 条历史后由 Beta 14 追平到 968 条；Primary 重启后又自动恢复到 `active` 并继续到 991 条。
+- [x] 提交 `e680d90` 已于 2026-07-31 只部署到 Primary release
+  `e680d90-20260731T150525Z`；切换前备份数据，公网入口资产与提交一致，Guest/Caddy 容器 ID 未变。
+- [ ] 在已安装 `v0.1.0-beta.14` 上手工拖动三个面板，并点击关闭、托盘恢复和托盘退出，完成最后的
   Windows Shell/Monaco 状态验收。
 - [ ] 在桌面产品壳完成并通过真实安装验收前，不再宣称“整个桌面端已经完成”。
 - [ ] 打包后 Electron 的完整交互旅程、两个真实浏览器 context 和干净 Windows 11 x64 VM

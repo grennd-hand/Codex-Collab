@@ -77,16 +77,23 @@ Beta 13 进一步加入白底深靛蓝 Windows 多尺寸图标，并把协作/�
 `7da252a` 覆盖安装，安装包 SHA-256 为
 `92113CB3928B2BA99B9FB0DD2FD868B128FE7EF1AF7003EA8CCE46E4757F9CDA`，安装 ASAR SHA-256 为
 `D1D2FF0028EEFE4DEFCE3F8DC3B202FF73BA29BA8465C8FE7EE9405FB4818525`。
+Beta 14 修复了 Relay 重启后 Host 一次 catch-up 失败便永久停在 `failed` 的问题：瞬时失败会先把
+Relay runtime 标为 `unavailable`，再自动退避追平；durable receipt 歧义继续禁止自动重放。网页端
+也会保留已排队的 history 刷新，不再被后到的 `running` 事件取消。Beta 14 已按提交 `e680d90`
+覆盖安装，安装包 SHA-256 为
+`CF2957A3AD94F342142873388DC7BF54CF3414F2D9F24C57EEC50B07D91B2586`，安装 ASAR SHA-256 为
+`81A16BA6BF644AE14EEF59D2AB47EC9AC7BD07657C22F7C4AA618CDF2AAED623`。真实房间由停滞的 832 条
+追平到 968 条；Primary 实际重启后 Host 自动回到 `active` 并继续同步到 991 条。
 托盘最终点击旅程
 和其余主人完整旅程仍待人工放行，因此仍不把该候选描述为“桌面产品界面已经完成”。后续状态见
 [主人桌面端实施计划](../plans/DESKTOP_IMPLEMENTATION_PLAN.md)。
 
 当前桌面发布口径是“未签名内部 Beta”：没有自动更新，未宣称通过 SmartScreen；测试者安装时
-应预期 Windows 可能显示 SmartScreen 警告。最新图标、面板换位与时间线折叠已进入本机 Beta 13；
+应预期 Windows 可能显示 SmartScreen 警告。最新图标、面板换位、时间线折叠和同步恢复已进入本机 Beta 14；
 服务端反馈闭环先于 2026-07-31 随提交 `6904723` 部署；跨正文合并的 `dbca79b` 经需求澄清后已由
-按文字区间折叠的 `c11976e` 替换。当前 Primary Relay 进一步部署 `99d89e3`：活动流只显示唯一当前
-步骤，旧步骤进入一个历史批次；终态采用延迟追平和单次尾随 history 重取，手动停止后的最终总结
-与 completed 状态可实时收敛。Guest 保持原 release、原容器和原首页资产，共享 Caddy 未重启，
+按文字区间折叠的 `c11976e` 替换。当前 Primary Relay 已进一步部署 `e680d90`：除保留
+`99d89e3` 的单一当前步骤、终态延迟追平和手动停止总结外，还能在瞬时 catch-up 失败后自动恢复，
+网页端不会取消待执行的历史刷新。Guest 保持原 release、原容器和原首页资产，共享 Caddy 未重启，
 也未作为桌面端验证环境。详细状态见
 [主人桌面端实施计划](../plans/DESKTOP_IMPLEMENTATION_PLAN.md)。
 
