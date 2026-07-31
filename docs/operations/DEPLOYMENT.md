@@ -220,6 +220,27 @@ schema、资产 hash、HTTPS 和真实登录/邀请流程，并证明 Guest 容�
   `727780650530aae367adc8b29dd7045c87d691fa59355541760489a8cdb35195`；Caddy 容器仍为
   `055f22e85bd9`。两者未重启、未重建、未改配置或数据卷。
 
+### 7.4 2026-07-31 Primary 实时终态追平与运行流压缩
+
+- 源提交：`99d89e3906e8f9b3a4097ba1c93aa4926f6344ee`；不可变 release：
+  `/opt/codex-collab/releases/99d89e3-20260731T140007Z/app`。
+- 源归档 SHA-256：`0f4bb698eb9f1c49fa95281895f285441b3e21b10f9eb848c79203983244cc8a`；
+  切换前一致性备份：`/opt/codex-collab/backups/relay-data-20260731T140946Z.tar.gz`。
+- Primary 容器切换为 `364099d77f02`，镜像 digest 为
+  `sha256:1d8da45db4339f81643d1f179047f4ce0d6caf3ea0bfe6c89e5e007c8c229373`；
+  Docker health 与公网 `/health` 均通过。
+- Primary 首页 SHA-256 切换为
+  `4dabe77cc77de36c32ea53bb8595ee44770b949da0a8e5b65200c4ee389db1fb`，入口主资源为
+  `/assets/index-BWqAoZPj.js`；5 个入口资产均以真实 GET 验证成功。
+- 本版本修复终态事件早于最终 history 发布时的刷新竞态：终态等待 Host 历史节奏，刷新中的重复
+  history 请求只排队一次尾随重取。活动流仅显示唯一当前步骤，既往步骤收进同一个可展开历史批次；
+  手动停止且已有最终回复时继续展示 Codex 最终总结并收敛终态。
+- 全仓 639 项测试与五项门禁通过；公网临时会话完成安全响应头、邀请、加入、批准即
+  `workspace-write`、Realtime `submitted`、assistant history、`completed` 和持久化终态闭环。
+- Guest 保持容器 `63fe0557617d`、首页 SHA-256
+  `cd2d1131ff5b82730f6efdde1a2cbd804eb24104cc914027b3f847b97e49ac24` 和入口主资源
+  `/assets/index-8LGcCuEJ.js`；Caddy 容器保持 `055f22e85bd9`。两者未重启、未重建、未改配置或数据卷。
+
 ## 8. 数据备份
 
 当前版本尚未自动备份，也没有仓库内可执行的恢复流程或恢复报告，因此不满足生产恢复要求。
