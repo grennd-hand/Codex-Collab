@@ -14,11 +14,13 @@ export function ExecutionStream({
   records,
   historyEntryKeys,
   sourceLabel,
+  waitingForNextStep = true,
   onOpenFile,
 }: {
   records: readonly ReadableExecution[];
   historyEntryKeys?: readonly (string | null)[];
   sourceLabel?: string | null;
+  waitingForNextStep?: boolean;
   onOpenFile?: (target: IdeNavigationTarget) => void;
 }) {
   const blocks = buildExecutionStreamBlocks(records);
@@ -64,7 +66,7 @@ export function ExecutionStream({
           />
         );
       })}
-      {!hasLiveExecutionRecord(records) ? (
+      {waitingForNextStep && !hasLiveExecutionRecord(records) ? (
         <div className="execution-stream-waiting" role="status" aria-live="polite">
           <ExecutionStatusIcon status="running" fallback="reasoning" />
           <span>Codex 正在继续处理</span>

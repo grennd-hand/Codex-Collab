@@ -11,7 +11,6 @@ import {
   collectExecutionFileChanges,
   presentExecutionEntries,
 } from "../content/readable-output.js";
-import { ExecutionStepCard } from "./ExecutionStepCard.js";
 import { ExecutionStream } from "./ExecutionStream.js";
 import {
   completedExecutionDurationLabel,
@@ -174,14 +173,13 @@ export function ExecutionProcess({
         />
       ) : expanded ? (
         <div className="execution-step-list" id={contentId}>
-          {records.map((record, index) => (
-            <ExecutionStepCard
-              key={`codex-${historyEntryKeys?.[index] ?? `${record.id}-${index}`}`}
-              record={record}
-              historyKey={historyEntryKeys?.[index]}
-              onOpenFile={onOpenFile}
-            />
-          ))}
+          <ExecutionStream
+            records={records}
+            historyEntryKeys={historyEntryKeys}
+            sourceLabel={sourceLabel}
+            waitingForNextStep={false}
+            onOpenFile={onOpenFile}
+          />
         </div>
       ) : null}
       {completion ? (

@@ -316,10 +316,56 @@ describe("Codex client-style task process", () => {
       }),
     );
     expect(stopped).toContain("execution-process stopped expanded");
-    expect(stopped).toContain('class="execution-step command stopped collapsed"');
-    expect(stopped).toContain('aria-label="展开 运行测试"');
+    expect(stopped).toContain("execution-command-batch collapsed");
+    expect(stopped).toContain('aria-label="展开 运行了 1 个命令"');
     expect(stopped).toContain("已停止");
+    expect(stopped).not.toContain("npm test");
     expect(stopped).not.toContain("fui-Spinner");
+
+    const historicalFailure = renderToStaticMarkup(
+      createElement(ExecutionProcess, {
+        entries: [
+          {
+            id: "commentary-before",
+            role: "assistant",
+            phase: "commentary",
+            text: "先运行验证。",
+            createdAt: null,
+          },
+          {
+            id: "command-completed",
+            role: "command",
+            text: "tool: exec_command\nstatus: completed\ninput:\n{\"cmd\":\"npm test\"}",
+            createdAt: null,
+          },
+          {
+            id: "commentary-after",
+            role: "assistant",
+            phase: "commentary",
+            text: "测试完成，继续检查。",
+            createdAt: null,
+          },
+          {
+            id: "command-failed",
+            role: "command",
+            text: "tool: exec_command\nstatus: failed\ninput:\n{\"cmd\":\"npm run verify\"}",
+            createdAt: null,
+          },
+        ],
+      }),
+    );
+    expect(historicalFailure).toContain("execution-process failed expanded");
+    expect(historicalFailure.match(/execution-command-batch collapsed/g)).toHaveLength(2);
+    expect(historicalFailure).toContain("1 个失败");
+    expect(historicalFailure).not.toContain("npm test");
+    expect(historicalFailure).not.toContain("npm run verify");
+    expect(historicalFailure).not.toContain("Codex 正在继续处理");
+    expect(historicalFailure.indexOf("先运行验证。")).toBeLessThan(
+      historicalFailure.indexOf("运行了 1 个命令"),
+    );
+    expect(historicalFailure.indexOf("运行了 1 个命令")).toBeLessThan(
+      historicalFailure.indexOf("测试完成，继续检查。"),
+    );
 
     const anchoredRunning = renderToStaticMarkup(
       createElement(ExecutionProcess, {
