@@ -168,7 +168,7 @@ describe("TimelineItemList active task presentation", () => {
             {
               id: "command-4",
               role: "command",
-              text: "tool: exec_command\nstatus: completed\ninput:\n{\"cmd\":\"npm run typecheck\"}",
+              text: "tool: exec_command\nstatus: failed\ninput:\n{\"cmd\":\"npm run typecheck\"}\noutput:\nexit_code: 1",
               createdAt: "2026-07-30T00:00:05.000Z",
             },
             {
@@ -205,6 +205,9 @@ describe("TimelineItemList active task presentation", () => {
     expect(markup).toContain("运行了多个命令");
     expect(markup).toContain('aria-label="展开 运行了 2 个命令"');
     expect(markup.match(/class="execution-command-batch /g)).toHaveLength(2);
+    expect(markup).toContain("execution-command-batch collapsed has-failure");
+    expect(markup).toContain('aria-label="展开 运行了 2 个命令，其中 1 个失败"');
+    expect(markup).toContain("1 个失败");
     expect(markup).toContain('class="execution-step command running expanded"');
     expect(markup).toContain("npm run build");
     expect(markup).not.toContain("npm test");

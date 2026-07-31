@@ -344,17 +344,18 @@ describe("Codex client-style task process", () => {
 
     const longOutput = renderToStaticMarkup(
       createElement(ExecutionProcess, {
+        active: true,
         entries: [
           {
             id: "long-output",
             role: "command",
             text: [
               "tool: exec_command",
-              "status: failed",
+              "status: running",
               "input:",
               '{"cmd":"npm test"}',
               "output:",
-              `first line\\n${"x".repeat(2_100)}\\nlast line\\nexit_code: 1`,
+              `first line\\n${"x".repeat(2_100)}\\nlast line`,
             ].join("\n"),
             createdAt: null,
           },

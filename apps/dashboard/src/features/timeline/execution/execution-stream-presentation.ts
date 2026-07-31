@@ -16,7 +16,7 @@ export type ExecutionStreamBlock =
     };
 
 function commandNeedsOwnRow(record: ReadableExecution): boolean {
-  return record.status === "running" || record.status === "failed";
+  return record.status === "running";
 }
 
 export function buildExecutionStreamBlocks(
@@ -54,10 +54,7 @@ export function hasLiveExecutionRecord(
 export function executionStepDefaultExpanded(
   record: Pick<ReadableExecution, "role" | "status">,
 ): boolean {
-  return (
-    record.status === "failed" ||
-    (record.role === "command" && record.status === "running")
-  );
+  return record.role === "command" && record.status === "running";
 }
 
 export function resolveExecutionStepExpanded(

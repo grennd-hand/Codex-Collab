@@ -1,6 +1,6 @@
 import { Button } from "@fluentui/react-components";
 import { ChevronDownRegular, CopyRegular } from "@fluentui/react-icons";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import {
   IdeFileChanges,
   navigationTargetForFileChange,
@@ -27,7 +27,6 @@ export function ExecutionStepCard({
 }) {
   const defaultExpanded = executionStepDefaultExpanded(record);
   const [manualExpanded, setManualExpanded] = useState<boolean | null>(null);
-  const previousStatusRef = useRef(record.status);
   const expanded = resolveExecutionStepExpanded(
     defaultExpanded,
     manualExpanded,
@@ -50,14 +49,6 @@ export function ExecutionStepCard({
       .replace(/^#{1,3}\s+/, "")
       .replaceAll("**", "")
       .replaceAll("`", "") ?? record.summary;
-
-  useEffect(() => {
-    const previousStatus = previousStatusRef.current;
-    previousStatusRef.current = record.status;
-    if (record.status === "failed" && previousStatus !== "failed") {
-      setManualExpanded(null);
-    }
-  }, [record.status]);
 
   useEffect(() => {
     setOutputCopied(false);

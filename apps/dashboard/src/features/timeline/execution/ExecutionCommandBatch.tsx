@@ -17,11 +17,19 @@ export function ExecutionCommandBatch({
   const [expanded, setExpanded] = useState(false);
   const contentId = useId();
   const label = items.length === 1 ? "运行了 1 个命令" : "运行了多个命令";
-  const accessibleLabel = `运行了 ${items.length} 个命令`;
+  const failedCount = items.filter(({ record }) => record.status === "failed").length;
+  const failureLabel = failedCount > 0 ? `${failedCount} 个失败` : null;
+  const accessibleLabel = `运行了 ${items.length} 个命令${
+    failureLabel ? `，其中 ${failureLabel}` : ""
+  }`;
   const latestCreatedAt = items.at(-1)?.record.createdAt ?? null;
 
   return (
-    <section className={`execution-command-batch ${expanded ? "expanded" : "collapsed"}`}>
+    <section
+      className={`execution-command-batch ${expanded ? "expanded" : "collapsed"}${
+        failureLabel ? " has-failure" : ""
+      }`}
+    >
       {!expanded
         ? items.map(({ index, record }) => {
             const historyKey = historyEntryKeys?.[index];
@@ -44,6 +52,9 @@ export function ExecutionCommandBatch({
       >
         <WindowConsoleRegular aria-hidden="true" />
         <span>{label}</span>
+        {failureLabel ? (
+          <span className="execution-command-batch-failure">{failureLabel}</span>
+        ) : null}
         {latestCreatedAt ? (
           <time dateTime={latestCreatedAt}>{timeLabel(latestCreatedAt)}</time>
         ) : null}

@@ -80,6 +80,11 @@
   font-size: 12px;
 }
 
+.execution-command-batch-disclosure > .execution-command-batch-failure {
+  color: var(--colorStatusDangerForeground1);
+  font-weight: 600;
+}
+
 .execution-command-batch-disclosure > time {
   margin-left: auto;
   color: var(--colorNeutralForeground4);

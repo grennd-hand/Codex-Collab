@@ -62,7 +62,7 @@ describe("buildExecutionStreamBlocks", () => {
     });
   });
 
-  it("keeps running and failed commands outside historical batches", () => {
+  it("folds terminal failures with history and keeps only running commands open", () => {
     const blocks = buildExecutionStreamBlocks([
       record("done", "command"),
       record("failed", "command", "failed"),
@@ -73,16 +73,14 @@ describe("buildExecutionStreamBlocks", () => {
     expect(blocks.map((block) => block.kind)).toEqual([
       "command-batch",
       "command",
-      "command-batch",
-      "command",
     ]);
     expect(blocks[0]).toMatchObject({
       kind: "command-batch",
-      items: [{ record: { id: "done" } }],
-    });
-    expect(blocks[2]).toMatchObject({
-      kind: "command-batch",
-      items: [{ record: { id: "stopped" } }],
+      items: [
+        { record: { id: "done" } },
+        { record: { id: "failed", status: "failed" } },
+        { record: { id: "stopped" } },
+      ],
     });
     expect(hasLiveExecutionRecord(blocks.flatMap((block) =>
       block.kind === "command-batch"
@@ -91,7 +89,7 @@ describe("buildExecutionStreamBlocks", () => {
     ))).toBe(true);
   });
 
-  it("opens only active commands or failures unless the user chose otherwise", () => {
+  it("opens only active commands unless the user chose otherwise", () => {
     expect(
       executionStepDefaultExpanded(record("running", "command", "running")),
     ).toBe(true);
@@ -103,7 +101,7 @@ describe("buildExecutionStreamBlocks", () => {
     ).toBe(false);
     expect(
       executionStepDefaultExpanded(record("failed", "command", "failed")),
-    ).toBe(true);
+    ).toBe(false);
     expect(resolveExecutionStepExpanded(true, false)).toBe(false);
     expect(resolveExecutionStepExpanded(false, true)).toBe(true);
   });
