@@ -6,6 +6,7 @@ npmRebuild: false
 electronDist: ../../node_modules/electron/dist
 afterPack: scripts/after-pack.mjs
 directories:
+  buildResources: assets
   output: release
 files:
   - dist/main/**
@@ -32,6 +33,7 @@ extraResources:
   - from: ../../native/host-ipc/target/release/codex-collab-host-ipc.exe
     to: native/codex-collab-host-ipc.exe
 win:
+  icon: codex-collab.ico
   target:
     - target: nsis
       arch:
@@ -42,4 +44,6 @@ nsis:
   perMachine: false
   allowToChangeInstallationDirectory: true
   deleteAppDataOnUninstall: false
+  installerIcon: codex-collab.ico
+  uninstallerIcon: codex-collab.ico
 publish: null

@@ -135,6 +135,7 @@ const styleFacades = new Map([
     [
       '@import "../app/desktop-app.css";',
       '@import "../shell/desktop-shell.css";',
+      '@import "../layout/desktop-panel-strip.css";',
       '@import "../panes/desktop-panes.css";',
     ],
   ],

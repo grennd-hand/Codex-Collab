@@ -116,9 +116,13 @@
   SHA-256 一致。全仓 625 项测试通过
 - [x] Beta 12 已按 `6f246e6` 覆盖安装并实点“已处理”：终态历史展开后继续使用正文与分段折叠
   命令组，不再显示逐命令列表，也不显示“Codex 正在继续处理”；实测 2 个命令组、0 条裸命令
+- [x] Beta 13 已新增白底深靛蓝多尺寸 Windows 图标，窗口、托盘、快捷方式、NSIS 和卸载项
+  使用同一图标源；不再保留旧的损坏 PNG 或独立托盘图标数据
+- [x] Beta 13 已把协作/活动、项目文件和 Codex 任务改成可任意换位的稳定面板；支持专用拖动柄、
+  左右按钮、键盘调宽、双击复位和 task-scoped 持久化，换位不卸载 Monaco
 - [ ] 补齐桌面 onboarding、Host restart-required、offline/catching-up、room/member dialogs
-- [ ] 在 `v0.1.0-beta.12` 手工确认关闭、托盘恢复和托盘退出，并完成 Electron/Monaco 主人完整
-  协作/IDE 旅程
+- [ ] 在 `v0.1.0-beta.13` 手工确认面板拖放、Monaco 状态保留、关闭、托盘恢复和托盘退出，
+  并完成 Electron/Monaco 主人完整协作/IDE 旅程
 - [x] 未签名 per-user NSIS、unpacked build、SHA-256、SBOM、manifest 和 ASAR/资源凭据扫描
 - [x] 全仓五项门禁、18 工具 MCP probe、Host/Desktop 专项和本地临时 Relay/SQLite 进程级 E2E
 - [x] 2026-07-31 将提交 `6904723` 部署到 Primary Relay；部署前创建一致性卷备份，公网验证入口资产、

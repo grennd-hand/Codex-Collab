@@ -1,38 +1,40 @@
-import { inflateSync } from "node:zlib";
+import { readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { DESKTOP_TRAY_ICON_DATA_URL } from "./desktop-tray-icon.js";
+import {
+  DESKTOP_ICON_FILE_NAME,
+  resolveDesktopDevelopmentIconPath,
+} from "./desktop-tray-icon.js";
 
-const PNG_SIGNATURE = "89504e470d0a1a0a";
+const desktopRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 describe("Desktop tray icon", () => {
-  it("contains a complete, decodable 32px RGBA PNG", () => {
-    const image = Buffer.from(DESKTOP_TRAY_ICON_DATA_URL.split(",")[1]!, "base64");
-    expect(image.subarray(0, 8).toString("hex")).toBe(PNG_SIGNATURE);
+  it("contains the required 32-bit Windows icon frames", async () => {
+    const image = await readFile(
+      join(desktopRoot, "assets", DESKTOP_ICON_FILE_NAME),
+    );
+    expect(image.readUInt16LE(0)).toBe(0);
+    expect(image.readUInt16LE(2)).toBe(1);
+    const count = image.readUInt16LE(4);
+    const frames = Array.from({ length: count }, (_, index) => {
+      const offset = 6 + index * 16;
+      return {
+        width: image[offset] || 256,
+        height: image[offset + 1] || 256,
+        bitsPerPixel: image.readUInt16LE(offset + 6),
+      };
+    });
+    expect(frames.map((frame) => frame.width)).toEqual([
+      16, 20, 24, 32, 40, 48, 64, 128, 256,
+    ]);
+    expect(frames.every((frame) => frame.width === frame.height)).toBe(true);
+    expect(frames.every((frame) => frame.bitsPerPixel === 32)).toBe(true);
+  });
 
-    const compressed: Buffer[] = [];
-    let offset = 8;
-    let sawEnd = false;
-    while (offset < image.length) {
-      const length = image.readUInt32BE(offset);
-      const type = image.toString("ascii", offset + 4, offset + 8);
-      const nextOffset = offset + 12 + length;
-      expect(nextOffset).toBeLessThanOrEqual(image.length);
-      if (type === "IHDR") {
-        expect(image.readUInt32BE(offset + 8)).toBe(32);
-        expect(image.readUInt32BE(offset + 12)).toBe(32);
-        expect(image[offset + 16]).toBe(8);
-        expect(image[offset + 17]).toBe(6);
-      } else if (type === "IDAT") {
-        compressed.push(image.subarray(offset + 8, offset + 8 + length));
-      } else if (type === "IEND") {
-        expect(length).toBe(0);
-        expect(nextOffset).toBe(image.length);
-        sawEnd = true;
-      }
-      offset = nextOffset;
-    }
-
-    expect(sawEnd).toBe(true);
-    expect(inflateSync(Buffer.concat(compressed))).toHaveLength(32 * (1 + 32 * 4));
+  it("resolves the development icon outside dist/main", () => {
+    expect(resolveDesktopDevelopmentIconPath(join(desktopRoot, "dist", "main"))).toBe(
+      join(desktopRoot, "assets", DESKTOP_ICON_FILE_NAME),
+    );
   });
 });

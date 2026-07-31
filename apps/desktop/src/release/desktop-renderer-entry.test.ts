@@ -29,10 +29,12 @@ describe("desktop renderer entry boundary", () => {
     const facade = source("renderer/styles/desktop.css");
     expect(facade).toContain('@import "../app/desktop-app.css";');
     expect(facade).toContain('@import "../shell/desktop-shell.css";');
+    expect(facade).toContain('@import "../layout/desktop-panel-strip.css";');
     expect(facade).toContain('@import "../panes/desktop-panes.css";');
     const css = [
       source("renderer/app/desktop-app.css"),
       source("renderer/shell/desktop-shell.css"),
+      source("renderer/layout/desktop-panel-strip.css"),
       source("renderer/panes/desktop-panes.css"),
     ].join("\n");
     expect(css).toContain(".desktop-workbench");
@@ -40,12 +42,17 @@ describe("desktop renderer entry boundary", () => {
     expect(css).not.toContain(".app-frame");
   });
 
-  it("keeps Desktop splitters discoverable and status groups collision-free", () => {
+  it("keeps reorderable Desktop panels accessible and status groups collision-free", () => {
     const shell = source("renderer/shell/DesktopWorkspaceShell.tsx");
     const shellCss = source("renderer/shell/desktop-shell.css");
-    const paneCss = source("renderer/panes/desktop-panes.css");
+    const panelCss = source("renderer/layout/desktop-panel-strip.css");
+    const panelStrip = source("renderer/layout/DesktopPanelStrip.tsx");
+    const panelReorder = source("renderer/layout/useDesktopPanelReorder.ts");
 
-    expect(shell.match(/separatorSize=\{12\}/g)).toHaveLength(2);
+    expect(shell).toContain("DesktopPanelStrip");
+    expect(panelStrip).toContain('data-desktop-panel-id={panelId}');
+    expect(panelReorder).toContain("moveDesktopPanelByStep");
+    expect(panelStrip).toContain("persistDesktopPanelLayout");
     expect(shell).toContain('className="desktop-statusbar-live"');
     expect(shell).toContain('className="desktop-statusbar-context"');
     expect(shell).toContain('className="desktop-statusbar-trailing"');
@@ -54,8 +61,7 @@ describe("desktop renderer entry boundary", () => {
       "grid-template-columns: auto minmax(0, 1fr) auto;",
     );
     expect(shellCss).toContain(".desktop-statusbar-context");
-    expect(paneCss).toContain(
-      ".desktop-main-split > .resizable-split-pane__separator::after",
-    );
+    expect(panelCss).toContain(".desktop-panel-separator::after");
+    expect(panelCss).toContain('.desktop-panel-slot[data-drop-position="before"]');
   });
 });

@@ -15,7 +15,7 @@ import {
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DesktopQuitCoordinator } from "./app/app-lifecycle.js";
-import { DESKTOP_TRAY_ICON_DATA_URL } from "./app/desktop-tray-icon.js";
+import { resolveDesktopDevelopmentIconPath } from "./app/desktop-tray-icon.js";
 import {
   EncryptedCredentialStore,
   type CredentialEncryption,
@@ -55,6 +55,7 @@ protocol.registerSchemesAsPrivileged([
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
 const rendererRoot = join(currentDirectory, "..", "renderer");
 const preloadPath = join(currentDirectory, "preload.cjs");
+const developmentIconPath = resolveDesktopDevelopmentIconPath(currentDirectory);
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -95,6 +96,7 @@ function createMainWindow(quit: DesktopQuitCoordinator): BrowserWindow {
     show: false,
     backgroundColor: "#111111",
     title: "Codex Collab",
+    ...(app.isPackaged ? {} : { icon: developmentIconPath }),
     autoHideMenuBar: true,
     webPreferences: {
       preload: preloadPath,
@@ -130,10 +132,12 @@ function createMainWindow(quit: DesktopQuitCoordinator): BrowserWindow {
 }
 
 async function createTray(quit: DesktopQuitCoordinator): Promise<Tray> {
-  const embeddedIcon = nativeImage.createFromDataURL(DESKTOP_TRAY_ICON_DATA_URL);
-  const icon = embeddedIcon.isEmpty()
+  const applicationIcon = app.isPackaged
     ? await app.getFileIcon(process.execPath, { size: "small" })
-    : embeddedIcon.resize({ width: 16, height: 16, quality: "best" });
+    : nativeImage.createFromPath(developmentIconPath);
+  const icon = applicationIcon.isEmpty()
+    ? await app.getFileIcon(process.execPath, { size: "small" })
+    : applicationIcon.resize({ width: 16, height: 16, quality: "best" });
   if (icon.isEmpty()) throw new Error("desktop_tray_icon_unavailable");
 
   const nextTray = new Tray(icon);

@@ -1,2 +1,15 @@
-export const DESKTOP_TRAY_ICON_DATA_URL =
-  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAgElEQVR42u2XXQ4AEAyD3dBF3P+VC8jolDWyJh7pF2Y/paRA1da7tcKMr4GgxlSQU/MjCJa5C4JtDkHMNnrlgggFWBnvXvVqnyaAdZA36KCnSIAEkAZgf0NNAKsIMVMxlAmfAyDF6FpJZsYCrSd4ai7Rkkk0pRJtucRgIjOafasB0HoqBvHVBzgAAAAASUVORK5CYII=";
+import { join } from "node:path";
+
+export const DESKTOP_ICON_FILE_NAME = "codex-collab.ico";
+
+export function resolveDesktopDevelopmentIconPath(
+  mainOutputDirectory: string,
+): string {
+  return join(
+    mainOutputDirectory,
+    "..",
+    "..",
+    "assets",
+    DESKTOP_ICON_FILE_NAME,
+  );
+}

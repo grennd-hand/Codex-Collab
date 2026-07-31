@@ -1,0 +1,179 @@
+.desktop-panel-strip {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+  background: var(--colorNeutralBackground1);
+}
+
+.desktop-panel-fragment {
+  display: contents;
+}
+
+.desktop-panel-slot {
+  position: relative;
+  width: var(--desktop-panel-width);
+  min-width: 0;
+  min-height: 0;
+  flex: 0 0 var(--desktop-panel-width);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--colorNeutralBackground1);
+}
+
+.desktop-panel-toolbar {
+  height: 28px;
+  min-height: 28px;
+  padding: 1px 3px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--colorNeutralStroke2);
+  background: var(--colorNeutralBackground2);
+}
+
+.desktop-panel-toolbar .fui-Button {
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
+}
+
+.desktop-panel-drag-handle {
+  cursor: grab;
+  touch-action: none;
+}
+
+.desktop-panel-drag-handle:active {
+  cursor: grabbing;
+}
+
+.desktop-panel-toolbar-label {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--colorNeutralForeground2);
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.desktop-panel-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.desktop-panel-content {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.desktop-panel-separator {
+  position: relative;
+  z-index: 4;
+  width: 12px;
+  min-width: 12px;
+  height: 100%;
+  flex: 0 0 12px;
+  cursor: col-resize;
+  touch-action: none;
+  background: var(--colorNeutralBackground2);
+  outline: none;
+  transition: background-color 120ms ease;
+}
+
+.desktop-panel-separator::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 3px;
+  height: 36px;
+  border-radius: 2px;
+  content: "";
+  background: var(--colorNeutralStroke1);
+  opacity: 0.7;
+  transform: translate(-50%, -50%);
+  transition: background-color 120ms ease, opacity 120ms ease;
+}
+
+.desktop-panel-separator:hover,
+.desktop-panel-separator:focus-visible,
+.desktop-panel-separator[data-resizing="true"] {
+  background: var(--colorBrandBackground2);
+}
+
+.desktop-panel-separator:hover::after,
+.desktop-panel-separator:focus-visible::after,
+.desktop-panel-separator[data-resizing="true"]::after {
+  background: var(--colorBrandStroke1);
+  opacity: 1;
+}
+
+.desktop-panel-slot[data-drop-position="before"]::before,
+.desktop-panel-slot[data-drop-position="after"]::after {
+  position: absolute;
+  z-index: 8;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  content: "";
+  background: var(--colorBrandBackground);
+  pointer-events: none;
+}
+
+.desktop-panel-slot[data-drop-position="before"]::before {
+  left: 0;
+}
+
+.desktop-panel-slot[data-drop-position="after"]::after {
+  right: 0;
+}
+
+.desktop-panel-strip[data-dragging] .desktop-panel-slot {
+  user-select: none;
+}
+
+.desktop-panel-live-region {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+.desktop-panel-strip[data-compact="true"]
+  .desktop-panel-slot[data-desktop-panel-id="sidebar"] {
+  position: absolute;
+  z-index: 6;
+  inset: 0 auto 0 0;
+  width: min(320px, calc(100% - 80px));
+  min-width: min(320px, calc(100% - 80px));
+  box-shadow: var(--shadow8);
+  border-right: 1px solid var(--colorNeutralStroke2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .desktop-panel-separator,
+  .desktop-panel-separator::after {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .desktop-panel-separator:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}

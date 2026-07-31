@@ -25,6 +25,10 @@ describe("Windows Internal Beta packaging", () => {
     expect(config).toContain("perMachine: false");
     expect(config).toContain("deleteAppDataOnUninstall: false");
     expect(config).toContain("electronDist: ../../node_modules/electron/dist");
+    expect(config).toContain("buildResources: assets");
+    expect(config).toContain("icon: codex-collab.ico");
+    expect(config).toContain("installerIcon: codex-collab.ico");
+    expect(config).toContain("uninstallerIcon: codex-collab.ico");
     expect(config).not.toContain("publish: always");
   });
 

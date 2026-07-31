@@ -7,8 +7,15 @@ import {
   taskUiScope,
   workspaceDataScope,
 } from "../../../dashboard/src/ide/state/workspace-file-cache.js";
-import { ResizableSplitPane } from "../../../dashboard/src/layout/split-pane/ResizableSplitPane.js";
 import { useWorkspacePanelVisibility } from "../../../dashboard/src/layout/workspace/useWorkspacePanelVisibility.js";
+import {
+  DesktopPanelStrip,
+  type DesktopPanelDefinition,
+} from "../layout/DesktopPanelStrip.js";
+import {
+  desktopPanelStorageKey,
+  type DesktopPanelId,
+} from "../layout/desktop-panel-arrangement.js";
 import {
   DesktopActivityRail,
   type DesktopSidebarMode,
@@ -17,7 +24,6 @@ import { DesktopCodexPane } from "../panes/DesktopCodexPane.js";
 import { DesktopCollaborationPane } from "../panes/DesktopCollaborationPane.js";
 import { DesktopCommandBar } from "./DesktopCommandBar.js";
 import { DesktopFilesPane } from "../panes/DesktopFilesPane.js";
-import { desktopMainSplitSizing } from "./desktop-workspace-sizing.js";
 
 function statusTime(value: string | null | undefined): string {
   if (!value) return "尚未同步";
@@ -52,9 +58,6 @@ export function DesktopWorkspaceShell({ model }: { model: DashboardViewModel }) 
     workspaceConnected: model.workspaceConnected,
   });
   const filesVisible = model.workspaceConnected && panels.filesVisible;
-  const mainSplitSizing = desktopMainSplitSizing(
-    model.workspaceFiles.editorExpanded,
-  );
   const visibleSidebar =
     activeSidebar === "collaboration" && !panels.collaborationVisible
       ? null
@@ -81,46 +84,32 @@ export function DesktopWorkspaceShell({ model }: { model: DashboardViewModel }) 
     sidebar = <ActivityPanel activities={model.activities} />;
   }
 
-  const codexPane = <DesktopCodexPane model={model} />;
-  const taskWorkspace = filesVisible ? (
-    <ResizableSplitPane
-      className="desktop-main-split"
-      primary={
+  const workspacePanels: Partial<
+    Record<DesktopPanelId, DesktopPanelDefinition>
+  > = {
+    codex: {
+      label: "Codex 任务",
+      content: <DesktopCodexPane model={model} />,
+    },
+  };
+  if (sidebar) {
+    workspacePanels.sidebar = {
+      label: visibleSidebar === "activity" ? "任务活动" : "协作成员",
+      content: sidebar,
+    };
+  }
+  if (filesVisible) {
+    workspacePanels.files = {
+      label: "项目文件",
+      content: (
         <DesktopFilesPane
           dataScope={dataScope}
           model={model}
           taskScope={taskScope}
         />
-      }
-      secondary={codexPane}
-      {...mainSplitSizing}
-      separatorSize={12}
-      separatorLabel="调整项目 IDE 和 Codex 任务宽度"
-      primaryLabel="项目 IDE"
-      secondaryLabel="Codex 任务"
-      storageKey={`codex-collab:desktop:ide-task:${taskScope}`}
-    />
-  ) : (
-    codexPane
-  );
-  const workspace = sidebar ? (
-    <ResizableSplitPane
-      className="desktop-sidebar-split"
-      primary={sidebar}
-      secondary={taskWorkspace}
-      defaultPrimarySize={300}
-      minPrimarySize={248}
-      maxPrimarySize={420}
-      minSecondarySize={760}
-      separatorSize={12}
-      separatorLabel="调整协作侧栏和工作区宽度"
-      primaryLabel={visibleSidebar === "activity" ? "最近活动" : "协作聊天"}
-      secondaryLabel="项目 IDE 与 Codex 任务"
-      storageKey={`codex-collab:desktop:sidebar:${taskScope}`}
-    />
-  ) : (
-    taskWorkspace
-  );
+      ),
+    };
+  }
 
   return (
     <div className="desktop-shell">
@@ -146,7 +135,12 @@ export function DesktopWorkspaceShell({ model }: { model: DashboardViewModel }) 
           onOpenWorkspace={() => void model.workspaceConnection.openDialog()}
         />
         <section className="desktop-workspace-stage" aria-label="主人工作台">
-          {workspace}
+          <DesktopPanelStrip
+            key={taskScope}
+            editorExpanded={model.workspaceFiles.editorExpanded}
+            panels={workspacePanels}
+            storageKey={desktopPanelStorageKey(taskScope)}
+          />
         </section>
       </div>
       <footer className="desktop-statusbar" aria-label="工作台状态">

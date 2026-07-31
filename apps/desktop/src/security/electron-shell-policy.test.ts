@@ -24,7 +24,8 @@ describe("Electron shell hardening", () => {
     expect(main).toContain('app.on("second-instance", showMainWindow)');
     expect(main).toContain("event.preventDefault();\n      window.hide();");
     expect(main).toContain("showTrayHint();");
-    expect(main).toContain("createFromDataURL(DESKTOP_TRAY_ICON_DATA_URL)");
+    expect(main).toContain("app.getFileIcon(process.execPath");
+    expect(main).toContain("nativeImage.createFromPath(developmentIconPath)");
     expect(main).toContain('nextTray.on("click", showMainWindow)');
     expect(main).toContain('nextTray.on("double-click", showMainWindow)');
     expect(main).toContain("打开主人工作台");
