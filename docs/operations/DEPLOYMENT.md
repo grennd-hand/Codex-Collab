@@ -180,7 +180,7 @@ schema、资产 hash、HTTPS 和真实登录/邀请流程，并证明 Guest 容�
   `727780650530aae367adc8b29dd7045c87d691fa59355541760489a8cdb35195`；Caddy 容器仍为
   `055f22e85bd9`。两者未重启、未重建、未改配置或数据卷。
 
-### 7.2 2026-07-31 Primary 时间线发布记录
+### 7.2 2026-07-31 Primary 时间线发布记录（已由 7.3 取代）
 
 - 源提交：`dbca79bb56e394da0975bd363dda3d2434f9086a`；不可变 release：
   `/opt/codex-collab/releases/dbca79b-20260731T052744Z/app`。
@@ -192,6 +192,28 @@ schema、资产 hash、HTTPS 和真实登录/邀请流程，并证明 Guest 容�
 - Primary 首页 SHA-256 切换为
   `6196f20b388b1ef8fe2d19324c7e246f3dec61540112864868cc388f51f8b15c`，入口引用的
   5 个静态资产均以真实 GET 验证成功；线上 bundle 包含“运行了多个命令”单一历史折叠规则。
+- 公网临时会话再次完成安全响应头、邀请、加入、批准即 `workspace-write`、Realtime
+  `submitted`、assistant history、`completed` 和刷新后终态持久化闭环。
+- Guest 仍为 release `d10f20f`、容器 `d74f3456a2a3`、首页 SHA-256
+  `727780650530aae367adc8b29dd7045c87d691fa59355541760489a8cdb35195`；Caddy 容器仍为
+  `055f22e85bd9`。两者未重启、未重建、未改配置或数据卷。
+- 该版本把被正文分隔的历史命令也跨段合并，和最终确认的“每两段文字之间各自折叠”不一致，
+  随后由 7.3 的 `c11976e` 修正版替换。
+
+### 7.3 2026-07-31 Primary 文字区间命令折叠修正版
+
+- 源提交：`c11976e0dd4806e5df4b762dd03f7343830b3adf`；不可变 release：
+  `/opt/codex-collab/releases/c11976e-20260731T055707Z/app`。
+- 源归档 SHA-256：`a414b4189592d267f731d183c9f0f589d0bd2381e151ae2492df111aa49e8715`；
+  切换前一致性备份：`/opt/codex-collab/backups/relay-data-20260731T060106Z.tar.gz`。
+- Primary 容器切换为 `1a174cecedb3`，镜像 digest 为
+  `sha256:f378c162bab6717fc8812048bd8993dc37c97ff3faf948541901b421ad5a8af6`；
+  Docker health 与公网 `/health` 均通过。
+- Primary 首页 SHA-256 切换为
+  `84a105dae9ccf0ef961fe6cdbc0382521f9adb22106d455afe5981db021034b9`，入口引用的
+  5 个静态资产均以真实 GET 验证成功。
+- focused 回归固定顺序为“文字 A -> 折叠命令组 -> 文字 B -> 折叠命令组 -> 文字 C ->
+  当前运行命令”；历史命令默认不渲染详情，当前命令和失败命令保持单独展开。
 - 公网临时会话再次完成安全响应头、邀请、加入、批准即 `workspace-write`、Realtime
   `submitted`、assistant history、`completed` 和刷新后终态持久化闭环。
 - Guest 仍为 release `d10f20f`、容器 `d74f3456a2a3`、首页 SHA-256
