@@ -114,8 +114,10 @@
 - [x] Beta 11 已按 `48f710e` 覆盖安装并通过 Renderer DOM 探针：正文、命令组、下一正文、
   下一命令组严格保持时间顺序；所有历史命令默认折叠，两个失败命令也未展开。安装 ASAR 与候选
   SHA-256 一致。全仓 625 项测试通过
+- [x] Beta 12 已按 `6f246e6` 覆盖安装并实点“已处理”：终态历史展开后继续使用正文与分段折叠
+  命令组，不再显示逐命令列表，也不显示“Codex 正在继续处理”；实测 2 个命令组、0 条裸命令
 - [ ] 补齐桌面 onboarding、Host restart-required、offline/catching-up、room/member dialogs
-- [ ] 在 `v0.1.0-beta.11` 手工确认关闭、托盘恢复和托盘退出，并完成 Electron/Monaco 主人完整
+- [ ] 在 `v0.1.0-beta.12` 手工确认关闭、托盘恢复和托盘退出，并完成 Electron/Monaco 主人完整
   协作/IDE 旅程
 - [x] 未签名 per-user NSIS、unpacked build、SHA-256、SBOM、manifest 和 ASAR/资源凭据扫描
 - [x] 全仓五项门禁、18 工具 MCP probe、Host/Desktop 专项和本地临时 Relay/SQLite 进程级 E2E
