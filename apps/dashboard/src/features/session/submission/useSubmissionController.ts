@@ -158,8 +158,8 @@ export function useSubmissionController({
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
-            sessionId: recoverySessionId,
-            recoveryKey,
+            sessionId: recoverySessionId.trim(),
+            recoveryKey: recoveryKey.trim(),
             deviceLabel: deviceLabel(),
           }),
         },
@@ -215,6 +215,7 @@ export function useSubmissionController({
 
   const submitSetup = (event: React.FormEvent) => {
     event.preventDefault();
+    setError(null);
     const mode = setupSubmissionMode(initialInviteToken, setupMode);
     void (mode === "join"
       ? joinSession()

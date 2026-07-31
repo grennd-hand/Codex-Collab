@@ -18,6 +18,7 @@ import { RoomAccessFields, RoomSubmitButton } from "./RoomAccessFields.js";
 interface SetupDialogProps {
   open: boolean;
   credentialNotice: string | null;
+  error: string | null;
   initialInviteToken: string | null;
   displayName: string;
   roomName: string;
@@ -27,6 +28,7 @@ interface SetupDialogProps {
   recoveryKey: string;
   submitting: boolean;
   onCredentialNoticeChange: (value: string | null) => void;
+  onErrorDismiss: () => void;
   onDisplayNameChange: (value: string) => void;
   onRoomNameChange: (value: string) => void;
   onJoinTokenChange: (value: string) => void;
@@ -36,9 +38,48 @@ interface SetupDialogProps {
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }
 
+type SetupDialogFeedbackProps = Pick<
+  SetupDialogProps,
+  "credentialNotice" | "error" | "onCredentialNoticeChange" | "onErrorDismiss"
+>;
+
+export function SetupDialogFeedback({
+  credentialNotice,
+  error,
+  onCredentialNoticeChange,
+  onErrorDismiss,
+}: SetupDialogFeedbackProps) {
+  return (
+    <>
+      {credentialNotice ? (
+        <MessageBar intent="warning">
+          <MessageBarBody><MessageBarTitle>需要重新连接</MessageBarTitle>{credentialNotice}</MessageBarBody>
+          <Button type="button" appearance="transparent" icon={<DismissRegular />} aria-label="关闭会话失效提示" onClick={() => onCredentialNoticeChange(null)} />
+        </MessageBar>
+      ) : null}
+      {error ? (
+        <MessageBar intent="error" role="alert">
+          <MessageBarBody>
+            <MessageBarTitle>连接未完成</MessageBarTitle>
+            {error}
+          </MessageBarBody>
+          <Button
+            type="button"
+            appearance="transparent"
+            icon={<DismissRegular />}
+            aria-label="关闭连接错误"
+            onClick={onErrorDismiss}
+          />
+        </MessageBar>
+      ) : null}
+    </>
+  );
+}
+
 export function SetupDialog({
   open,
   credentialNotice,
+  error,
   initialInviteToken,
   displayName,
   roomName,
@@ -48,6 +89,7 @@ export function SetupDialog({
   recoveryKey,
   submitting,
   onCredentialNoticeChange,
+  onErrorDismiss,
   onDisplayNameChange,
   onRoomNameChange,
   onJoinTokenChange,
@@ -63,12 +105,12 @@ export function SetupDialog({
           <DialogBody>
             <DialogTitle>连接协作房间</DialogTitle>
             <DialogContent className="setup-fields setup-dialog-content">
-              {credentialNotice ? (
-                <MessageBar intent="warning">
-                  <MessageBarBody><MessageBarTitle>需要重新连接</MessageBarTitle>{credentialNotice}</MessageBarBody>
-                  <Button appearance="transparent" icon={<DismissRegular />} aria-label="关闭会话失效提示" onClick={() => onCredentialNoticeChange(null)} />
-                </MessageBar>
-              ) : null}
+              <SetupDialogFeedback
+                credentialNotice={credentialNotice}
+                error={error}
+                onCredentialNoticeChange={onCredentialNoticeChange}
+                onErrorDismiss={onErrorDismiss}
+              />
               <RoomAccessFields
                 initialInviteToken={initialInviteToken}
                 displayName={displayName}

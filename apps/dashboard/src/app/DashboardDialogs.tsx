@@ -7,11 +7,13 @@ import { WorkspaceConnectionDialog } from "../features/dialogs/WorkspaceConnecti
 export function DashboardDialogs({ model }: { model: DashboardViewModel }) {
   const {
     credentialNotice,
+    error,
     initialInviteToken,
     invite,
     member,
     ownerRecovery,
     setCredentialNotice,
+    setError,
     setupOpen,
     submission,
     workspaceConnection,
@@ -37,6 +39,7 @@ export function DashboardDialogs({ model }: { model: DashboardViewModel }) {
       <SetupDialog
         open={setupOpen}
         credentialNotice={credentialNotice}
+        error={error}
         initialInviteToken={initialInviteToken}
         displayName={submission.displayName}
         roomName={submission.roomName}
@@ -46,6 +49,7 @@ export function DashboardDialogs({ model }: { model: DashboardViewModel }) {
         recoveryKey={submission.recoveryKey}
         submitting={submission.submitting}
         onCredentialNoticeChange={setCredentialNotice}
+        onErrorDismiss={() => setError(null)}
         onDisplayNameChange={submission.setDisplayName}
         onRoomNameChange={submission.setRoomName}
         onJoinTokenChange={submission.setJoinToken}

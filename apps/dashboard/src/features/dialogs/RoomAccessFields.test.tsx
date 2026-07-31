@@ -41,4 +41,18 @@ describe("recovery-key room access", () => {
     expect(markup).toContain("创建房间");
     expect(markup).not.toContain("disabled");
   });
+
+  it("shows explicit progress while recovering a room", () => {
+    const markup = renderToStaticMarkup(createElement(RoomSubmitButton, {
+      ...roomProps,
+      setupMode: "recover",
+      recoverySessionId: "room-123",
+      recoveryKey: "ccr_secret",
+      submitting: true,
+    }));
+
+    expect(markup).toContain("正在恢复");
+    expect(markup).toContain('aria-busy="true"');
+    expect(markup).toContain("disabled");
+  });
 });

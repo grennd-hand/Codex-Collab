@@ -75,10 +75,10 @@ export function RoomAccessFields(props: RoomAccessFieldsProps) {
 
 export function RoomSubmitButton(props: Pick<RoomAccessFieldsProps, "initialInviteToken" | "displayName" | "roomName" | "joinToken" | "setupMode" | "recoverySessionId" | "recoveryKey"> & { submitting: boolean }) {
   if (props.initialInviteToken || props.setupMode === "join") {
-    return <Button type="submit" appearance="primary" disabled={!props.displayName.trim() || !props.joinToken.trim() || props.submitting}>申请加入</Button>;
+    return <Button type="submit" appearance="primary" aria-busy={props.submitting} disabled={!props.displayName.trim() || !props.joinToken.trim() || props.submitting}>{props.submitting ? "正在加入" : "申请加入"}</Button>;
   }
   if (props.setupMode === "recover") {
-    return <Button type="submit" appearance="primary" disabled={!props.recoverySessionId.trim() || !props.recoveryKey.trim() || props.submitting}>恢复房间</Button>;
+    return <Button type="submit" appearance="primary" aria-busy={props.submitting} disabled={!props.recoverySessionId.trim() || !props.recoveryKey.trim() || props.submitting}>{props.submitting ? "正在恢复" : "恢复房间"}</Button>;
   }
-  return <Button type="submit" appearance="primary" disabled={!props.displayName.trim() || !props.roomName.trim() || props.submitting}>创建房间</Button>;
+  return <Button type="submit" appearance="primary" aria-busy={props.submitting} disabled={!props.displayName.trim() || !props.roomName.trim() || props.submitting}>{props.submitting ? "正在创建" : "创建房间"}</Button>;
 }

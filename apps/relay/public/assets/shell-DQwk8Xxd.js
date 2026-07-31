@@ -1,0 +1,1 @@
+import{c as e,s as t}from"./IdeWorkspace-DBXLGscb.js";export{t as conf,e as language};
