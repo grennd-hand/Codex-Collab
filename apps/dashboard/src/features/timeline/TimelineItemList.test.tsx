@@ -122,7 +122,13 @@ describe("TimelineItemList active task presentation", () => {
         item: {
           kind: "execution",
           id: "execution-live",
-          entryKeys: ["commentary-1", "command-1", "command-2"],
+          entryKeys: [
+            "commentary-1",
+            "command-1",
+            "commentary-2",
+            "command-2",
+            "command-3",
+          ],
           entries: [
             {
               id: "commentary-1",
@@ -138,10 +144,23 @@ describe("TimelineItemList active task presentation", () => {
               createdAt: "2026-07-30T00:00:01.000Z",
             },
             {
+              id: "commentary-2",
+              role: "assistant",
+              phase: "commentary",
+              text: "测试通过，继续构建。",
+              createdAt: "2026-07-30T00:00:02.000Z",
+            },
+            {
               id: "command-2",
               role: "command",
+              text: "tool: exec_command\nstatus: completed\ninput:\n{\"cmd\":\"npm run lint\"}",
+              createdAt: "2026-07-30T00:00:03.000Z",
+            },
+            {
+              id: "command-3",
+              role: "command",
               text: "tool: exec_command\nstatus: running\ninput:\n{\"cmd\":\"npm run build\"}",
-              createdAt: "2026-07-30T00:00:02.000Z",
+              createdAt: "2026-07-30T00:00:04.000Z",
             },
           ],
         },
@@ -159,15 +178,21 @@ describe("TimelineItemList active task presentation", () => {
 
     expect(markup).toContain("execution-process running expanded streaming");
     expect(markup).toContain("先核对同步状态，再运行验证。");
-    expect(markup).toContain("运行了 1 个命令");
-    expect(markup).toContain('aria-label="展开 运行了 1 个命令"');
+    expect(markup).toContain("测试通过，继续构建。");
+    expect(markup).toContain("运行了多个命令");
+    expect(markup).toContain('aria-label="展开 运行了 2 个命令"');
+    expect(markup.match(/class="execution-command-batch /g)).toHaveLength(1);
     expect(markup).toContain('class="execution-step command running expanded"');
     expect(markup).toContain("npm run build");
     expect(markup).not.toContain("npm test");
+    expect(markup).not.toContain("npm run lint");
     expect(markup.indexOf("先核对同步状态，再运行验证。")).toBeLessThan(
-      markup.indexOf("运行了 1 个命令"),
+      markup.indexOf("运行了多个命令"),
     );
-    expect(markup.indexOf("运行了 1 个命令")).toBeLessThan(
+    expect(markup.indexOf("运行了多个命令")).toBeLessThan(
+      markup.indexOf("测试通过，继续构建。"),
+    );
+    expect(markup.indexOf("测试通过，继续构建。")).toBeLessThan(
       markup.indexOf("npm run build"),
     );
   });

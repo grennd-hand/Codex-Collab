@@ -16,7 +16,8 @@ export function ExecutionCommandBatch({
 }) {
   const [expanded, setExpanded] = useState(false);
   const contentId = useId();
-  const label = `运行了 ${items.length} 个命令`;
+  const label = items.length === 1 ? "运行了 1 个命令" : "运行了多个命令";
+  const accessibleLabel = `运行了 ${items.length} 个命令`;
   const latestCreatedAt = items.at(-1)?.record.createdAt ?? null;
 
   return (
@@ -38,7 +39,7 @@ export function ExecutionCommandBatch({
         className="execution-command-batch-disclosure"
         aria-controls={contentId}
         aria-expanded={expanded}
-        aria-label={`${expanded ? "收起" : "展开"} ${label}`}
+        aria-label={`${expanded ? "收起" : "展开"} ${accessibleLabel}`}
         onClick={() => setExpanded((current) => !current)}
       >
         <WindowConsoleRegular aria-hidden="true" />

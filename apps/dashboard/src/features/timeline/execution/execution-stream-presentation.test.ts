@@ -28,12 +28,12 @@ function record(
 }
 
 describe("buildExecutionStreamBlocks", () => {
-  it("preserves narrative order while batching adjacent historical commands", () => {
+  it("uses one history disclosure for commands separated by narrative updates", () => {
     const blocks = buildExecutionStreamBlocks([
       record("intro", "commentary"),
       record("command-a", "command"),
-      record("command-b", "command", "stopped"),
       record("update", "commentary"),
+      record("command-b", "command", "stopped"),
       record("command-c", "command", "running"),
     ]);
 
@@ -47,7 +47,7 @@ describe("buildExecutionStreamBlocks", () => {
       kind: "command-batch",
       items: [
         { index: 1, record: { id: "command-a" } },
-        { index: 2, record: { id: "command-b" } },
+        { index: 3, record: { id: "command-b" } },
       ],
     });
   });
@@ -56,6 +56,7 @@ describe("buildExecutionStreamBlocks", () => {
     const blocks = buildExecutionStreamBlocks([
       record("done", "command"),
       record("failed", "command", "failed"),
+      record("stopped", "command", "stopped"),
       record("running", "command", "running"),
     ]);
 
@@ -64,6 +65,13 @@ describe("buildExecutionStreamBlocks", () => {
       "command",
       "command",
     ]);
+    expect(blocks[0]).toMatchObject({
+      kind: "command-batch",
+      items: [
+        { record: { id: "done" } },
+        { record: { id: "stopped" } },
+      ],
+    });
     expect(hasLiveExecutionRecord(blocks.flatMap((block) =>
       block.kind === "command-batch"
         ? block.items.map((item) => item.record)
