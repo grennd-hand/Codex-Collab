@@ -180,6 +180,24 @@ schema、资产 hash、HTTPS 和真实登录/邀请流程，并证明 Guest 容�
   `727780650530aae367adc8b29dd7045c87d691fa59355541760489a8cdb35195`；Caddy 容器仍为
   `055f22e85bd9`。两者未重启、未重建、未改配置或数据卷。
 
+### 7.2 2026-07-31 Primary 时间线发布记录
+
+- 源提交：`dbca79bb56e394da0975bd363dda3d2434f9086a`；不可变 release：
+  `/opt/codex-collab/releases/dbca79b-20260731T052744Z/app`。
+- 源归档 SHA-256：`90393c01baa9a72976f285a416e028a04d9f87098ad53ddb08d8074bc018ce5b`；
+  切换前一致性备份：`/opt/codex-collab/backups/relay-data-20260731T053519Z.tar.gz`。
+- Primary 容器切换为 `ee3c32171b78`，镜像 digest 为
+  `sha256:ccc1c95a9e906b0f50e9a464aeb63122358b8be3442d054ce6666833523a89e2`；
+  Docker health 与公网 `/health` 均通过。
+- Primary 首页 SHA-256 切换为
+  `6196f20b388b1ef8fe2d19324c7e246f3dec61540112864868cc388f51f8b15c`，入口引用的
+  5 个静态资产均以真实 GET 验证成功；线上 bundle 包含“运行了多个命令”单一历史折叠规则。
+- 公网临时会话再次完成安全响应头、邀请、加入、批准即 `workspace-write`、Realtime
+  `submitted`、assistant history、`completed` 和刷新后终态持久化闭环。
+- Guest 仍为 release `d10f20f`、容器 `d74f3456a2a3`、首页 SHA-256
+  `727780650530aae367adc8b29dd7045c87d691fa59355541760489a8cdb35195`；Caddy 容器仍为
+  `055f22e85bd9`。两者未重启、未重建、未改配置或数据卷。
+
 ## 8. 数据备份
 
 当前版本尚未自动备份，也没有仓库内可执行的恢复流程或恢复报告，因此不满足生产恢复要求。
