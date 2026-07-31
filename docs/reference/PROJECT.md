@@ -72,7 +72,10 @@ manifest 对应提交 `48f710e`。
 `6f246e6`。
 Beta 13 进一步加入白底深靛蓝 Windows 多尺寸图标，并把协作/活动、项目文件和 Codex 任务改为
 同层的可换位稳定面板。用户可通过专用拖动柄或左右按钮换位，分隔条继续支持鼠标、触摸、键盘
-和双击复位；顺序与宽度按 task 保存在本机，面板换位不会重建 Monaco model。
+和双击复位；顺序与宽度按 task 保存在本机，面板换位不会重建 Monaco model。Beta 13 已按
+`7da252a` 覆盖安装，安装包 SHA-256 为
+`92113CB3928B2BA99B9FB0DD2FD868B128FE7EF1AF7003EA8CCE46E4757F9CDA`，安装 ASAR SHA-256 为
+`D1D2FF0028EEFE4DEFCE3F8DC3B202FF73BA29BA8465C8FE7EE9405FB4818525`。
 托盘最终点击旅程
 和其余主人完整旅程仍待人工放行，因此仍不把该候选描述为“桌面产品界面已经完成”。后续状态见
 [主人桌面端实施计划](../plans/DESKTOP_IMPLEMENTATION_PLAN.md)。

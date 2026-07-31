@@ -120,6 +120,8 @@
   使用同一图标源；不再保留旧的损坏 PNG 或独立托盘图标数据
 - [x] Beta 13 已把协作/活动、项目文件和 Codex 任务改成可任意换位的稳定面板；支持专用拖动柄、
   左右按钮、键盘调宽、双击复位和 task-scoped 持久化，换位不卸载 Monaco
+- [x] Beta 13 已按 `7da252a` 生成 NSIS/unpacked、SBOM、manifest 和 SHA-256，并覆盖安装；
+  安装 ASAR 与候选一致，桌面/开始菜单快捷方式指向新 EXE 图标，重启后为单一主人进程/Host broker
 - [ ] 补齐桌面 onboarding、Host restart-required、offline/catching-up、room/member dialogs
 - [ ] 在 `v0.1.0-beta.13` 手工确认面板拖放、Monaco 状态保留、关闭、托盘恢复和托盘退出，
   并完成 Electron/Monaco 主人完整协作/IDE 旅程
