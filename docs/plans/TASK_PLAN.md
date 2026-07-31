@@ -144,6 +144,9 @@
 - [x] 2026-07-31 将 `e680d90` 部署到 Primary Relay：修复 Host 瞬时 catch-up 失败后永久停摆和网页
   history 刷新定时器被运行态取消。切换前备份 Primary 数据；公网资产哈希一致，Host 在真实 Relay
   重启后从 968 条继续同步到 991 条；Guest 与 Caddy 容器未变化
+- [x] 用户随后明确要求部署两个实例；Guest 使用专用 Secondary Compose 和原独立数据卷升级到
+  `e680d90-20260731T150525Z`。切换前创建 Guest 一致性备份，验证本机 4178、公网健康、5 个入口
+  资产、共享网络别名和数据卷挂载；Primary/Caddy 容器未变化，两个公网首页哈希一致
 - [ ] 干净 Windows VM、双用户 Pipe、N-1 -> N 升级/卸载和真实双浏览器 UI E2E
 
 详细实施顺序、当前/计划边界见

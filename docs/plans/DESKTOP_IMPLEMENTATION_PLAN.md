@@ -36,8 +36,8 @@ Beta 13 已把白底深靛蓝图标统一接入窗口、托盘、安装器和卸
 ### 当前批次边界
 
 - [x] 桌面开发、打包和本机安装阶段没有部署服务器；用户随后明确要求部署时，只更新 Primary Relay。
-- [x] Guest 实例未重启、未重建、未改数据卷或共享 Caddy，也未用作测试环境；发布前后只做只读健康、
-  容器 ID、release 和首页 hash 核对。
+- [x] Primary-only 开发与首次 Beta 14 发布期间 Guest 保持冻结；用户随后明确要求“部署两个实例”，
+  Guest 才使用自己的 Secondary Compose、release 根目录和数据卷升级到同一 `e680d90` 版本。
 - [x] Dashboard 已拆出 browser/desktop Runtime；Codex 草稿、附件与 IDE tabs/dirty state 按 task 隔离。
 - [x] Relay 在创建 `codex_prompt` 时原子校验 `expectedWorkspaceThreadId`，拒绝 task 切换竞态。
 - [x] file activity 已采用结构化协议，并贯通 Host 导入、Relay 校验、timeline 与 IDE 展示。
@@ -111,6 +111,11 @@ Beta 13 已把白底深靛蓝图标统一接入窗口、托盘、安装器和卸
   832 条历史后由 Beta 14 追平到 968 条；Primary 重启后又自动恢复到 `active` 并继续到 991 条。
 - [x] 提交 `e680d90` 已于 2026-07-31 只部署到 Primary release
   `e680d90-20260731T150525Z`；切换前备份数据，公网入口资产与提交一致，Guest/Caddy 容器 ID 未变。
+- [x] 用户随后明确授权双实例部署；Guest 已备份到
+  `/opt/codex-collab-secondary/backups/relay-data-20260731T152940Z.tar.gz` 并切换到相同 release。
+  最终使用专用 `docker-compose.secondary.yml`、原数据卷、共享代理网络与 `secondary-relay` 别名；
+  Primary 和 Caddy 未重启，两个公网首页 SHA-256 均为
+  `5abe05d9ca553eefda355db19a76fac60c1673c887c1583e06a38e033b7b19ba`。
 - [ ] 在已安装 `v0.1.0-beta.14` 上手工拖动三个面板，并点击关闭、托盘恢复和托盘退出，完成最后的
   Windows Shell/Monaco 状态验收。
 - [ ] 在桌面产品壳完成并通过真实安装验收前，不再宣称“整个桌面端已经完成”。

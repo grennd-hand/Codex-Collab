@@ -241,6 +241,24 @@ schema、资产 hash、HTTPS 和真实登录/邀请流程，并证明 Guest 容�
   `cd2d1131ff5b82730f6efdde1a2cbd804eb24104cc914027b3f847b97e49ac24` 和入口主资源
   `/assets/index-8LGcCuEJ.js`；Caddy 容器保持 `055f22e85bd9`。两者未重启、未重建、未改配置或数据卷。
 
+### 7.5 2026-07-31 双实例同步恢复版本
+
+- 源提交：`e680d9073cedc3aa96f68c6f98e2a2a53fb21817`；Primary 与 Guest 均指向不可变 release
+  `e680d90-20260731T150525Z`，源归档 SHA-256 为
+  `5be8233eca63a9df9c5f971b595b8b75f60325ae89e32f73fd9ff7fba72af82f`。
+- Primary 先独立切换并备份到 `/opt/codex-collab/backups/relay-data-20260731T151259Z.tar.gz`；
+  用户明确要求部署两个实例后，Guest 再备份到
+  `/opt/codex-collab-secondary/backups/relay-data-20260731T152940Z.tar.gz` 后切换。
+- Guest 最终通过 `deploy/docker-compose.secondary.yml` 运行，继续挂载
+  `codex-collab-secondary_relay-data`，仅加入共享 `codex-collab_collab` 网络并使用
+  `secondary-relay` 别名，本机监听保持 `127.0.0.1:4178`。
+- 首次 Guest 重建误用主 Compose，虽然容器内部健康，但共享 Caddy 因缺少 `secondary-relay` 别名
+  返回 502；该次不视为成功发布。随后按专用 Secondary Compose 强制重建并删除误建、无人引用且
+  为空的两个 Secondary Caddy 卷，公网与本机健康检查均恢复。
+- 最终 Primary 容器为 `5c831596578c`，Guest 容器为 `f312988bcec5`，Caddy 保持
+  `055f22e85bd9`；两套 Relay 均为 `running|healthy`，5 个入口资产可访问，两个首页 SHA-256 均为
+  `5abe05d9ca553eefda355db19a76fac60c1673c887c1583e06a38e033b7b19ba`。
+
 ## 8. 数据备份
 
 当前版本尚未自动备份，也没有仓库内可执行的恢复流程或恢复报告，因此不满足生产恢复要求。

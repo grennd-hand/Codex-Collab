@@ -93,8 +93,9 @@ Relay runtime 标为 `unavailable`，再自动退避追平；durable receipt 歧
 服务端反馈闭环先于 2026-07-31 随提交 `6904723` 部署；跨正文合并的 `dbca79b` 经需求澄清后已由
 按文字区间折叠的 `c11976e` 替换。当前 Primary Relay 已进一步部署 `e680d90`：除保留
 `99d89e3` 的单一当前步骤、终态延迟追平和手动停止总结外，还能在瞬时 catch-up 失败后自动恢复，
-网页端不会取消待执行的历史刷新。Guest 保持原 release、原容器和原首页资产，共享 Caddy 未重启，
-也未作为桌面端验证环境。详细状态见
+网页端不会取消待执行的历史刷新。首次发布只更新 Primary；用户随后明确要求部署两个实例，Guest
+使用专用 Secondary Compose、独立 release 根目录和原数据卷升级到同一 `e680d90` release。
+Guest 切换前已创建一致性备份；最终两个公网首页哈希一致，Primary 与共享 Caddy 未重启。详细状态见
 [主人桌面端实施计划](../plans/DESKTOP_IMPLEMENTATION_PLAN.md)。
 
 这代表“可邀请真实测试者验证 MVP”，不代表已经完成商业生产的全部加固。未完成项在
